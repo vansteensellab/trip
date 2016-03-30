@@ -1,0 +1,17 @@
+─filelist.txt
+─README.txt
+DamID/
+  └─mmc2.zip
+  └>mmc2/
+    └─DataS1_Clone.14.1N.OE.txt
+    └─DataS2_Clone.5-5.1N.OE.txt
+    └─DataS3_Clone.14.2N.OE.txt
+    └─DataS4_Clone.5-5.2N.OE.txt
+    └─DataS5_Clone.5-8.1N.OE.txt
+    └─SUPPLEMENTAL
+    └─DATA
+    └─FILES.docx
+Mapping/
+  └─Hs_Derby_Ensembl_82.bridge
+microarray/
+  └─GSE56465_series_matrix.txt
