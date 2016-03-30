@@ -1,0 +1,6 @@
+workspace
+*.Rhistory
+.Rdata
+*/.Rdata
+raw_data/*
+!raw_data/filelist*
