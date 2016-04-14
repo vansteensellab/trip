@@ -1,0 +1,175 @@
+<html>
+
+<head>
+<style type="text/css">
+.knitr .inline {
+  background-color: #f7f7f7;
+  border:solid 1px #B0B0B0;
+}
+.error {
+	font-weight: bold;
+	color: #FF0000;
+}
+.warning {
+	font-weight: bold;
+}
+.message {
+	font-style: italic;
+}
+.source, .output, .warning, .error, .message {
+	padding: 0 1em;
+  border:solid 1px #F7F7F7;
+}
+.source {
+  background-color: #f5f5f5;
+}
+.rimage .left {
+  text-align: left;
+}
+.rimage .right {
+  text-align: right;
+}
+.rimage .center {
+  text-align: center;
+}
+.hl.num {
+  color: #AF0F91;
+}
+.hl.str {
+  color: #317ECC;
+}
+.hl.com {
+  color: #AD95AF;
+  font-style: italic;
+}
+.hl.opt {
+  color: #000000;
+}
+.hl.std {
+  color: #585858;
+}
+.hl.kwa {
+  color: #295F94;
+  font-weight: bold;
+}
+.hl.kwb {
+  color: #B05A65;
+}
+.hl.kwc {
+  color: #55aa55;
+}
+.hl.kwd {
+  color: #BC5A65;
+  font-weight: bold;
+}
+</style>
+<title>knitr document van Steensel lab</title>
+<style type="text/css">
+body {font-family:"Helvetica", sans-serif;}
+h3 {color: #335599;	margin-bottom: 0em;margin-top: 1em;}
+p {margin-top: 0em;}
+</style>
+</head>
+
+<body>
+<h1>Main Title</h2>
+<h2>Christ Leemans, from date - to date </h2>
+
+<h3>Introduction</h3>
+<p>Introduction to the project</p>
+
+<h3>Description of Data</h3>
+<ul>
+<li>Where did I get the data, how does the data look, how many samples and replicates</li>
+</ul>
+
+</p>
+
+<h3>Path, Libraries, Parameters and Useful Functions</h3>
+<div class="chunk" id="html-Path&Pars"><div class="rcode"><div class="source"><pre class="knitr r"><span class="hl std">StartTime</span><span class="hl kwb">&lt;-</span><span class="hl kwd">Sys.time</span><span class="hl std">()</span>
+
+<span class="hl kwd">setwd</span><span class="hl std">(</span><span class="hl str">&quot;~/Projects/SingleCellDamID/&quot;</span><span class="hl std">)</span>
+</pre></div>
+<div class="error"><pre class="knitr r">## Error in setwd(&quot;~/Projects/SingleCellDamID/&quot;): cannot change working directory
+</pre></div>
+<div class="source"><pre class="knitr r"><span class="hl com">#6-digit Date tag:</span>
+<span class="hl std">Date</span> <span class="hl kwb">&lt;-</span> <span class="hl kwd">substr</span><span class="hl std">(</span><span class="hl kwd">gsub</span><span class="hl std">(</span><span class="hl str">&quot;-&quot;</span><span class="hl std">,</span><span class="hl str">&quot;&quot;</span><span class="hl std">,</span><span class="hl kwd">Sys.time</span><span class="hl std">()),</span><span class="hl num">3</span><span class="hl std">,</span><span class="hl num">8</span><span class="hl std">)</span>
+
+<span class="hl com">#libraries:</span>
+</pre></div>
+</div></div>
+
+<h3>Custom functions</h3>
+<p>Functions used</p>
+
+
+<h3>Load data</h3>
+<p>Data loading </p>
+
+
+
+
+
+<h3>Some data pre-processing</h3>
+<p>Calculate some basic values/quality control</p>
+
+
+
+
+
+<h3>Step 1</h3>
+<p>How reprodicible are the Hi-C data (only dynamic LAD bins):</p>
+
+
+<p><b>Conclusion: </b> the conclusion</p>
+
+
+
+<h3>Step 2</h3>
+<p>description</p>
+
+
+<p><b>Conclusion: </b><br>conclusion of step 2</p>
+
+
+<h3>Session Info</h3>
+<div class="chunk" id="html-SessionInfo"><div class="rcode"><div class="source"><pre class="knitr r"><span class="hl kwd">sessionInfo</span><span class="hl std">()</span>
+</pre></div>
+<div class="output"><pre class="knitr r">## R version 3.2.4 Revised (2016-03-16 r70336)
+## Platform: x86_64-pc-linux-gnu (64-bit)
+## Running under: Ubuntu 14.04.4 LTS
+## 
+## locale:
+##  [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C              
+##  [3] LC_TIME=nl_NL.UTF-8        LC_COLLATE=en_US.UTF-8    
+##  [5] LC_MONETARY=nl_NL.UTF-8    LC_MESSAGES=en_US.UTF-8   
+##  [7] LC_PAPER=nl_NL.UTF-8       LC_NAME=C                 
+##  [9] LC_ADDRESS=C               LC_TELEPHONE=C            
+## [11] LC_MEASUREMENT=nl_NL.UTF-8 LC_IDENTIFICATION=C       
+## 
+## attached base packages:
+## [1] stats     graphics  grDevices utils     datasets  methods   base     
+## 
+## other attached packages:
+## [1] knitr_1.12.3
+## 
+## loaded via a namespace (and not attached):
+## [1] formatR_1.3    tools_3.2.4    highr_0.5.1    stringr_0.6.2 
+## [5] evaluate_0.8.3
+</pre></div>
+<div class="source"><pre class="knitr r"><span class="hl kwd">getwd</span><span class="hl std">()</span>
+</pre></div>
+<div class="output"><pre class="knitr r">## [1] &quot;/media/Data/home/SURFdrive/TRIP/reports&quot;
+</pre></div>
+<div class="source"><pre class="knitr r"><span class="hl kwd">date</span><span class="hl std">()</span>
+</pre></div>
+<div class="output"><pre class="knitr r">## [1] &quot;Thu Apr 14 11:18:49 2016&quot;
+</pre></div>
+<div class="source"><pre class="knitr r"><span class="hl kwd">paste</span><span class="hl std">(</span><span class="hl str">&quot;Run time: &quot;</span><span class="hl std">,</span><span class="hl kwd">format</span><span class="hl std">(</span><span class="hl kwd">Sys.time</span><span class="hl std">()</span><span class="hl opt">-</span><span class="hl std">StartTime))</span>
+</pre></div>
+<div class="output"><pre class="knitr r">## [1] &quot;Run time:  0.06278539 secs&quot;
+</pre></div>
+</div></div>
+
+</body>
+</html>
