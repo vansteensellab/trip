@@ -1,0 +1,1915 @@
+TTRIP Kc167 HP1 D2 - figures
+============================
+
+1. Read and process raw data
+----------------------------
+
+```{r}
+#changed the way mean norm expr is calculated, assign 0 when 0 in one replicate
+require(ggplot2)
+require(grid)
+require(gridExtra)
+require(reshape2)
+require(plotrix)
+require(plyr)
+require(ppcor)
+require(GenomicRanges)
+require(stringr)
+```
+Replicate 1
+```{r}
+sp_HP1_D2_r1<-read.table("TTRIP_Kc167/lb20150515_sp_HP1_D2_rep1/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+HP1_D2_r1<-read.table("TTRIP_Kc167/lb20150515_HP1_D2_rep1/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+
+nrow(sp_HP1_D2_r1)
+nrow(HP1_D2_r1)
+```
+Replicate 2
+```{r}
+sp_HP1_D2_r2<-read.table("TTRIP_Kc167/lb20150515_sp_HP1_D2_rep2/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+HP1_D2_r2<-read.table("TTRIP_Kc167/lb20150515_HP1_D2_rep2/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+
+nrow(sp_HP1_D2_r2)
+nrow(HP1_D2_r2)
+```
+
+```{r}
+#calculate scaling factors for spike-ins
+###Let's not set a cutoff to avoid distortion by low read numbers
+
+sum_sp_HP1_D2_r1_exp_1<-sum(sp_HP1_D2_r1$exp_1)
+sum_sp_HP1_D2_r1_exp_2<-sum(sp_HP1_D2_r1$exp_2)
+sum_sp_HP1_D2_r1_exp_3<-sum(sp_HP1_D2_r1$exp_3)
+sum_sp_HP1_D2_r1_exp_1 
+sum_sp_HP1_D2_r1_exp_2 
+sum_sp_HP1_D2_r1_exp_3
+
+#normalize spikein expression reads with total read number to correct for seq depth
+#I am not using these values for now but might come in handy for plotting
+sp_HP1_D2_r1$exp_1_norm <- sp_HP1_D2_r1$exp_1 / sum_sp_HP1_D2_r1_exp_1
+sp_HP1_D2_r1$exp_2_norm <- sp_HP1_D2_r1$exp_2 / sum_sp_HP1_D2_r1_exp_2
+sp_HP1_D2_r1$exp_3_norm <- sp_HP1_D2_r1$exp_3 / sum_sp_HP1_D2_r1_exp_3
+```
+
+```{r}
+#normalize experiment expression reads with total spikein read number and scale a bit
+HP1_D2_r1$exp_1_norm <- HP1_D2_r1$exp_1 / sum_sp_HP1_D2_r1_exp_1 *1000000
+HP1_D2_r1$exp_2_norm <- HP1_D2_r1$exp_2 / sum_sp_HP1_D2_r1_exp_2 *1000000
+HP1_D2_r1$exp_3_norm <- HP1_D2_r1$exp_3 / sum_sp_HP1_D2_r1_exp_3 *1000000
+```
+
+```{r}
+#now all that is left is normalizing to gDNA counts!
+#first set cutoff for >1 gDNA counts
+HP1_D2_r1_cutoff <- subset(HP1_D2_r1,(( norm_1 >= 1) & ( norm_2 >= 1) & ( norm_3 >= 1)))
+nrow(HP1_D2_r1)
+nrow(HP1_D2_r1_cutoff)
+
+#sum gDNA counts in millions
+sum_HP1_D2_r1_norm_1<-sum(HP1_D2_r1_cutoff$norm_1) / 1000000
+sum_HP1_D2_r1_norm_2<-sum(HP1_D2_r1_cutoff$norm_2) / 1000000
+sum_HP1_D2_r1_norm_3<-sum(HP1_D2_r1_cutoff$norm_3) / 1000000
+sum_HP1_D2_r1_norm_1
+sum_HP1_D2_r1_norm_2
+sum_HP1_D2_r1_norm_3
+#convert gDNA counts to cpm to correct for seq depth
+HP1_D2_r1_cutoff$norm_1_cpm <- HP1_D2_r1_cutoff$norm_1 / sum_HP1_D2_r1_norm_1
+HP1_D2_r1_cutoff$norm_2_cpm <- HP1_D2_r1_cutoff$norm_2 / sum_HP1_D2_r1_norm_2
+HP1_D2_r1_cutoff$norm_3_cpm <- HP1_D2_r1_cutoff$norm_3 / sum_HP1_D2_r1_norm_3
+
+#now divide exp reads which were normalized by spikein by gDNA cpm
+HP1_D2_r1_cutoff$exp_1_gDNA <- HP1_D2_r1_cutoff$exp_1_norm / HP1_D2_r1_cutoff$norm_1_cpm
+HP1_D2_r1_cutoff$exp_2_gDNA <- HP1_D2_r1_cutoff$exp_2_norm / HP1_D2_r1_cutoff$norm_2_cpm
+HP1_D2_r1_cutoff$exp_3_gDNA <- HP1_D2_r1_cutoff$exp_3_norm / HP1_D2_r1_cutoff$norm_3_cpm
+#normalization done!
+```
+```{r}
+#calculate foldchange
+#but leave out BCDs with zero reads
+#I should look at those separately
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+HP1_D2_r1_cutoff$foldch_exp_1_exp_2<- apply(HP1_D2_r1_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+HP1_D2_r1_cutoff$foldch_exp_1_exp_3<- apply(HP1_D2_r1_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+HP1_D2_r1_cutoff$foldch_exp_3_exp_2<- apply(HP1_D2_r1_cutoff, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+```
+
+
+```{r}
+#calculate scaling factors for spike-ins
+#only for barcodes with more than 10 reads
+
+sum_sp_HP1_D2_r2_exp_1<-sum(sp_HP1_D2_r2$exp_1)
+sum_sp_HP1_D2_r2_exp_2<-sum(sp_HP1_D2_r2$exp_2)
+sum_sp_HP1_D2_r2_exp_3<-sum(sp_HP1_D2_r2$exp_3)
+sum_sp_HP1_D2_r2_exp_1 
+sum_sp_HP1_D2_r2_exp_2 
+sum_sp_HP1_D2_r2_exp_3
+
+#normalize spikein expression reads with total read number to correct for seq depth
+sp_HP1_D2_r2$exp_1_norm <- sp_HP1_D2_r2$exp_1 / sum_sp_HP1_D2_r2_exp_1
+sp_HP1_D2_r2$exp_2_norm <- sp_HP1_D2_r2$exp_2 / sum_sp_HP1_D2_r2_exp_2
+sp_HP1_D2_r2$exp_3_norm <- sp_HP1_D2_r2$exp_3 / sum_sp_HP1_D2_r2_exp_3
+```
+
+```{r}
+#normalize experiment expression reads with total spikein read number and scale a bit
+HP1_D2_r2$exp_1_norm <- HP1_D2_r2$exp_1 / sum_sp_HP1_D2_r2_exp_1 *1000000
+HP1_D2_r2$exp_2_norm <- HP1_D2_r2$exp_2 / sum_sp_HP1_D2_r2_exp_2 *1000000
+HP1_D2_r2$exp_3_norm <- HP1_D2_r2$exp_3 / sum_sp_HP1_D2_r2_exp_3 *1000000
+```
+
+```{r}
+#now all that is left is normalizing to gDNA counts!
+#first set cutoff for >1 gDNA counts
+HP1_D2_r2_cutoff <- subset(HP1_D2_r2,(( norm_1 >= 1) & ( norm_2 >= 1) & ( norm_3 >= 1)))
+nrow(HP1_D2_r2)
+nrow(HP1_D2_r2_cutoff)
+
+#sum gDNA counts in millions
+sum_HP1_D2_r2_norm_1<-sum(HP1_D2_r2_cutoff$norm_1) / 1000000
+sum_HP1_D2_r2_norm_2<-sum(HP1_D2_r2_cutoff$norm_2) / 1000000
+sum_HP1_D2_r2_norm_3<-sum(HP1_D2_r2_cutoff$norm_3) / 1000000
+sum_HP1_D2_r2_norm_1
+sum_HP1_D2_r2_norm_2
+sum_HP1_D2_r2_norm_3
+#convert gDNA counts to cpm to correct for seq depth
+HP1_D2_r2_cutoff$norm_1_cpm <- HP1_D2_r2_cutoff$norm_1 / sum_HP1_D2_r2_norm_1
+HP1_D2_r2_cutoff$norm_2_cpm <- HP1_D2_r2_cutoff$norm_2 / sum_HP1_D2_r2_norm_2
+HP1_D2_r2_cutoff$norm_3_cpm <- HP1_D2_r2_cutoff$norm_3 / sum_HP1_D2_r2_norm_3
+#now divide exp reads which were normalized by spikein by gDNA cpm
+HP1_D2_r2_cutoff$exp_1_gDNA <- HP1_D2_r2_cutoff$exp_1_norm / HP1_D2_r2_cutoff$norm_1_cpm
+HP1_D2_r2_cutoff$exp_2_gDNA <- HP1_D2_r2_cutoff$exp_2_norm / HP1_D2_r2_cutoff$norm_2_cpm
+HP1_D2_r2_cutoff$exp_3_gDNA <- HP1_D2_r2_cutoff$exp_3_norm / HP1_D2_r2_cutoff$norm_3_cpm
+#normalization done!
+```
+```{r}
+#calculate foldchange
+#but leave out BCDs with zero reads
+#I should look at those separately
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+HP1_D2_r2_cutoff$foldch_exp_1_exp_2<- apply(HP1_D2_r2_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+HP1_D2_r2_cutoff$foldch_exp_1_exp_3<- apply(HP1_D2_r2_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+HP1_D2_r2_cutoff$foldch_exp_3_exp_2<- apply(HP1_D2_r2_cutoff, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+```
+
+
+```{r}
+#some statistics
+#gDNA counts
+summary(HP1_D2_r1[,c("norm_1","norm_2","norm_3")])
+summary(HP1_D2_r2[,c("norm_1","norm_2","norm_3")])
+#raw reads expression
+summary(HP1_D2_r1[,c("exp_1","exp_2","exp_3")])
+summary(HP1_D2_r2[,c("exp_1","exp_2","exp_3")])
+summary(HP1_D2_r1_cutoff[,c("exp_1","exp_2","exp_3")])
+summary(HP1_D2_r2_cutoff[,c("exp_1","exp_2","exp_3")])
+#normalized to spikein
+summary(HP1_D2_r1_cutoff[,c("exp_1_norm","exp_2_norm","exp_3_norm")])
+summary(HP1_D2_r2_cutoff[,c("exp_1_norm","exp_2_norm","exp_3_norm")])
+#normalized to gDNA counts
+summary(HP1_D2_r1_cutoff[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+summary(HP1_D2_r2_cutoff[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+#statistics foldchange
+summary(HP1_D2_r1_cutoff[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+summary(HP1_D2_r2_cutoff[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+
+#normalization done
+```
+
+
+2. Merge replicates and filter
+------------------------------
+
+```{r}
+#merge replicates
+HP1_D2_all<-merge(HP1_D2_r1_cutoff[,c("barcode","norm_1","norm_2","norm_3","exp_1","exp_2","exp_3","exp_1_gDNA","exp_2_gDNA","exp_3_gDNA","foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3")],HP1_D2_r2_cutoff[,c("barcode","norm_1","norm_2","norm_3","exp_1","exp_2","exp_3","exp_1_gDNA","exp_2_gDNA","exp_3_gDNA","foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3")], by=("barcode"), suffixes=c("_r1","_r2"))
+
+nrow(HP1_D2_r1_cutoff)
+nrow(HP1_D2_r2_cutoff)
+nrow(HP1_D2_all)
+```
+```{r}
+#mapping the barcodes
+#Read in mapping table
+mapping<-read.table("TTRIP_Kc167/mapping_HP1/final_TRIP_data_table.txt", header=T, stringsAsFactors = F)
+#Merge with barculator tables
+HP1_D2_all<-merge(mapping[,c("barcode","chr_f","ori_f","pos_f","reads_f","mapq_f","freq1_f","freq2_f","chr_r","ori_r","pos_r","reads_r","mapq_r","freq1_r","freq2_r")], HP1_D2_all, by="barcode",suffixes=c("_mapping", ""))
+
+#Assigning chromatin colors
+#read in table
+colors_positions<-read.table("colors_positions.txt", header=T, stringsAsFactors = F)
+
+#Function for assigning colors
+check <- function(chrom, pos, data) {
+  sub <- subset(data,(data$seqname==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  color<-as.character(sub[4])
+  return(color)
+}
+###For now I am taking the rev position and chr for assigning colors
+HP1_D2_all$chromatin <- apply(HP1_D2_all, 1, function(x) check(x[9], x[11], colors_positions))
+#replace NAs with GREY
+HP1_D2_all$chromatin[HP1_D2_all$chromatin == "character(0)"]<-"GREY"
+
+dim(HP1_D2_all)
+```
+
+
+```{r}
+#filter for uniquely mapped BCDs
+#this is where I lose about half of the BCDs
+#do this before deciding gDNA cutoff?
+HP1_D2_all<-subset(HP1_D2_all, ((reads_f > 2) & (reads_r > 2) &(freq1_f > 0.80) & (freq1_r > 0.80) & (freq2_f < 0.10) & (freq2_r < 0.10) & (mapq_f >= 10)& (mapq_r >= 10)))
+nrow(HP1_D2_all)
+```
+
+
+```{r}
+#set cutoff gDNA
+nrow(HP1_D2_all)
+HP1_D2_all<- subset(HP1_D2_all,(( norm_1_r1 >= 100) & ( norm_2_r1  >= 100) & ( norm_3_r1  >= 100) & (norm_1_r2  >= 100) & ( norm_2_r2 >= 100) & ( norm_3_r2 >= 100)))
+nrow(HP1_D2_all)
+
+```
+
+3. Quantitative analysis on replicate means
+-------------------------------------------
+
+```{r}
+#Calculate fold change between conditions by replicate means
+#Calculate mean expression
+meanex <- function(r1, r2) {
+  if ((as.numeric(r1) > 0) & (as.numeric(r2) > 0))
+  calc <- (as.numeric(r1) + as.numeric(r2))/2
+  if ((as.numeric(r1) == 0) | (as.numeric(r2) == 0))
+  calc <- 0
+  return(calc)
+}
+
+HP1_D2_all$exp_1_gDNA<-apply(HP1_D2_all,1,function(x) meanex(x["exp_1_gDNA_r1"], x["exp_1_gDNA_r2"]))
+HP1_D2_all$exp_2_gDNA<-apply(HP1_D2_all,1,function(x) meanex(x["exp_2_gDNA_r1"], x["exp_2_gDNA_r2"]))
+HP1_D2_all$exp_3_gDNA<-apply(HP1_D2_all,1,function(x) meanex(x["exp_3_gDNA_r1"], x["exp_3_gDNA_r2"]))
+
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+HP1_D2_all$foldch_exp_1_exp_2<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+HP1_D2_all$foldch_exp_1_exp_3<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+HP1_D2_all$foldch_exp_3_exp_2<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+
+```
+```{r}
+#foldch replicates
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+HP1_D2_all$foldch_exp_1_gDNA_r1_r2<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_1_gDNA_r1"], x["exp_1_gDNA_r2"]))
+HP1_D2_all$foldch_exp_2_gDNA_r1_r2<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_2_gDNA_r1"], x["exp_2_gDNA_r2"]))
+HP1_D2_all$foldch_exp_3_gDNA_r1_r2<- apply(HP1_D2_all, 1, function(x) foldch(x["exp_3_gDNA_r1"], x["exp_3_gDNA_r2"]))
+
+
+
+
+#how many BCDs express?
+nrow(subset(HP1_D2_all,HP1_D2_all$exp_2_gDNA>0))
+
+#some statistics
+#replicates
+#gDNA counts
+summary(HP1_D2_all[,c("norm_1_r1","norm_2_r1","norm_3_r1","norm_1_r2","norm_2_r2","norm_3_r2")])
+#raw reads expression
+summary(HP1_D2_all[,c("exp_1_r1","exp_2_r1","exp_3_r1","exp_1_r2","exp_2_r2","exp_3_r2")])
+#normalized to gDNA counts
+summary(HP1_D2_all[,c("exp_1_gDNA_r1","exp_2_gDNA_r1","exp_3_gDNA_r1","exp_1_gDNA_r2","exp_2_gDNA_r2","exp_3_gDNA_r2")])
+#statistics foldchange
+summary(HP1_D2_all[,c("foldch_exp_1_exp_2_r1","foldch_exp_1_exp_3_r1","foldch_exp_3_exp_2_r1","foldch_exp_1_exp_2_r2","foldch_exp_1_exp_3_r2","foldch_exp_3_exp_2_r2")])
+#replicate variation
+summary(HP1_D2_all[ ,c("foldch_exp_1_gDNA_r1_r2","foldch_exp_2_gDNA_r1_r2","foldch_exp_3_gDNA_r1_r2")])
+
+#replicate means
+#normalized to gDNA counts
+summary(HP1_D2_all[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+#statistics foldchange
+summary(HP1_D2_all[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+
+```
+4. merging chromatin data
+-------------------------
+```{r}
+#merging at 9-state model
+#http://intermine.modencode.org/query/experiment.do?experiment=HMM+Prediction+of+D.+melanogaster+Chromatin+States
+#esp state 7 is interesting (pericentromeric hetchr, depleted for K23ac)
+ninestate<-read.table("TTRIP_Kc167/modEncode_21955 _results-table.csv", header=T, stringsAsFactors = F,sep=",")
+ninestate$chr<-paste("chr",ninestate$chr,sep="")
+
+ninest <- function(chrom, pos, data) {
+  color<-0
+  sub <- subset(data,(data$chr==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  color<-as.numeric(sub[2])
+  #if(is.na(color))
+  #color<-NA
+  return(color)
+}
+###For now I am only taking the fwd position and chr for assigning colors
+###I know that the mapping can differ between fwd and rev read - how should I handle this?
+###Assign NA if fwd and rev do not match?
+HP1_D2_all$ninestate <- apply(HP1_D2_all, 1, function(x) ninest(x[9], x[11], ninestate))
+
+clones<-read.table("clonesloc.txt", header=F,stringsAsFactors = F,sep=",")
+
+apply(clones, 1, function(x) ninest(x[2], x[3], ninestate))
+apply(clones, 1, function(x) check(x[2], x[3], colors_positions))
+```
+
+
+```{r}
+#Merging DamID data
+#read in table
+#got this data from Joke's NW paper
+#http://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE36175
+damid_bin<-read.table("GSE36175_disc_aggregated_tiling_arrays.txt", header=T, stringsAsFactors = F)
+
+#Function for merging damid data
+damid_merge<- function(chrom, pos, data) {
+  #problem: not everything can be merged, is it chrx and het?
+  sub <- subset(data,(data$chromosome==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  bind<-sub[1,5:116]
+  #print(paste(c(chrom, pos, sub)))
+  if(nrow(sub) < 1)
+  sub[1,]<-NA
+  return(bind)
+}
+
+testout<-do.call(rbind.data.frame, (apply(HP1_D2_all, 1, function(x) damid_merge(x[c("chr_r")], x[c("pos_r")], damid_bin))))
+HP1_D2_all<-cbind(HP1_D2_all,testout)
+(subset(HP1_D2_all,is.na(HP1_D2_all$ninestate)))$chromatin
+
+summary(HP1_D2_all[,163:200])
+```
+```{r modEncode, cache=FALSE}
+#merge modEncode data
+files<-list.files(path = "TTRIP_Kc167/modENCODE")
+
+encode <- function(chrom, pos, data) {
+  color<-0
+  sub <- subset(data,(data$chr==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  color<-as.numeric(sub[4])
+  if(is.na(color))
+    color<-0
+  return(color)
+}
+for(i in files){
+  #name<-gsub(".*_|[.].*", "", i)[1]
+  name<-gsub("modEncode_","",i)
+  name<-gsub("*.txt","",name)
+  data<-read.table(paste("TTRIP_Kc167/modENCODE/",i,sep=""), header=F, stringsAsFactors = F)
+  names(data)<-c("chr","start","end","peakh")
+  HP1_D2_all[name] <- apply(HP1_D2_all, 1, function(x) encode(x[9], x[11], data))
+}
+```
+5. GRanges
+-----------
+
+```{r createInsertions, cache=FALSE}
+#working with GRanges
+#create GRanges object of insertions
+insertions <- makeGRangesFromDataFrame(HP1_D2_all, seqnames.field='chr_r', start.field='pos_r', end.field='pos_r')
+insertions$foldch<-HP1_D2_all$foldch_exp_1_exp_2
+insertions$exp_2<-HP1_D2_all$exp_2_gDNA
+insertions$exp_1<-HP1_D2_all$exp_1_gDNA
+insertions$chromatin<-HP1_D2_all$chromatin
+insertions$ninestate<-HP1_D2_all$ninestate
+insertions$barcode<-HP1_D2_all$barcode
+start(insertions) <- end(insertions) <- mid(ranges(insertions))
+
+insertions
+
+```
+```{r}
+#get LAD data from Joke paper
+LADS_dm<-read.table("LADs_PMC2991331.txt", header=F, stringsAsFactors = F)
+names(LADS_dm)<-c("chr","V2","author","start","end","score","V7","V8","V8")
+LADS_dm$chr<-paste("chr",LADS_dm$chr,sep="")
+LAD <- makeGRangesFromDataFrame(LADS_dm, seqnames.field='chr', start.field='start', end.field='end')
+
+#gene data from UCSC genome browser flybase genes
+#http://flybase.org/static_pages/docs/datafiles.html
+fbgenes<-read.table("dm3_fbgenes.txt", header=F, stringsAsFactors = F)
+head(fbgenes)
+names(fbgenes)<-c("bin","name","chrom","strand","txStart","txEnd","cdsStart","cdsEnd","exonCount","exonStarts","exonEnds")
+genes <- makeGRangesFromDataFrame(fbgenes, seqnames.field='chrom', start.field='txStart', end.field='txEnd', strand.field='')
+tss<- makeGRangesFromDataFrame(fbgenes, seqnames.field='chrom', start.field='txStart', end.field='txStart', strand.field='')
+
+#cyto bands from UCSC genome browser
+#cytob<-read.table("cytoBand.txt", header=F, stringsAsFactors = F)
+#head(cytob)
+#names(fbgenes)<-c("bin","name","chrom","strand","txStart","txEnd","cdsStart","cdsEnd","exonCount","exonStarts","exonEnds")
+#genes <- makeGRangesFromDataFrame(fbgenes, seqnames.field='chrom', start.field='txStart', end.field='txEnd', strand.field='')
+
+#repeat masker from UCSC genome browser https://genome.ucsc.edu/cgi-bin/hgTables
+repeatsm<-read.table("repeatmasker.txt", header=F, stringsAsFactors = F)
+names(repeatsm)<-c("bin","swScore","milliDiv","milliDel","milliIns","genoName","genoStart","genoEnd","genoLeft","strand","repName","repClass","repFamily","repStart","repEnd","repLeft","id")
+unique(repeatsm$repFamily)
+repeats<-repeatsm
+#repeats<-subset(repeatsm,repeatsm$repFamily %in% c("LTR","telomeric","Satellite"))
+repeats <- makeGRangesFromDataFrame(repeats, seqnames.field='genoName', start.field='genoStart', end.field='genoEnd', strand.field='')
+
+#exons
+exons<-read.table("exons.csv", header=T, stringsAsFactors = F,sep=",")
+exons$chr<-paste("chr",exons$chr,sep="")
+exons <- makeGRangesFromDataFrame(exons, seqnames.field='chr', start.field='start', end.field='end', strand.field='')
+
+#housekeeping genes (table from Tao)
+house_keeping<-read.table("house_keeping.txt", header=T, stringsAsFactors = F,sep=",")
+housekeep_gr<- makeGRangesFromDataFrame(house_keeping, seqnames.field='chr', start.field='start', end.field='end', strand.field='')
+
+```
+```{r}
+#calculate distance to repeats
+dist_repeats <- distanceToNearest(insertions, repeats)
+insertions$distance_repeats[queryHits(dist_repeats)] <- mcols(dist_repeats)$distance
+
+#calculate distance to tss
+dist_tss <- distanceToNearest(insertions, tss)
+insertions$distance_tss[queryHits(dist_tss)] <- mcols(dist_tss)$distance
+
+#calculate distance to genes
+dist_genes <- distanceToNearest(insertions, genes)
+insertions$distance_genes[queryHits(dist_genes)] <- mcols(dist_genes)$distance
+
+#calculate distance to housekeeping genes
+dist_hk <- distanceToNearest(insertions, housekeep_gr)
+insertions$distance_hk[queryHits(dist_hk)] <- mcols(dist_hk)$distance
+
+
+#overlap with genes
+ovl_genes <- findOverlaps(query=insertions, subject=genes)
+insertions$doOverlapGenes <- FALSE
+insertions$doOverlapGenes[queryHits(ovl_genes)] <- TRUE
+table(insertions$doOverlapGenes)
+
+#overlap with housekeeping genes
+ovl_housegenes <- findOverlaps(query=insertions, subject=housekeep_gr)
+insertions$doOverlapHouseGenes <- FALSE
+insertions$doOverlapHouseGenes[queryHits(ovl_housegenes)] <- TRUE
+table(insertions$doOverlapHouseGenes)
+
+#overlap with exons
+#USE OTHER DATASET
+#a lot fo this stuff does not overlap with flybase genes
+ovl_exons <- findOverlaps(query=insertions, subject=exons)
+insertions$doOverlapExons <- FALSE
+insertions$doOverlapExons[queryHits(ovl_exons)] <- TRUE
+table(insertions$doOverlapGenes,insertions$doOverlapExons)
+
+#extract gRanges data
+gr_HP1_D2_all<-data.frame(cbind(insertions$foldch,insertions$exp_2,insertions$exp_1,insertions$ninestate,insertions$distance_repeats,insertions$distance_tss,insertions$distance_genes,insertions$distance_hk,insertions$doOverlapGenes,insertions$doOverlapHouseGenes,insertions$doOverlapExons))
+names(gr_HP1_D2_all)<-c("foldch","exp_2","exp_1","ninestate","distance_repeats","distance_tss","distance_genes","distance_hk","doOverlapGenes","doOverlapHouseGenes","doOverlapExons")
+gr_HP1_D2_all$chromatin<-insertions$chromatin
+
+head(gr_HP1_D2_all)
+```
+
+6. Figures
+-----------
+
+```{r fig.width=10, fig.height=8}
+#strip chart expression by color
+expr_names <- list(
+  'exp_1_gDNA'="Gal4HP1",
+  'exp_2_gDNA'="Gal4",
+  'exp_3_gDNA'="HP1"
+)
+
+expr_labeller <- function(variable,value){
+  return(expr_names[value])
+}
+
+dataM <-c()
+dataM <- melt(HP1_D2_all,id.vars="ninestate", measure.vars=c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA"))
+dataM<-na.omit(dataM)
+head(dataM)
+ggplot(dataM, aes(x=as.factor(ninestate), y=log2(value + 0.1),colour=as.factor(ninestate))) + 
+  facet_grid(. ~ variable,labeller=expr_labeller)+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 16))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  ggtitle("norm expr by chromatin") +
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  theme(text=element_text(size=20))+
+  theme(plot.title = element_text(size=24))+
+  ylab("log2(expression + 0.1)")
+```
+
+```{r fig.width=4, fig.height=8}
+#strip chart expression by color Gal4 only
+
+
+dataM <-c()
+dataM <- melt(HP1_D2_all,id.vars="ninestate", measure.vars=c("exp_2_gDNA"))
+dataM<-na.omit(dataM)
+head(dataM)
+ggplot(dataM, aes(x=as.factor(ninestate), y=log2(value + 0.1),colour=as.factor(ninestate))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 16))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  #ggtitle("norm expr by chromatin") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  theme(text=element_text(size=20))+
+  theme(plot.title = element_text(size=24))+
+  ylab("log2(expression + 0.1)")+
+  xlab("chromatin state")
+```
+```{r fig.width=4, fig.height=8}
+#strip chart expression by color Gal4 only 5-state model
+
+
+dataM <-c()
+data<-subset(HP1_D2_all, chromatin %in% c("RED","YELLOW","BLUE","BLACK","GREEN"))
+dataM <- melt(data,id.vars="chromatin", measure.vars=c("exp_2_gDNA"))
+dataM<-na.omit(dataM)
+head(dataM)
+ggplot(dataM, aes(x=as.factor(chromatin), y=log2(value + 0.1),colour=chromatin)) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 16))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  #ggtitle("norm expr by chromatin") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle = 90,hjust = 1)) +
+  theme(text=element_text(size=20))+
+  theme(plot.title = element_text(size=24))+
+  ylab("log2(expression + 0.1)")+
+  xlab("chromatin state")+
+  scale_colour_manual(name="chromatin",values=c(RED="red",BLUE="blue",GREEN="green", BLACK ="black", GREY = "grey30", YELLOW ="yellow"))
+```
+
+```{r}
+#statistics expression
+wilcox.test(HP1_D2_all$exp_2_gDNA,HP1_D2_all$exp_1_gDNA)
+wilcox.test(HP1_D2_all$exp_2_gDNA,HP1_D2_all$exp_3_gDNA)
+wilcox.test(HP1_D2_all$exp_1_gDNA,HP1_D2_all$exp_3_gDNA)
+mean(HP1_D2_all$exp_2_gDNA)
+aggregate(HP1_D2_all$exp_2_gDNA,list(HP1_D2_all$ninestate),mean)
+median(HP1_D2_all$exp_2_gDNA)
+aggregate(HP1_D2_all$exp_2_gDNA,list(HP1_D2_all$ninestate),median)
+sd(HP1_D2_all$exp_2_gDNA)
+aggregate(HP1_D2_all$exp_2_gDNA,list(HP1_D2_all$ninestate),sd)
+mad(HP1_D2_all$exp_2_gDNA)
+aggregate(HP1_D2_all$exp_2_gDNA,list(HP1_D2_all$ninestate),mad)
+mean(log2(HP1_D2_all$exp_2_gDNA))
+aggregate(log2(HP1_D2_all$exp_2_gDNA),list(HP1_D2_all$ninestate),mean)
+median(log2(HP1_D2_all$exp_2_gDNA))
+aggregate(log2(HP1_D2_all$exp_2_gDNA),list(HP1_D2_all$ninestate),median)
+sd(log2(HP1_D2_all$exp_2_gDNA))
+aggregate(log2(HP1_D2_all$exp_2_gDNA),list(HP1_D2_all$ninestate),sd)
+mad(log2(HP1_D2_all$exp_2_gDNA))
+aggregate(log2(HP1_D2_all$exp_2_gDNA),list(HP1_D2_all$ninestate),mad)
+
+#table expressing BCDs
+#Gal4 vs Gal4HP1
+nrow(subset(HP1_D2_all, (exp_1_gDNA > 0) & (exp_2_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_1_gDNA > 0) & (exp_2_gDNA == 0)))
+nrow(subset(HP1_D2_all, (exp_1_gDNA == 0) & (exp_2_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_1_gDNA == 0) & (exp_2_gDNA == 0)))
+
+#Gal4 vs HP1
+nrow(subset(HP1_D2_all, (exp_3_gDNA > 0) & (exp_2_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA > 0) & (exp_2_gDNA == 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA == 0) & (exp_2_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA == 0) & (exp_2_gDNA == 0)))
+
+#HP1 vs Gal4HP1
+nrow(subset(HP1_D2_all, (exp_3_gDNA > 0) & (exp_1_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA > 0) & (exp_1_gDNA == 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA == 0) & (exp_1_gDNA > 0)))
+nrow(subset(HP1_D2_all, (exp_3_gDNA == 0) & (exp_1_gDNA == 0)))
+```
+
+```{r fig.width=15, fig.height=6}
+#plot scatter normalized expression
+
+q7cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_1_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_1_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q7<-ggplot(HP1_D2_all, aes(x=log2(exp_2_gDNA + 0.1), y=log2(exp_1_gDNA + 0.1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =1,color="RED") +
+  geom_abline()+
+  #stat_smooth(data=subset(HP1_D2_all,(exp_1_gDNA > 0 & exp_2_gDNA > 0)),method="lm",color = "red") +
+  xlab("log2(expr Gal4 + 0.1)")+
+  ylab("log2(expr Gal4HP1 + 0.1)")+
+  #ggtitle(bquote(atop(.("Gal4HP1 vs Gal4"), atop("",.(q7cor)))))+ 
+  ggtitle("Gal4HP1 vs Gal4")+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q8cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_3_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_3_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q8<-ggplot(HP1_D2_all, aes(x=log2(exp_2_gDNA + 0.1), y=log2(exp_3_gDNA + 0.1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =1,colour="RED") +
+  geom_abline()+
+  #stat_smooth(data=subset(HP1_D2_all,(exp_3_gDNA > 0 & exp_2_gDNA > 0)),method="lm",color = "red") +
+  xlab("log2(expr Gal4 + 0.1)")+
+  ylab("log2(expr HP1 + 0.1)")+
+  #ggtitle(bquote(atop(.("HP1 vs Gal4"), atop("",.(q8cor)))))+ 
+  ggtitle("HP1 vs Gal4")+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q9cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_1_gDNA + 0.1), y=log2(HP1_D2_all$exp_3_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_1_gDNA + 0.1), y=log2(HP1_D2_all$exp_3_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q9<-ggplot(HP1_D2_all, aes(x=log2(exp_3_gDNA + 0.1), y=log2(exp_1_gDNA + 0.1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =1,colour="RED") +
+  geom_abline()+
+  #stat_smooth(data=subset(HP1_D2_all,(exp_1_gDNA > 0 & exp_3_gDNA > 0)),method="lm",color = "red") +
+  xlab("log2(expr HP1 + 0.1)")+
+  ylab("log2(expr Gal4HP1 + 0.1)")+
+  #ggtitle(bquote(atop(.("Gal4HP1 vs HP1"), atop("",.(q9cor)))))+ 
+  ggtitle("Gal4HP1 vs HP1")+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+grid.arrange(q7,q8,q9,nrow=1)
+#grid.arrange(q7,q8,q9,top = "expression normalized to spikein total reads and gDNA",nrow=1)
+```
+```{r fig.width=5, fig.height=6}
+#plot scatter normalized expression Gal4 vs Gal4HP1 only
+
+q7cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_1_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA + 0.1), y=log2(HP1_D2_all$exp_1_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+ggplot(HP1_D2_all, aes(x=log2(exp_2_gDNA + 0.1), y=log2(exp_1_gDNA + 0.1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =1,color="RED") +
+  geom_abline()+
+  #stat_smooth(data=subset(HP1_D2_all,(exp_1_gDNA > 0 & exp_2_gDNA > 0)),method="lm",color = "red") +
+  xlab("log2(expr Gal4)")+
+  ylab("log2(expr Gal4HP1)")+
+  #ggtitle(bquote(atop(.("Gal4HP1 vs Gal4"), atop("",.(q7cor)))))+ 
+  ggtitle("Gal4HP1 vs Gal4")+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+```
+
+```{r fig.width=10, fig.height=12}
+#scatter plot expression vs foldchange
+#Gal4
+q1cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+#q1cor<-paste("r=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q1<-ggplot(na.omit(HP1_D2_all[ ,c("exp_2_gDNA","foldch_exp_1_exp_2")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_1_exp_2))) + 
+  geom_point(shape=19, size =1,colour="red")+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (Gal4HP1/ Gal4)") +
+  xlab("log2 (expr Gal4)") +
+  ggtitle(bquote(atop(.("Gal4HP1/Gal4 vs expr Gal4"), atop("",.(q1cor)))))+ 
+  #ggtitle(bquote(atop(.("Gal4HP1/Gal4 vs expression Gal4"), atop(.(q1cor)))))+ 
+  stat_smooth(method = "lm")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q2cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_3_exp_2),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_3_exp_2),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_3_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_3_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q2<-ggplot(na.omit(HP1_D2_all[ ,c("exp_2_gDNA","foldch_exp_3_exp_2")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_3_exp_2), colour="red")) + 
+  geom_point(shape=19, size =1) +
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (HP1/ Gal4)") +
+  xlab("log2 (expr Gal4)") +
+  ggtitle(bquote(atop(.("HP1/Gal4 vs expr Gal4"), atop("",.(q2cor)))))+ 
+  stat_smooth(method = "lm")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q3cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA ), y=log2(HP1_D2_all$foldch_exp_1_exp_3),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_3),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_3),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_3),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q3<-ggplot(na.omit(HP1_D2_all[ ,c("exp_2_gDNA","foldch_exp_1_exp_3")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_1_exp_3), colour="red")) + 
+  geom_point(shape=19, size =1) +
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (Gal4HP1/ HP1)") +
+  xlab("log2 (expr Gal4 + 0.1)") +
+  ggtitle(bquote(atop(.("Gal4HP1/ HP1 vs expr Gal4"), atop("",.(q3cor)))))+ 
+  stat_smooth(method = "lm")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+grid.arrange(q1,q2,q3,top="fold change vs expression Gal4",nrow=2)
+```
+
+```{r fig.width=5, fig.height=6}
+#scatter plot expression vs foldchange Gal4HP1/Gal4 only
+#Gal4
+q1cor<-paste("r(p)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(HP1_D2_all$exp_2_gDNA), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+ggplot(na.omit(HP1_D2_all[ ,c("exp_2_gDNA","foldch_exp_1_exp_2")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_1_exp_2))) + 
+  geom_point(shape=19, size =1,colour="red")+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (Gal4HP1/ Gal4)") +
+  xlab("log2 (expr Gal4)") +
+  ggtitle(bquote(atop(.("Gal4HP1/Gal4 vs expr Gal4"), atop("",.(q1cor)))))+ 
+  #ggtitle(bquote(atop(.("Gal4HP1/Gal4 vs expression Gal4"), atop(.(q1cor)))))+ 
+  stat_smooth(method = "lm",color="red")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+```
+
+
+```{r fig.width=12, fig.height=6}
+#foldch by 9 state model strip chart
+
+foldch_names <- list(
+  'foldch_exp_1_exp_2'="Gal4HP1 / Gal4",
+  'foldch_exp_3_exp_2'="HP1 / Gal4",
+  'foldch_exp_1_exp_3'="Gal4HP1 / HP1"
+)
+
+foldch_labeller <- function(variable,value){
+  return(foldch_names[value])
+}
+
+dataM <- melt(HP1_D2_all, measure.vars=c("foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3"),id.vars="ninestate")
+dataM<-na.omit(dataM)
+
+ggplot(dataM, aes(x=as.factor(ninestate), y=log2(value),colour=as.factor(ninestate))) + 
+  facet_grid(. ~ variable,labeller=foldch_labeller)+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 20))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  ggtitle("fold change by chromatin") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  theme(text = element_text(size = 20)) +
+  geom_hline(yintercept=0, colour = "grey30") +
+  theme(plot.title = element_text(size=24))+
+  scale_y_continuous(breaks=seq(-15, 15, by=1))+
+  ylab("log2 (fold change)")
+```
+
+
+
+
+```{r fig.width=5, fig.height=6}
+#foldch by 9 state model Gal4HP1/Gal4 only
+
+
+dataM <- melt(HP1_D2_all, measure.vars=c("foldch_exp_1_exp_2"),id.vars="ninestate")
+dataM<-na.omit(dataM)
+
+ggplot(dataM, aes(x=as.factor(ninestate), y=log2(value),colour=as.factor(ninestate))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 20))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  #ggtitle("Gal4HP1/Gal4 with median") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(hjust = 1)) +
+  theme(text = element_text(size = 20)) +
+  geom_hline(yintercept=0, colour = "grey30") +
+  theme(plot.title = element_text(size=24))+
+  scale_y_continuous(breaks=seq(-15, 15, by=1))+
+  ylab("log2 (Gal4HP1/Gal4)")+
+  xlab("chromatin state")
+```
+
+```{r fig.width=5, fig.height=6}
+#foldch by 5 state model strip chart
+
+foldch_names <- list(
+  'foldch_exp_1_exp_2'="Gal4HP1 / Gal4",
+  'foldch_exp_3_exp_2'="HP1 / Gal4",
+  'foldch_exp_1_exp_3'="Gal4HP1 / HP1"
+)
+
+foldch_labeller <- function(variable,value){
+  return(foldch_names[value])
+}
+
+dataM <- melt(HP1_D2_all, measure.vars=c("foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3"),id.vars="chromatin")
+dataM<-na.omit(dataM)
+
+ggplot(dataM, aes(x=as.factor(chromatin), y=log2(value),colour=as.factor(chromatin))) + 
+  facet_grid(. ~ variable,labeller=foldch_labeller)+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 20))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  #ggtitle("Gal4HP1/Gal4 with median") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle= 90,hjust = 1)) +
+  theme(text = element_text(size = 20)) +
+  geom_hline(yintercept=0, colour = "grey30") +
+  theme(plot.title = element_text(size=24))+
+  scale_y_continuous(breaks=seq(-15, 15, by=1))+
+  ylab("log2 (Gal4HP1/Gal4)")+
+  xlab("chromatin state")+
+  scale_colour_manual(name="chromatin",values=c(RED="red",BLUE="blue",GREEN="green", BLACK ="black", GREY = "grey30", YELLOW ="yellow"))
+```
+
+
+```{r fig.width=5, fig.height=6}
+#foldch by 5 state model Gal4HP1/Gal4 only
+
+
+dataM <- melt(HP1_D2_all, measure.vars=c("foldch_exp_1_exp_2"),id.vars="chromatin")
+dataM<-na.omit(dataM)
+
+ggplot(dataM, aes(x=as.factor(chromatin), y=log2(value),colour=chromatin)) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 20))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  #ggtitle("Gal4HP1/Gal4 with median") +
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(angle= 90,hjust = 1)) +
+  theme(text = element_text(size = 20)) +
+  geom_hline(yintercept=0, colour = "grey30") +
+  theme(plot.title = element_text(size=24))+
+  scale_y_continuous(breaks=seq(-15, 15, by=1))+
+  ylab("log2 (Gal4HP1/Gal4)")+
+  xlab("chromatin state")+
+  scale_colour_manual(name="chromatin",values=c(RED="red",BLUE="blue",GREEN="green", BLACK ="black", GREY = "grey30", YELLOW ="yellow"))
+```
+
+```{r}
+#statistics foldch
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","ninestate")])
+summary(HP1_D2_all[c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+nrow(HP1_D2_all)
+table(data$ninestate)
+sum(table(data$ninestate))
+mean(data$foldch_exp_1_exp_2)
+aggregate((data$foldch_exp_1_exp_2),list(data$ninestate),mean)
+median(data$foldch_exp_1_exp_2)
+aggregate((data$foldch_exp_1_exp_2),list(data$ninestate),median)
+sd(data$foldch_exp_1_exp_2)
+aggregate((data$foldch_exp_1_exp_2),list(data$ninestate),sd)
+mad(data$foldch_exp_1_exp_2)
+aggregate((data$foldch_exp_1_exp_2),list(data$ninestate),mad)
+mean(log2(data$foldch_exp_1_exp_2))
+aggregate(log2(data$foldch_exp_1_exp_2),list(data$ninestate),mean)
+median(log2(data$foldch_exp_1_exp_2))
+aggregate(log2(data$foldch_exp_1_exp_2),list(data$ninestate),median)
+sd(log2(data$foldch_exp_1_exp_2))
+aggregate(log2(data$foldch_exp_1_exp_2),list(data$ninestate),sd)
+mad(log2(data$foldch_exp_1_exp_2))
+aggregate(log2(data$foldch_exp_1_exp_2),list(data$ninestate),mad)
+
+
+#state 7
+median((subset(data, data$ninestate==7))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate==7))$foldch_exp_1_exp_2)
+median((subset(data, data$ninestate!=7))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate!=7))$foldch_exp_1_exp_2)
+
+#state 1
+median((subset(data, data$ninestate==1))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate==1))$foldch_exp_1_exp_2)
+median((subset(data, data$ninestate!=1))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate!=1))$foldch_exp_1_exp_2)
+
+#state 2
+median((subset(data, data$ninestate==2))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate==2))$foldch_exp_1_exp_2)
+median((subset(data, data$ninestate!=2))$foldch_exp_1_exp_2)
+mad((subset(data, data$ninestate!=2))$foldch_exp_1_exp_2)
+```
+
+```{r}
+#wilcox-test foldch nine state colors
+p <- list()
+tres <- list()
+states<-c(1,2,3,4,5,6,7,8,9)
+for(i in states){
+  df2 <- HP1_D2_all[, c("ninestate", "foldch_exp_1_exp_2","exp_2_gDNA")]
+  df2$foldch_exp_1_exp_2 <- log2(df2$foldch_exp_1_exp_2)
+  df2$exp_2_gDNA <- log2(df2$exp_2_gDNA + 0.1)
+  df2<-na.omit(df2)
+  df2$group<-factor(df2$ninestate == i)
+  t<-(t.test(df2$foldch_exp_1_exp_2~df2$group))
+  w<-(wilcox.test(df2$foldch_exp_1_exp_2~df2$group))
+  #print(m)
+  pval<-paste("p=",signif(w$p.value,digits = 3))
+  g1<-ggplot(df2, aes_string(x = factor("group"), y = "foldch_exp_1_exp_2")) + 
+    theme(panel.background = element_rect(fill = "lavender"))+
+    facet_wrap(~group)+
+    geom_point(position=position_jitter(width=.2),color="red") + 
+    ggtitle(bquote(atop(.(i),.(pval))))+ 
+    geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..), color="black")+
+    ylab("log2 (Gal4HP1/ Gal4)") +
+    scale_y_continuous(breaks=seq(-15, 15, by=1))+
+    theme(text = element_text(size = 20)) +
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  i<-as.character(i)
+  tres[[i]] <- c(t$p.value,t$estimate,w$p.value)
+  p[[i]] <- g1
+}
+tres
+```
+```{r fig.width=5, fig.height=12}
+do.call(grid.arrange,p)
+
+
+```
+
+```{r}
+#wilcox-test foldch nine state colors
+#for Gal4HP1/HP1
+p <- list()
+tres <- list()
+states<-c(1,2,3,4,5,6,7,8,9)
+for(i in states){
+  df2 <- HP1_D2_all[, c("ninestate", "foldch_exp_1_exp_3","exp_2_gDNA")]
+  df2$foldch_exp_1_exp_3 <- log2(df2$foldch_exp_1_exp_3)
+  df2$exp_2_gDNA <- log2(df2$exp_2_gDNA + 0.1)
+  df2<-na.omit(df2)
+  df2$group<-factor(df2$ninestate == i)
+  t<-(t.test(df2$foldch_exp_1_exp_3~df2$group))
+  w<-(wilcox.test(df2$foldch_exp_1_exp_3~df2$group))
+  #print(m)
+  pval<-paste("p=",signif(w$p.value,digits = 3))
+  g1<-ggplot(df2, aes_string(x = factor("group"), y = "foldch_exp_1_exp_3")) + 
+    theme(panel.background = element_rect(fill = "lavender"))+
+    facet_wrap(~group)+
+    geom_point(position=position_jitter(width=.2),color="red") + 
+    ggtitle(bquote(atop(.(i),.(pval))))+ 
+    geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..), color="black")+
+    ylab("log2 (Gal4HP1/ HP1)") +
+    scale_y_continuous(breaks=seq(-15, 15, by=1))+
+    theme(text = element_text(size = 20)) +
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  i<-as.character(i)
+  tres[[i]] <- c(t$p.value,t$estimate,w$p.value)
+  p[[i]] <- g1
+}
+tres
+```
+```{r fig.width=5, fig.height=12}
+do.call(grid.arrange,p)
+
+
+```
+
+```{r}
+#I want to see if chrom colors differ in silencing
+#the problem is that the colors have largely different expression
+#I want to correct for that and compare foldch for same expression range that I have in query color
+#pick same expression range from other colors
+#do t-test to check if means differ
+#then do t-test for foldch 
+#PROBLEM: something like BLACK: covers a large number of BCDs and I know that the expr is significantly different
+#In the end I will be comparing several BLACK BCDs to the same BCD of other chromatins - how to best correct for that?
+p<-list()
+p2<-list()
+for(i in unique(na.omit(HP1_D2_all$ninestate))){
+  df2 <- HP1_D2_all[, c("ninestate","exp_2_gDNA","foldch_exp_1_exp_2")]
+  df2<-subset(df2, df2$exp_2_gDNA > 0)
+  df2$exp_2_gDNA <- log2(df2$exp_2_gDNA)
+  df2$foldch_exp_1_exp_2 <- log2(df2$foldch_exp_1_exp_2)
+  df2<-na.omit(df2)
+  df2$group<-factor(df2$ninestate == i)
+  dfy<-subset(df2, df2$group == T)
+  dfn<-subset(df2, df2$group == F)
+  res<-sapply(dfy$exp_2_gDNA,function(x)which.min(abs(x - dfn$exp_2_gDNA)))
+  comp<-cbind(dfy,dfn[res,])
+  head(comp)
+  names(comp)<-c("chromatin_T","exp_2_gDNA_T","foldch_T","group_T","chromatin_F","exp_2_gDNA_F","foldch_F","group_F")
+  #text if expression is really comparable
+  t1<-(t.test(comp[,2],comp[,6]))
+  #print(t1)
+  #test if there is diff in foldch
+  t<-(t.test(comp[,3],comp[,7]))
+  w<-(wilcox.test(comp[,3],comp[,7]))
+  head(dataM)
+  dataM <- melt(comp, measure.vars=c("foldch_T","foldch_F"), id.vars=c("chromatin_F"))
+  dataM2 <- melt(comp, measure.vars=c("exp_2_gDNA_T","exp_2_gDNA_F"))
+  g1<-ggplot(dataM, aes_string(x = factor("variable"), y = "value", color = "chromatin_F")) + 
+    theme(panel.background = element_rect(fill = "lavender"))+
+    facet_wrap(~variable)+
+    geom_point(position=position_jitter(width=.2)) + 
+    ggtitle(bquote(atop(.(i),.(signif(w$p.value),digits=3))))+ 
+    geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..), color="black")+
+    ylab("log2 (Gal4HP1/ HP1)") +
+    scale_y_continuous(breaks=seq(-15, 15, by=1))+
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  g2<-ggplot(dataM2, aes_string(x = factor("variable"), y = "value")) + 
+    facet_wrap(~variable)+
+    geom_point(position=position_jitter(width=.2)) + 
+    ggtitle(bquote(atop(.(i),.(signif(w$p.value),digits=3))))+ 
+    geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y.., color="red"))+
+    ylab("log2 (Gal4HP1/ HP1)") +
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  i<-as.character(i)
+  p[[i]] <- g1
+  p2[[i]]<-g2
+  tres[[i]] <- c(t$p.value,t$estimate,w$p.value,t1$p.value,nrow(comp),median(2 ^ (comp$foldch_T)),mad(2 ^ (comp$foldch_T)),median(2 ^(comp$foldch_F)),mad(2 ^(comp$foldch_F)))
+}
+tres
+```
+```{r fig.width=5, fig.height=12}
+do.call(grid.arrange,p)
+
+```
+```{r fig.width=5, fig.height=12}
+do.call(grid.arrange,p2)
+
+```
+
+
+```{r}
+#calculate t-test for fold change between POI in bound and unbound state
+p <- list()
+tres <- list()
+pval<-data.frame()
+pcorr<-data.frame()
+for(i in names(HP1_D2_all[51:162])){
+  #print(i)
+  df2 <- HP1_D2_all[, c(i, "foldch_exp_1_exp_2")]
+  df2$foldch_exp_1_exp_2 <- log2(df2$foldch_exp_1_exp_2)
+  df2<-na.omit(df2)
+  names(df2)<-c("POI","foldch_exp_1_exp_2")
+  t<-(t.test(df2$foldch_exp_1_exp_2~df2$POI))
+  w<-(wilcox.test(df2$foldch_exp_1_exp_2~df2$POI))
+  m<-as.matrix(aggregate(df2$foldch_exp_1_exp_2,list(df2$POI),mean))
+  g1<-ggplot(df2, mapping=aes_string(y = "foldch_exp_1_exp_2", x = factor("POI"))) + 
+    facet_wrap(~POI)+
+    geom_point(position=position_jitter(width=.2)) + 
+    ggtitle(i)+
+    geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y.., color="red"))+
+    ylab("log2(Gal4POI/Gal4)")+
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  p[[i]] <- g1
+  tres[[i]] <- c(t$p.value,w$p.value,t$estimate)
+}
+pcval<-c()
+pcvalc<-c()
+pcval<-do.call("rbind", tres)
+
+pcval<-as.data.frame(pcval)
+names(pcval)<-c("p.value","p.value.wilcox","mean_F","mean_T")
+pcval$diff<-pcval$mean_F - pcval$mean_T
+p.corr<-p.adjust(pcval$p.value.wilcox, method = "BH")
+pcval<-cbind(pcval, p.corr)
+pcval<-pcval[order(pcval$p.corr),] 
+pcval
+pcvalc<-subset(pcval,(pcval$p.corr<=0.05))
+nrow(pcvalc)
+pcvalc
+pcvalc_store<-pcvalc
+head(pcvalc)
+#also include means
+p2 <- list()
+#print graphs only for significant p after BH correction
+for(i in row.names(pcvalc)){
+  #print(i)
+  df2 <- HP1_D2_all[, c(i, "foldch_exp_1_exp_2")]
+  df2$foldch_exp_1_exp_2 <- log2(df2$foldch_exp_1_exp_2)
+  df2<-na.omit(df2)
+  names(df2)<-c("POI","foldch_exp_1_exp_2")
+  m<-as.matrix(aggregate(df2$foldch_exp_1_exp_2,list(df2$POI),mean))
+  g1<-ggplot(df2, mapping=aes_string(y = "foldch_exp_1_exp_2", x = factor("POI"))) + 
+    facet_wrap(~POI)+
+    geom_point(position=position_jitter(width=.2)) + 
+    ggtitle(i)+
+    geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y.., color="red"))+
+    ylab("log2(Gal4POI/Gal4)")+
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  p2[[i]] <- g1
+}
+```
+significant hits after t-test for fold change between POI bound and unbound at IR (after BH correction)
+```{r fig.width=10, fig.height=20}
+do.call(grid.arrange,p2)
+
+```
+
+
+```{r}
+#cor.test for ModEncode ChIP seq scores
+pclist <- list()
+
+for(i in names(HP1_D2_all[163:212])){
+  df2 <- HP1_D2_all[, c(i,"foldch_exp_1_exp_2")]
+  print(i)
+  df2<-na.omit(df2)
+  df2$foldch_exp_1_exp_2<-log2(df2$foldch_exp_1_exp_2)
+  #df2<-subset(df2, df2[,c(i)] !=0)
+  names(df2)<-c("POI","foldch_exp_1_exp_2")
+  pc<-1
+  est<-0
+  if((nrow(df2))>0){
+  pc<-(cor.test(df2[[1]],df2[[2]],method="pearson"))$p.value
+  est<-(cor.test(df2[[1]],df2[[2]],method="pearson"))$estimate
+  }
+  pclist[[i]] <- c(pc,est)
+}
+pcval<-c()
+pcvalc<-c()
+pcval<-do.call("rbind", pclist)
+pcval<-as.data.frame(pcval)
+names(pcval)<-c("p.value","cor")
+pcval<-pcval[order(pcval$p.value),]
+pcval
+p.corr<-p.adjust(pcval$p.value, method = "BH")
+pcval<-cbind(pcval, p.corr)
+pcval<-pcval[order(pcval$p.corr),] 
+pcvalc<-subset(pcval,(pcval$p.corr<=0.05))
+nrow(pcvalc)
+pcvalc
+
+```
+```{r}
+p2 <- list()
+#print graphs only for significant p after BH correction
+for(i in row.names(pcvalc)){
+  #print(i)
+  df2 <- HP1_D2_all[, c(i, "foldch_exp_1_exp_2")]
+  df2<-na.omit(df2)
+  names(df2)<-c("POI","foldch_exp_1_exp_2")
+  df2$foldch_exp_1_exp_2<-log2(df2$foldch_exp_1_exp_2)
+  m<-as.matrix(aggregate(df2$foldch_exp_1_exp_2,list(df2$POI),mean))
+  g1<-ggplot(df2, mapping=aes_string(y = "foldch_exp_1_exp_2", x = "POI")) + 
+    geom_point(color="RED") + 
+    ggtitle(i)+
+    ylab("log2(Gal4HP1/Gal4)")+
+    xlab("ChIP score")+
+    geom_smooth(method="lm")+
+    theme(legend.position="none")
+  p2[[i]] <- g1
+}
+```
+significant hits for correlation between POI bound/unbound and fold change POI/Gal4 (after BH correction)
+```{r fig.width=15, fig.height=17}
+do.call(grid.arrange,p2)
+
+```
+```{r}
+
+head(gr_HP1_D2_all)
+#test overlap genes
+tst<-na.omit(gr_HP1_D2_all[c("foldch","doOverlapGenes")])
+wilcox.test(tst$foldch~tst$doOverlapGenes)
+table(tst$doOverlapGenes)
+aggregate(tst$foldch,list(tst$doOverlapGenes),median)
+aggregate(tst$foldch,list(tst$doOverlapGenes),mad)
+
+#test overlap housekeeping genes
+tst<-subset(gr_HP1_D2_all,gr_HP1_D2_all$doOverlapGenes == 1)
+tst<-na.omit(tst[c("foldch","doOverlapHouseGenes")])
+wilcox.test(tst$foldch~tst$doOverlapHouseGenes)
+table(tst$doOverlapHouseGenes)
+aggregate(tst$foldch,list(tst$doOverlapHouseGenes),median)
+aggregate(tst$foldch,list(tst$doOverlapHouseGenes),mad)
+
+#TSS proximity
+tst<-na.omit(gr_HP1_D2_all[c("foldch","distance_tss")])
+cor.test(tst$foldch,tst$distance_tss,method="spearman")
+ggplot(subset(tst,tst$distance_tss <10000),aes(x=(distance_tss),y=log2(foldch)))+
+  geom_point()+
+  geom_smooth()
+
+tst$near<-factor(tst$distance_tss < 2000)
+wilcox.test(tst$foldch~tst$near)
+aggregate(tst$foldch,list(tst$near),median)
+
+```
+```{r}
+#check individual proteins/mods for effect
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3")])
+wilcox.test(data$foldch_exp_1_exp_2~data$H3K36ME3)
+table(data$H3K36ME3)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K36ME3),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K36ME3),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","ninestate")])
+data<-subset(data,data$H3K36ME3 == 1)
+data$state12<-factor(data$ninestate %in% c(1,2))
+wilcox.test(data$foldch_exp_1_exp_2~data$state12)
+table(data$state12)
+aggregate(data$foldch_exp_1_exp_2,list(data$state12),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$state12),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","H3K79ME2","H3K4ME2","ninestate")])
+data$statespecial<-factor((data$H3K36ME3 == 1) & (data$H3K79ME2 == 1) & (data$H3K4ME2 == 1))
+wilcox.test(data$foldch_exp_1_exp_2~data$statespecial)
+table(data$statespecial)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","H3K79ME2","H3K4ME2","ninestate")])
+data$statespecial<-factor((data$H3K36ME3 == 1) & (data$H3K79ME2 == 1))
+wilcox.test(data$foldch_exp_1_exp_2~data$statespecial)
+table(data$statespecial)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","H3K79ME2","H3K4ME2","ninestate")])
+data$statespecial<-factor((data$H3K36ME3 == 1) & (data$H3K4ME2 == 1))
+wilcox.test(data$foldch_exp_1_exp_2~data$statespecial)
+table(data$statespecial)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","H3K79ME2","H3K4ME2","ninestate")])
+data$statespecial<-factor((data$H3K4ME2 == 1))
+wilcox.test(data$foldch_exp_1_exp_2~data$statespecial)
+table(data$statespecial)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K36ME3","H3K79ME2","H3K4ME2","ninestate")])
+data$statespecial<-factor((data$H3K79ME2 == 1) & (data$H3K4ME2 == 1))
+wilcox.test(data$foldch_exp_1_exp_2~data$statespecial)
+table(data$statespecial)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$statespecial),mad)
+
+ggplot(subset(data, data$ninestate %in% c(1,2)),aes(x=statespecial,y=log2(foldch_exp_1_exp_2),color=factor(ninestate)))+
+  geom_point(position=position_jitter(width=.2))+
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K79ME2")])
+wilcox.test(data$foldch_exp_1_exp_2~data$H3K79ME2)
+table(data$H3K79ME2)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K79ME2),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K79ME2),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","H3K4ME2")])
+wilcox.test(data$foldch_exp_1_exp_2~data$H3K4ME2)
+table(data$H3K4ME2)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K4ME2),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$H3K4ME2),mad)
+
+data<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","MRG15")])
+wilcox.test(data$foldch_exp_1_exp_2~data$MRG15)
+aggregate(data$foldch_exp_1_exp_2,list(data$MRG15),median)
+aggregate(data$foldch_exp_1_exp_2,list(data$MRG15),mad)
+```
+
+```{r fig.width=5, fig.height=6}
+ggplot(na.omit(HP1_D2_all[c("H3K4ME2","H3K36ME3","foldch_exp_1_exp_2","ninestate")]),aes(x=factor(H3K4ME2), y=log2(foldch_exp_1_exp_2),color=factor(ninestate)))+
+  facet_wrap(~H3K36ME3)+
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  geom_point(position=position_jitter(width=.2))
+```
+```{r fig.width=5, fig.height=6}
+#H3K36/K4me signature only state 1
+tst<-subset(HP1_D2_all,HP1_D2_all$ninestate == 1)
+ggplot(na.omit(tst[c("H3K4ME2","H3K36ME3","foldch_exp_1_exp_2","ninestate")]),aes(x=factor(H3K4ME2), y=log2(foldch_exp_1_exp_2),color=factor(ninestate)))+
+  facet_wrap(~H3K36ME3)+
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  geom_point(position=position_jitter(width=.2))
+```
+
+```{r}
+#make categories for foldch_exp_1_exp_2
+# 1 = 0 reads in exp_1, > 0 reads in exp_2 (complete silencing)
+# 2 = foldch < 0.5
+# 3 = foldch  0.5 - 0.9
+# 4 = folch > 0.9 (aka unchanged)
+
+foldch_cat <- function(exp_1,exp_2,foldch) {
+  exp_1<-as.numeric(exp_1)
+  exp_2<-as.numeric(exp_2)
+  foldch<-as.numeric(foldch)
+  if (!is.na(foldch)){
+    if (foldch <= 0.5)
+    fcg <- "3 foldch <= 0.5"
+    if ((foldch > 0.5) & (foldch <= 2))
+    fcg <- "4 foldch 0.5 - 2"
+    if (foldch > 2)
+    fcg <- "5 foldch >2"
+    }
+  else{if (is.na(foldch))
+    if (exp_2 == 0)
+    fcg <- "1 unexpressed"
+    if ((exp_1 == 0) & (exp_2 > 0))
+    fcg <- "2 complete silencing" 
+    }
+  return(fcg)
+}
+
+
+HP1_D2_all$fcg_12<- apply(HP1_D2_all, 1, function(x) foldch_cat(x["exp_1_gDNA"],x["exp_2_gDNA"],x["foldch_exp_1_exp_2"]))
+HP1_D2_all$fcg_32<- apply(HP1_D2_all, 1, function(x) foldch_cat(x["exp_3_gDNA"],x["exp_2_gDNA"],x["foldch_exp_3_exp_2"]))
+HP1_D2_all$fcg_13<- apply(HP1_D2_all, 1, function(x) foldch_cat(x["exp_1_gDNA"],x["exp_3_gDNA"],x["foldch_exp_1_exp_3"]))
+
+table(HP1_D2_all$fcg_12)/sum(table(HP1_D2_all$fcg_12))*100
+table(HP1_D2_all$fcg_32)/sum(table(HP1_D2_all$fcg_32))*100
+table(HP1_D2_all$fcg_13)/sum(table(HP1_D2_all$fcg_13))*100
+```
+        
+```{r fig.width=10, fig.height=10}
+dataM <- melt(HP1_D2_all[ ,c("fcg_12","fcg_32","fcg_13")],measure.vars=c("fcg_12","fcg_32","fcg_13"))
+ggplot(dataM, aes(x=value, fill=value,color=360)) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_bar(aes(y = (..count..)/sum(..count..)*300),fill="red",color="black") + 
+  scale_fill_manual(values = c("grey",105,90,15,75))+
+  facet_grid(variable ~ .,labeller=foldch_labeller)+
+  theme(strip.text.y = element_text(size = 20),axis.text.y = element_text(size = 20),axis.text.x = element_text(size = 20))+
+  ggtitle("BCDs per fold change group")+
+  theme(legend.position="none") +
+  theme(plot.title = element_text(size=24))+
+  ylab("% BCDs") +
+  scale_x_discrete(labels=c("unexpressed", "silenced", "fold change < 0.5","fold change 0.5 - 2", "fold change > 2")) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+```{r fig.width=10, fig.height=10}
+ggplot(na.omit(HP1_D2_all[c("pos_r","foldch_exp_1_exp_2","chr_r","ninestate")]),aes(x=(pos_r),y=log2(foldch_exp_1_exp_2),color=factor(ninestate)))+
+geom_point()+
+facet_wrap(~chr_r)
+#geom_smooth(method="loess")
+```
+
+```{r}
+#read DamID-seq data for HP1
+load("1540_KC_Dam_3_ACAGTG_L005_R1_local_GATCcounts.RData")
+reads2GATC_DAM<-reads2GATC
+reads2GATC<-NULL
+load("1540_Kc_HP1_4_GCCAAT_L005_R1_local_GATCcounts.RData")
+reads2GATC_HP1<-reads2GATC
+
+
+```
+```{r fig.width=10, fig.height=10}
+ggplot(reads2GATC_DAM, aes(x=log2(count)))+
+  geom_histogram()
+ggplot(reads2GATC_HP1, aes(x=log2(count)))+
+  geom_histogram()
+
+```
+
+reads2GATC_HP1$norm<-(reads2GATC_HP1$count +1)/(reads2GATC_DAM$count +1)
+
+reads2GATC_HP1$seqname<-paste("chr",reads2GATC_HP1$seqname,sep="")
+
+damidseq <- function(chrom, pos, data) {
+  color<-0
+  sub <- subset(data,(data$seqname==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  color<-as.numeric(sub[6])
+  return(color)
+}
+
+HP1_D2_all$HP1_DamIDseq <- apply(HP1_D2_all, 1, function(x) damidseq(x[9], x[11], reads2GATC_HP1))
+
+#correlation HP1 scores and foldch
+cor.test(log2(HP1_D2_all$foldch_exp_1_exp_2),log2(HP1_D2_all$HP1_DamIDseq),method="pearson")
+cor.test(log2(HP1_D2_all$foldch_exp_1_exp_2),log2(HP1_D2_all$HP1_DamIDseq),method="spearman")
+#correlation HP1 scores and foldch for high HP1 levels
+test<-subset(HP1_D2_all,HP1_D2_all$HP1_DamIDseq > 1)
+cor.test(log2(test$foldch_exp_1_exp_2),log2(test$HP1_DamIDseq),method="pearson")
+cor.test(log2(test$foldch_exp_1_exp_2),log2(test$HP1_DamIDseq),method="spearman")
+```
+
+```{r fig.width=7, fig.height=5}
+ggplot(HP1_D2_all,aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(HP1_D2_all$ninestate)))+
+  geom_smooth(method="loess",color="grey30")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(HP1 DamID signal)")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+
+```{r fig.width=7, fig.height=5}
+#HP1 and H3K36me3
+ggplot(HP1_D2_all,aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq),color=factor(H3K36ME3)))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+```{r fig.width=6, fig.height=5}
+#correlation test for H3K9me2
+test<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","938_H3K9me2")])
+cor.test(log2(test$foldch_exp_1_exp_2),test$'938_H3K9me2')
+cor.test(log2(test$foldch_exp_1_exp_2),test$'938_H3K9me2',method="pearson")
+ggplot(test,aes(y=log2(foldch_exp_1_exp_2),x=(test$'938_H3K9me2')))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+```{r fig.width=6, fig.height=5}
+#correlation test for H3K9me3
+test<-na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","3013_H3K9me3")])
+cor.test(log2(test$foldch_exp_1_exp_2),test$'3013_H3K9me3')
+cor.test(log2(test$foldch_exp_1_exp_2),test$'3013_H3K9me3',method="pearson")
+ggplot(test,aes(y=log2(foldch_exp_1_exp_2),x=(test$'3013_H3K9me3')))+
+  geom_point()+
+  geom_smooth(method="lm")
+```
+
+
+```{r fig.width=6, fig.height=5}
+ggplot(test,aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq),color=ninestate))+
+  geom_point(aes(color=factor(test$ninestate)))+
+  geom_smooth(method="loess")
+```
+```{r fig.width=6, fig.height=5}
+#HP1 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","HP1_DamIDseq")]),aes(x=factor(ninestate),y=log2(HP1_DamIDseq),color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")+
+  ylab("log2(HP1 DamID score)")+
+  xlab("chromatin state")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+  
+```
+```{r fig.width=6, fig.height=5}
+#H3K9me2 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","H3K9ME2")]),aes(x=factor(ninestate),y=H3K9ME2,color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r fig.width=6, fig.height=5}
+#H3K9me2 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","938_H3K9me2")]),aes(x=factor(ninestate),y=na.omit(HP1_D2_all[c("ninestate","938_H3K9me2")])$'938_H3K9me2',color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r fig.width=6, fig.height=5}
+#H3K9me3 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","3013_H3K9me3")]),aes(x=factor(ninestate),y=na.omit(HP1_D2_all[c("ninestate","3013_H3K9me3")])$'3013_H3K9me3',color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r fig.width=6, fig.height=5}
+#H3K36ME3 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","302_H3K36me3")]),aes(x=factor(ninestate),y=na.omit(HP1_D2_all[c("ninestate","302_H3K36me3")])$'302_H3K36me3',color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r fig.width=6, fig.height=5}
+#H3K4me2 levels over all states
+ggplot(na.omit(HP1_D2_all[c("ninestate","4935_H3K4me2")]),aes(x=factor(ninestate),y=na.omit(HP1_D2_all[c("ninestate","4935_H3K4me2")])$'4935_H3K4me2',color=factor(ninestate)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r}
+#HP1 and H3K9me levels state 7 and 8
+test<-subset(HP1_D2_all,HP1_D2_all$ninestate %in% c(7,8))
+wilcox.test(log2(test$HP1_DamIDseq)~test$ninestate)
+aggregate(test$HP1_DamIDseq,list(test$ninestate),mean)
+aggregate(test$HP1_DamIDseq,list(test$ninestate),median)
+aggregate(HP1_D2_all$HP1_DamIDseq,list(HP1_D2_all$ninestate),mean)
+aggregate(HP1_D2_all$HP1_DamIDseq,list(HP1_D2_all$ninestate),median)
+mean((subset(HP1_D2_all,HP1_D2_all$ninestate != 7))$HP1_DamIDseq)
+median((subset(HP1_D2_all,HP1_D2_all$ninestate != 7))$HP1_DamIDseq)
+
+wilcox.test((test$'938_H3K9me2')~test$ninestate)
+aggregate(test$'938_H3K9me2',list(test$ninestate),median)
+wilcox.test((test$'3013_H3K9me3')~test$ninestate)
+aggregate(test$'3013_H3K9me3',list(test$ninestate),median)
+wilcox.test(log2(test$foldch_exp_1_exp_2)~test$H3K9ME2)
+```
+
+```{r fig.width=6, fig.height=5}
+ggplot(test,aes(x=factor(ninestate),y=log2(HP1_DamIDseq)))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "mean",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+
+```
+```{r fig.width=6, fig.height=5}
+ggplot(test,aes(x=log2(HP1_DamIDseq),y=log2(foldch_exp_1_exp_2)))+
+  geom_point(aes(color=factor(test$ninestate)))  + 
+  geom_smooth()
+
+```
+```{r fig.width=6, fig.height=5}
+#H3K9me levels state 7 and 8
+test<-subset(HP1_D2_all,HP1_D2_all$ninestate %in% c(7,8))
+test<-na.omit(test[c("foldch_exp_1_exp_2","3013_H3K9me3","ninestate")])
+ggplot(test,aes(x=factor(ninestate),y=log2(test$'3013_H3K9me3')))+
+  geom_point(shape=19, size =1, position=position_jitter(width=.2))  + 
+  geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+
+```
+```{r fig.width=6, fig.height=5}
+
+ggplot(HP1_D2_all,aes(x=log2(HP1_DamIDseq),y=log2(foldch_exp_1_exp_2)))+
+  #geom_point(aes(color=factor(H3K36ME3)))+
+  geom_point(aes(color=HP1_D2_all$'938_H3K9me2'))+
+  geom_smooth(method="lm")+  
+  geom_hline(aes(yintercept=-4))+
+  geom_vline(aes(xintercept=0))+
+  facet_wrap(~ninestate)
+```
+```{r}
+chromsizes<-read.table("dm3_chromsizes.txt",header=F, stringsAsFactors = F)
+chromsizes
+names(chromsizes)<-c("chr_r","pos_r")
+
+
+ins_lo<-na.omit(subset(HP1_D2_all, foldch_exp_1_exp_2 <= 0.125)[c("chr_r","pos_r")])
+ins_med<-na.omit(subset(HP1_D2_all, (foldch_exp_1_exp_2 > 0.125) & (foldch_exp_1_exp_2 <= 0.5))[c("chr_r","pos_r")])
+ins_unch<-na.omit(subset(HP1_D2_all, (foldch_exp_1_exp_2 > 0.5) & (foldch_exp_1_exp_2 <= 2))[c("chr_r","pos_r")])
+ins_hi<-na.omit(subset(HP1_D2_all, foldch_exp_1_exp_2 > 2)[c("chr_r","pos_r")])
+
+ins_sil<-na.omit(subset(HP1_D2_all, (exp_2_gDNA > 0) & (exp_1_gDNA == 0))[c("chr_r","pos_r")])
+ins_unex<-na.omit(subset(HP1_D2_all,(exp_2_gDNA == 0))[c("chr_r","pos_r")])
+```
+```{r fig.width=10, fig.height=20}
+ggplot(chromsizes, aes(x=chr_r,y=as.numeric(pos_r)))+
+  geom_bar(stat='identity',fill="white",color="black")+
+  geom_hline(data = ins_lo, aes(yintercept= as.numeric(pos_r)),color="magenta")+
+  geom_hline(data = ins_med, aes(yintercept= as.numeric(pos_r)),color="red")+
+  geom_hline(data = ins_unch, aes(yintercept= as.numeric(pos_r)),color="yellow")+
+  geom_hline(data = ins_hi, aes(yintercept= as.numeric(pos_r)),color="green")+
+  geom_hline(data = ins_sil, aes(yintercept= as.numeric(pos_r)),color="black")+
+  geom_hline(data = ins_unex, aes(yintercept= as.numeric(pos_r)),color="grey")+
+  facet_grid(. ~ chr_r, scale = "free", space = "free_x")+
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.y = element_blank(), axis.ticks.x = element_blank(),axis.text.y = element_text(angle=90, size = 15),axis.title.x = element_blank(), axis.text.x = element_blank(),strip.text.x = element_text(angle= 90))
+
+
+```
+```{r}
+ins_1<-na.omit(subset(HP1_D2_all, ninestate == 1 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_2<-na.omit(subset(HP1_D2_all, ninestate == 2 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_3<-na.omit(subset(HP1_D2_all, ninestate == 3 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_4<-na.omit(subset(HP1_D2_all, ninestate == 4 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_5<-na.omit(subset(HP1_D2_all, ninestate == 5 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_6<-na.omit(subset(HP1_D2_all, ninestate == 6 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_7<-na.omit(subset(HP1_D2_all, ninestate == 7 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_8<-na.omit(subset(HP1_D2_all, ninestate == 8 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+ins_9<-na.omit(subset(HP1_D2_all, ninestate == 9 & !is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r")])
+```
+```{r fig.width=10, fig.height=20}
+ggplot(chromsizes, aes(x=chr_r,y=as.numeric(pos_r)))+
+  geom_bar(stat='identity',fill="white",color="black")+
+  geom_hline(data = ins_1, aes(yintercept= as.numeric(pos_r)),color="#F8766D")+
+  geom_hline(data = ins_2, aes(yintercept= as.numeric(pos_r)),color="#D39200")+
+  geom_hline(data = ins_3, aes(yintercept= as.numeric(pos_r)),color="#93AA00")+
+  geom_hline(data = ins_4, aes(yintercept= as.numeric(pos_r)),color="#00BA38")+
+  geom_hline(data = ins_5, aes(yintercept= as.numeric(pos_r)),color="#00C19F")+
+  geom_hline(data = ins_6, aes(yintercept= as.numeric(pos_r)),color="#00B9E3")+
+  geom_hline(data = ins_7, aes(yintercept= as.numeric(pos_r)),color="#619CFF")+
+  geom_hline(data = ins_8, aes(yintercept= as.numeric(pos_r)),color="#DB72FB")+
+  geom_hline(data = ins_9, aes(yintercept= as.numeric(pos_r)),color="#FF61C3")+
+  facet_grid(. ~ chr_r, scale = "free", space = "free_x")+
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.y = element_blank(), axis.ticks.x = element_blank(),axis.text.y = element_text(angle=90, size = 15),axis.title.x = element_blank(), axis.text.x = element_blank(),strip.text.x = element_text(angle= 90))
+
+```
+```{r fig.width=10, fig.height=20}
+ggplot(na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","pos_r","chr_r","ninestate")]), aes(x=log2(foldch_exp_1_exp_2),y=pos_r,color=factor(ninestate)))+
+  geom_point()+
+  facet_grid(.~ chr_r)+
+  scale_x_reverse()+
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.y = element_blank(),axis.text.y = element_text(angle=90, size = 15),strip.text.x = element_text(angle= 90))
+
+```
+
+```{r fig.width=15, fig.height=10}
+ggplot(na.omit(HP1_D2_all[c("exp_2_gDNA","pos_r","chr_r","chromatin")]), aes(y=log2(exp_2_gDNA +0.01),x=pos_r))+
+  geom_point(aes(color=factor(chromatin)))+
+  facet_grid(chr_r~.)+
+  scale_x_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.x = element_blank(),axis.text.y = element_text( size = 15),strip.text.x = element_text(angle= 90))+
+  scale_colour_manual(name="chromatin",values=c(RED="red",BLUE="blue",GREEN="green", BLACK ="black", GREY = "grey30", YELLOW ="yellow"))
+
+```
+
+
+```{r}
+
+cytobands<-read.table("dm3_cytobands.txt",header=F, stringsAsFactors = F,sep=",")
+head(cytobands)
+names(cytobands)<-c("chr_r","start","end","name","giestain")
+cytobands_filtered<-subset(cytobands, chr_r %in% unique(ins$chr_r))
+head(cytobands_filtered)
+cytobands_filtered$pos_r<-0
+test<-
+
+ggplot(cytobands_filtered, aes(xmin = 0.5, xmax = 1, ymin = start, ymax = end,fill=giestain))+ 
+#ggplot(chromsizes, aes(x=chr_r,y=as.numeric(pos_r)))+
+  #geom_bar(stat='identity',fill="white",color="black")+
+  facet_grid(. ~ chr_r, scale = "free", space = "free_x")+
+  #geom_rect(cytobands_filtered, aes(xmin = 0.5, xmax = 1, ymin = start, ymax = end,fill=giestain))
+  geom_rect(color="black")
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.y = element_blank(), axis.ticks.x = element_blank(),axis.text.y = element_text(angle=90, size = 15),axis.title.x = element_blank(), axis.text.x = element_blank(),strip.text.x = element_text(angle= 90))
+
+```
+
+```{r}
+ins_test<-na.omit(subset(HP1_D2_all,!is.na(foldch_exp_1_exp_2))[c("chr_r","pos_r","foldch_exp_1_exp_2")])
+chromsizes_filtered<-subset(chromsizes, chr_r %in% c("chr2L","chr2LHet","chr2R","chr2RHet","chr3L","chr3LHet","chr3R","chr3RHet","chrX","chrXHet","chr4"))
+
+```
+```{r fig.width=10, fig.height=20}
+ggplot(chromsizes_filtered, aes(x=chr_r,y=as.numeric(pos_r)))+
+  geom_bar(stat='identity',fill="white",color="black")+
+  geom_hline(data = ins_test, aes(yintercept= as.numeric(pos_r),color=log2(foldch_exp_1_exp_2)))+
+  facet_grid(. ~ chr_r, scale = "free", space = "free_x")+
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  scale_color_gradientn(colours = rainbow(5),name = "log2(Gal4HP1/Gal4)")+
+  theme(axis.title.y = element_blank(), axis.ticks.x = element_blank(),axis.text.y = element_text(angle=90, size = 15),axis.title.x = element_blank(), axis.text.x = element_blank(),strip.text.x = element_text(angle= 90))
+
+```
+
+```{r fig.width=10, fig.height=5}
+ggplot(HP1_D2_all, aes(x=log2(exp_2_gDNA + 0.1)))+
+  geom_bar(fill="white",color="black")+
+  xlab("log2(expression + 0.1)")+
+  ylab("barcode count")+
+  theme(text = element_text(size = 20))
+```
+
+```{r}
+#9-state model
+#merging domain size of state associated with insertion
+#http://intermine.modencode.org/query/experiment.do?experiment=HMM+Prediction+of+D.+melanogaster+Chromatin+States
+
+ninest_domsize <- function(chrom, pos, data) {
+  color<-0
+  sub <- subset(data,(data$chr==chrom) & (data$start <= (as.numeric(pos))) & (data$end >= (as.numeric(pos))))
+  color<-as.numeric(sub[5]-sub[4])
+  return(color)
+}
+
+HP1_D2_all$ninestate_domsize <- apply(HP1_D2_all, 1, function(x) ninest_domsize(x[9], x[11], ninestate))
+head(HP1_D2_all$ninestate_domsize)
+head(ninestate)
+
+aggregate(HP1_D2_all$ninestate_domsize, list(HP1_D2_all$ninestate),min)
+aggregate(HP1_D2_all$ninestate_domsize, list(HP1_D2_all$ninestate),max)
+aggregate((ninestate$end - ninestate$start), list(ninestate$score),min)
+aggregate((ninestate$end - ninestate$start), list(ninestate$score),max)
+```
+
+```{r fig.width=8, fig.height=6}
+#domain size for nine state dataset
+ggplot(ninestate, aes(x=factor(score),y=log2(end-start),color=factor(score)))+
+geom_point(shape=19, size =1, position=position_jitter(width=.2))+
+ggtitle("9state general")+
+geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+
+```{r fig.width=8, fig.height=6}
+#domain size per state for integrations
+ggplot(HP1_D2_all, aes(x=factor(ninestate),y=log2(ninestate_domsize),color=factor(ninestate)))+
+geom_point(shape=19, size =1, position=position_jitter(width=.2))+
+ggtitle("insertions")+
+geom_errorbar(stat = "hline", yintercept = "median",width=0.8,aes(ymax=..y..,ymin=..y..),color="black")
+```
+```{r}
+#correlate domain size and downregulation
+cor.test(x=log2(HP1_D2_all$ninestate_domsize), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+#correlate domain size and downregulation each state
+for(i in states){
+  test<-subset(HP1_D2_all, ninestate == i)
+  p<-cor.test(x=log2(test$ninestate_domsize), y=log2(test$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)
+  }
+
+#some test if integrations are biased for a certain state
+```
+```{r fig.width=8, fig.height=6}
+#domain size vs downreg
+ggplot(HP1_D2_all, aes(x=log2(ninestate_domsize), y=log2(foldch_exp_1_exp_2)))+
+  geom_point(aes(color=factor(ninestate)))+
+  geom_smooth()
+```
+```{r fig.width=12, fig.height=10}
+#domain size vs downreg per state
+ggplot(HP1_D2_all, aes(x=log2(ninestate_domsize), y=log2(foldch_exp_1_exp_2)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_wrap(~ninestate)+
+  geom_smooth(method="lm")
+```
+```{r fig.width=12, fig.height=10}
+#domain size vs downreg state 7
+ggplot(subset(HP1_D2_all, ninestate == 7), aes(x=log2(ninestate_domsize), y=log2(foldch_exp_1_exp_2)))+
+  geom_point(color="#619CFF")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(domain size)")+
+  theme(text=element_text(size=20))+
+  geom_smooth(method="lm")
+```
+
+```{r}
+#correlate domain size and expression
+cor.test(x=log2(HP1_D2_all$ninestate_domsize), y=log2(HP1_D2_all$exp_2_gDNA + 0.01),method = "pearson",use="pairwise.complete.obs")
+#correlate domain size and expression each state
+for(i in states){
+  test<-subset(HP1_D2_all, ninestate == i)
+  p<-cor.test(x=log2(test$ninestate_domsize), y=log2(test$exp_2_gDNA + 0.01),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)
+  }
+```
+
+```{r fig.width=8, fig.height=6}
+#domain size vs expression
+ggplot(HP1_D2_all, aes(x=log2(ninestate_domsize), y=log2(exp_2_gDNA + 0.01)))+
+  geom_point(aes(color=factor(ninestate)))+
+  geom_smooth(method="lm")
+```
+```{r fig.width=8, fig.height=6}
+#domain size vs expression state 7
+ggplot(subset(HP1_D2_all, ninestate ==7), aes(x=log2(ninestate_domsize), y=log2(exp_2_gDNA + 0.01)))+
+  geom_point(color="#619CFF")+
+  ylab("log2(expr + 0.01)")+
+  xlab("log2(domain size)")+
+  theme(text=element_text(size=20))+
+  geom_smooth(method="lm")
+```
+```{r fig.width=12, fig.height=10}
+#domain size vs expression per state
+ggplot(HP1_D2_all, aes(x=log2(ninestate_domsize), y=log2(exp_2_gDNA + 0.01)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_wrap(~ninestate)+
+  geom_smooth(method="loess")
+```
+
+
+
+```{r}
+#HP1 DamIDseq
+#correlate HP1 DamIDseq and domain size
+for(i in states){
+  test<-subset(HP1_D2_all, (ninestate == i))
+  if(nrow(test) > 5){p<-cor.test(x=log2(test$ninestate_domsize), y=log2(test$HP1_DamIDseq),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)}
+  }
+```
+```{r fig.width=8, fig.height=6}
+#domain size vs HP1 occupancy
+ggplot(HP1_D2_all,aes(y=log2(HP1_DamIDseq),x=log2(ninestate_domsize)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_wrap(~ninestate)+
+  geom_smooth(method="lm")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+```{r}
+#correlate HP1 DamIDseq and downregulation
+cor.test(x=log2(HP1_D2_all$HP1_DamIDseq), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+for(i in states){
+  test<-subset(HP1_D2_all, (ninestate == i))
+  if(nrow(test) > 5){p<-cor.test(x=log2(test$HP1_DamIDseq), y=log2(test$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)}
+  }
+#for all states except 7
+cor.test(x=log2((subset(HP1_D2_all, ninestate != 7))$HP1_DamIDseq), y=log2((subset(HP1_D2_all, ninestate != 7))$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+#for all states except 7, HP1 score > 1 only
+cor.test(x=log2((subset(HP1_D2_all, (ninestate != 7) & (HP1_DamIDseq > 1)))$HP1_DamIDseq), y=log2((subset(HP1_D2_all, (ninestate != 7) & (HP1_DamIDseq > 1)))$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+
+#what about K9me3
+cor.test(x=(HP1_D2_all$'938_H3K9me2'), y=log2(HP1_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+for(i in states){
+  test<-subset(HP1_D2_all, (ninestate == i))
+  if(nrow(test) > 5){p<-cor.test(x=(test$'938_H3K9me2'), y=log2(test$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)}
+  }
+
+
+```
+```{r fig.width=8, fig.height=6}
+#downreg vs HP1 DamIDseq
+test<-(na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","HP1_DamIDseq","ninestate")]))
+ggplot(test,aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(ninestate)))+
+  geom_smooth(method="loess")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(HP1 DamID signal)")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+```{r fig.width=8, fig.height=6}
+#downreg vs HP1 DamIDseq for all states except 7
+
+states_names <- list(
+  'FALSE'="state 1-6,8-9",
+  'TRUE'="state 7"
+)
+
+states_labeller <- function(variable,value){
+  return(states_names[value])
+}
+
+test<-(na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","HP1_DamIDseq","ninestate")]))
+test$group<-factor(test$ninestate == 7)
+ggplot(test,aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_grid(. ~ group,labeller=states_labeller)+
+  geom_smooth(method="lm", color="grey39")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(HP1 DamID signal)")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+```{r fig.width=8, fig.height=6}
+#downreg vs HP1 DamIDseq state 7
+
+test<-(na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","HP1_DamIDseq","ninestate")]))
+test$group<-factor(test$ninestate == 7)
+ggplot(subset(test, group == T),aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq)))+
+  geom_point(color="#619CFF")+
+  geom_smooth(method="lm")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(HP1 DamID signal)")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+```{r}
+#correlate HP1 DamIDseq and downregulation each state for high DamID scores
+for(i in states){
+  test<-subset(HP1_D2_all, (ninestate == i) & (HP1_DamIDseq > 1))
+  if(nrow(test) > 5){p<-cor.test(x=log2(test$HP1_DamIDseq), y=log2(test$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)}
+  }
+```
+```{r fig.width=8, fig.height=6}
+#downreg vs HP1 DamIDseq high scores only
+test<-(na.omit(HP1_D2_all[c("foldch_exp_1_exp_2","HP1_DamIDseq","ninestate")]))
+ggplot(subset(test, HP1_DamIDseq>1),aes(y=log2(foldch_exp_1_exp_2),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_wrap(~ninestate)+
+  geom_smooth(method="lm")+
+  ylab("log2(Gal4HP1/Gal4)")+
+  xlab("log2(HP1 DamID signal)")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+```{r}
+#correlate HP1 DamIDseq and expression
+cor.test(x=log2(HP1_D2_all$HP1_DamIDseq), y=log2(HP1_D2_all$exp_2_gDNA + 0.01),method = "pearson",use="pairwise.complete.obs")
+for(i in states){
+  test<-subset(HP1_D2_all, (ninestate == i))
+  if(nrow(test) > 5){p<-cor.test(x=log2(test$HP1_DamIDseq), y=log2(test$exp_2_gDNA + 0.01),method = "pearson",use="pairwise.complete.obs")
+  print(i)
+  print(p$p.value)
+  print(p$estimate)}
+  }
+```
+
+```{r fig.width=8, fig.height=6}
+#expr vs HP1 DamIDseq
+test<-(na.omit(HP1_D2_all[c("exp_2_gDNA","HP1_DamIDseq","ninestate")]))
+ggplot(test,aes(y=log2(exp_2_gDNA + 0.01),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(ninestate)))+
+  geom_smooth(method="loess")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+```{r fig.width=8, fig.height=6}
+#expr vs HP1 DamIDseq
+test<-(na.omit(HP1_D2_all[c("exp_2_gDNA","HP1_DamIDseq","ninestate")]))
+ggplot(test,aes(y=log2(exp_2_gDNA + 0.01),x=log2(HP1_DamIDseq)))+
+  geom_point(aes(color=factor(ninestate)))+
+  facet_wrap(~ninestate)+
+  geom_smooth(method="loess")+
+  theme(text=element_text(size=20))+
+  theme(legend.title=element_blank())
+```
+
+
+
+
+

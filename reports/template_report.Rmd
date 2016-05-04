@@ -1,0 +1,83 @@
+
+# knitr document van Steensel lab
+
+# Main Title
+## Christ Leemans, from date - to date 
+
+### Introduction
+Introduction to the project
+
+### Description of Data
+
+* Where did I get the data, how does the data look, how many samples and replicates
+
+
+
+### Path, Libraries, Parameters and Useful Functions
+```{r message=FALSE}
+
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+
+
+```
+
+### Custom functions
+Functions used
+
+
+### Load data
+Data loading 
+
+
+```{r}
+
+# Data loading
+
+```
+
+
+### Some data pre-processing
+Calculate some basic values/quality control
+
+```{r}
+# pre-processing
+
+```
+
+
+### Step 1
+How reprodicible are the Hi-C data (only dynamic LAD bins):
+
+```{r}
+# perform analysis
+```
+**Conclusion:** the conclusion
+
+
+
+### Step 2
+description
+
+```{r warning=FALSE, fig.width=8, fig.height=5, out.width=700}
+# next step
+```
+**Conclusion:**
+conclusion of step 2
+
+
+### Session Info
+```{r}
+
+sessionInfo()
+getwd()
+date()
+paste("Run time: ",format(Sys.time()-StartTime))
+
+```
+
+</body>

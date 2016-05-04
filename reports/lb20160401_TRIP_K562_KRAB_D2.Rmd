@@ -1,0 +1,791 @@
+TTRIP K562 KRAB D2
+==================
+
+1. Read and process raw data
+----------------------------
+
+```{r}
+###IMPORTANT:
+#for samples apart from KRAB the usual order of exp1 - POI-GaL4, exp2 - Gal4, exp3 - POI is changed
+#now it is exp1 - Gal4, exp2 - Gal4POI, exp3 - POI
+#switch that back right at beginning of script
+#changed the way mean norm expr is calculated, assign 0 when 0 in one replicate
+require(ggplot2)
+require(grid)
+require(gridExtra)
+require(reshape2)
+require(plotrix)
+require(plyr)
+require(ppcor)
+require(GenomicRanges)
+require(stringr)
+```
+Replicate 1
+```{r}
+sp_KRAB_D2_r1<-read.table("TTRIP_K562/lb20160331_KRAB_D2_r1_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+KRAB_D2_r1<-read.table("TTRIP_K562/lb20160331_KRAB_D2_r1/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+
+sp_KRAB_D2_r1$exp_0 <-sp_KRAB_D2_r1$exp_1
+sp_KRAB_D2_r1$exp_1 <-sp_KRAB_D2_r1$exp_2
+sp_KRAB_D2_r1$exp_2 <-sp_KRAB_D2_r1$exp_0
+sp_KRAB_D2_r1$norm_0 <-sp_KRAB_D2_r1$norm_1
+sp_KRAB_D2_r1$norm_1 <-sp_KRAB_D2_r1$norm_2
+sp_KRAB_D2_r1$norm_2 <-sp_KRAB_D2_r1$norm_0
+sp_KRAB_D2_r1$exp_0<-NULL
+sp_KRAB_D2_r1$norm_0<-NULL
+KRAB_D2_r1$exp_0 <-KRAB_D2_r1$exp_1
+KRAB_D2_r1$exp_1 <-KRAB_D2_r1$exp_2
+KRAB_D2_r1$exp_2 <-KRAB_D2_r1$exp_0
+KRAB_D2_r1$norm_0 <-KRAB_D2_r1$norm_1
+KRAB_D2_r1$norm_1 <-KRAB_D2_r1$norm_2
+KRAB_D2_r1$norm_2 <-KRAB_D2_r1$norm_0
+KRAB_D2_r1$exp_0<-NULL
+KRAB_D2_r1$norm_0<-NULL
+nrow(sp_KRAB_D2_r1)
+nrow(KRAB_D2_r1)
+```
+Replicate 2
+```{r}
+sp_KRAB_D2_r2<-read.table("TTRIP_K562/lb20160331_KRAB_D2_r2_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+KRAB_D2_r2<-read.table("TTRIP_K562/lb20160331_KRAB_D2_r2/final_barcode_data_table.txt", header=T, stringsAsFactors = F)
+
+sp_KRAB_D2_r2$exp_0 <-sp_KRAB_D2_r2$exp_1
+sp_KRAB_D2_r2$exp_1 <-sp_KRAB_D2_r2$exp_2
+sp_KRAB_D2_r2$exp_2 <-sp_KRAB_D2_r2$exp_0
+sp_KRAB_D2_r2$norm_0 <-sp_KRAB_D2_r2$norm_1
+sp_KRAB_D2_r2$norm_1 <-sp_KRAB_D2_r2$norm_2
+sp_KRAB_D2_r2$norm_2 <-sp_KRAB_D2_r2$norm_0
+sp_KRAB_D2_r2$exp_0<-NULL
+sp_KRAB_D2_r2$norm_0<-NULL
+KRAB_D2_r2$exp_0 <-KRAB_D2_r2$exp_1
+KRAB_D2_r2$exp_1 <-KRAB_D2_r2$exp_2
+KRAB_D2_r2$exp_2 <-KRAB_D2_r2$exp_0
+KRAB_D2_r2$norm_0 <-KRAB_D2_r2$norm_1
+KRAB_D2_r2$norm_1 <-KRAB_D2_r2$norm_2
+KRAB_D2_r2$norm_2 <-KRAB_D2_r2$norm_0
+KRAB_D2_r2$exp_0<-NULL
+KRAB_D2_r2$norm_0<-NULL
+nrow(sp_KRAB_D2_r2)
+nrow(KRAB_D2_r2)
+```
+
+```{r}
+########################################
+#calculating normalized expression rep 1
+#calculate scaling factors for spike-ins
+###Let's not set a cutoff to avoid distortion by low read numbers
+
+sum_sp_KRAB_D2_r1_exp_1<-sum(sp_KRAB_D2_r1$exp_1)
+sum_sp_KRAB_D2_r1_exp_2<-sum(sp_KRAB_D2_r1$exp_2)
+sum_sp_KRAB_D2_r1_exp_3<-sum(sp_KRAB_D2_r1$exp_3)
+sum_sp_KRAB_D2_r1_exp_1
+sum_sp_KRAB_D2_r1_exp_2
+sum_sp_KRAB_D2_r1_exp_3 
+
+#normalize spikein expression reads with total read number to correct for seq depth
+#I am not using these values for now but might come in handy for plotting
+sp_KRAB_D2_r1$exp_1_norm <- sp_KRAB_D2_r1$exp_1 / sum_sp_KRAB_D2_r1_exp_1
+sp_KRAB_D2_r1$exp_2_norm <- sp_KRAB_D2_r1$exp_2 / sum_sp_KRAB_D2_r1_exp_2
+sp_KRAB_D2_r1$exp_3_norm <- sp_KRAB_D2_r1$exp_3 / sum_sp_KRAB_D2_r1_exp_3
+```
+
+```{r}
+#normalize experiment expression reads with total spikein read number and scale a bit
+KRAB_D2_r1$exp_1_norm <- KRAB_D2_r1$exp_1 / sum_sp_KRAB_D2_r1_exp_1 *1000000
+KRAB_D2_r1$exp_2_norm <- KRAB_D2_r1$exp_2 / sum_sp_KRAB_D2_r1_exp_2 *1000000
+KRAB_D2_r1$exp_3_norm <- KRAB_D2_r1$exp_3 / sum_sp_KRAB_D2_r1_exp_3 *1000000
+```
+
+```{r}
+#now all that is left is normalizing to gDNA counts!
+#first set cutoff for >1 gDNA counts
+KRAB_D2_r1_cutoff <- subset(KRAB_D2_r1,(( norm_1 >= 1) & ( norm_2 >= 1) & ( norm_3 >= 1)))
+nrow(KRAB_D2_r1)
+nrow(KRAB_D2_r1_cutoff)
+
+#sum gDNA counts in millions
+sum_KRAB_D2_r1_norm_1<-sum(KRAB_D2_r1_cutoff$norm_1) / 1000000
+sum_KRAB_D2_r1_norm_2<-sum(KRAB_D2_r1_cutoff$norm_2) / 1000000
+sum_KRAB_D2_r1_norm_3<-sum(KRAB_D2_r1_cutoff$norm_3) / 1000000
+sum_KRAB_D2_r1_norm_1
+sum_KRAB_D2_r1_norm_2
+sum_KRAB_D2_r1_norm_3
+#convert gDNA counts to cpm to correct for seq depth
+KRAB_D2_r1_cutoff$norm_1_cpm <- KRAB_D2_r1_cutoff$norm_1 / sum_KRAB_D2_r1_norm_1
+KRAB_D2_r1_cutoff$norm_2_cpm <- KRAB_D2_r1_cutoff$norm_2 / sum_KRAB_D2_r1_norm_2
+KRAB_D2_r1_cutoff$norm_3_cpm <- KRAB_D2_r1_cutoff$norm_3 / sum_KRAB_D2_r1_norm_3
+
+#now divide exp reads which were normalized by spikein by gDNA cpm
+KRAB_D2_r1_cutoff$exp_1_gDNA <- KRAB_D2_r1_cutoff$exp_1_norm / KRAB_D2_r1_cutoff$norm_1_cpm
+KRAB_D2_r1_cutoff$exp_2_gDNA <- KRAB_D2_r1_cutoff$exp_2_norm / KRAB_D2_r1_cutoff$norm_2_cpm
+KRAB_D2_r1_cutoff$exp_3_gDNA <- KRAB_D2_r1_cutoff$exp_3_norm / KRAB_D2_r1_cutoff$norm_3_cpm
+#normalization done!
+```
+```{r}
+#calculate foldchange
+#but leave out BCDs with zero reads
+#I should look at those separately
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+KRAB_D2_r1_cutoff$foldch_exp_1_exp_2<- apply(KRAB_D2_r1_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+KRAB_D2_r1_cutoff$foldch_exp_1_exp_3<- apply(KRAB_D2_r1_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+KRAB_D2_r1_cutoff$foldch_exp_3_exp_2<- apply(KRAB_D2_r1_cutoff, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+```
+
+
+```{r}
+########################################
+#calculating normalized expression rep 2
+#calculate scaling factors for spike-ins
+
+
+sum_sp_KRAB_D2_r2_exp_1<-sum(sp_KRAB_D2_r2$exp_1)
+sum_sp_KRAB_D2_r2_exp_2<-sum(sp_KRAB_D2_r2$exp_2)
+sum_sp_KRAB_D2_r2_exp_3<-sum(sp_KRAB_D2_r2$exp_3)
+sum_sp_KRAB_D2_r2_exp_1
+sum_sp_KRAB_D2_r2_exp_2
+sum_sp_KRAB_D2_r2_exp_3
+
+#normalize spikein expression reads with total read number to correct for seq depth
+sp_KRAB_D2_r2$exp_1_norm <- sp_KRAB_D2_r2$exp_1 / sum_sp_KRAB_D2_r2_exp_1
+sp_KRAB_D2_r2$exp_2_norm <- sp_KRAB_D2_r2$exp_2 / sum_sp_KRAB_D2_r2_exp_2
+sp_KRAB_D2_r2$exp_3_norm <- sp_KRAB_D2_r2$exp_3 / sum_sp_KRAB_D2_r2_exp_3
+```
+
+```{r}
+#normalize experiment expression reads with total spikein read number and scale a bit
+KRAB_D2_r2$exp_1_norm <- KRAB_D2_r2$exp_1 / sum_sp_KRAB_D2_r2_exp_1 *1000000
+KRAB_D2_r2$exp_2_norm <- KRAB_D2_r2$exp_2 / sum_sp_KRAB_D2_r2_exp_2 *1000000
+KRAB_D2_r2$exp_3_norm <- KRAB_D2_r2$exp_3 / sum_sp_KRAB_D2_r2_exp_3 *1000000
+```
+
+```{r}
+#now all that is left is normalizing to gDNA counts!
+#first set cutoff for >1 gDNA counts
+KRAB_D2_r2_cutoff <- subset(KRAB_D2_r2,(( norm_1 >= 1) & ( norm_2 >= 1) & ( norm_3 >= 1)))
+nrow(KRAB_D2_r2)
+nrow(KRAB_D2_r2_cutoff)
+
+#sum gDNA counts in millions
+sum_KRAB_D2_r2_norm_1<-sum(KRAB_D2_r2_cutoff$norm_1) / 1000000
+sum_KRAB_D2_r2_norm_2<-sum(KRAB_D2_r2_cutoff$norm_2) / 1000000
+sum_KRAB_D2_r2_norm_3<-sum(KRAB_D2_r2_cutoff$norm_3) / 1000000
+sum_KRAB_D2_r2_norm_1
+sum_KRAB_D2_r2_norm_2
+sum_KRAB_D2_r2_norm_3
+#convert gDNA counts to cpm to correct for seq depth
+KRAB_D2_r2_cutoff$norm_1_cpm <- KRAB_D2_r2_cutoff$norm_1 / sum_KRAB_D2_r2_norm_1
+KRAB_D2_r2_cutoff$norm_2_cpm <- KRAB_D2_r2_cutoff$norm_2 / sum_KRAB_D2_r2_norm_2
+KRAB_D2_r2_cutoff$norm_3_cpm <- KRAB_D2_r2_cutoff$norm_3 / sum_KRAB_D2_r2_norm_3
+#now divide exp reads which were normalized by spikein by gDNA cpm
+KRAB_D2_r2_cutoff$exp_1_gDNA <- KRAB_D2_r2_cutoff$exp_1_norm / KRAB_D2_r2_cutoff$norm_1_cpm
+KRAB_D2_r2_cutoff$exp_2_gDNA <- KRAB_D2_r2_cutoff$exp_2_norm / KRAB_D2_r2_cutoff$norm_2_cpm
+KRAB_D2_r2_cutoff$exp_3_gDNA <- KRAB_D2_r2_cutoff$exp_3_norm / KRAB_D2_r2_cutoff$norm_3_cpm
+#normalization done!
+```
+```{r}
+#calculate foldchange
+#but leave out BCDs with zero reads
+#I should look at those separately
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+KRAB_D2_r2_cutoff$foldch_exp_1_exp_2<- apply(KRAB_D2_r2_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+KRAB_D2_r2_cutoff$foldch_exp_1_exp_3<- apply(KRAB_D2_r2_cutoff, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+KRAB_D2_r2_cutoff$foldch_exp_3_exp_2<- apply(KRAB_D2_r2_cutoff, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+```
+
+
+```{r}
+#some statistics
+#gDNA counts
+summary(KRAB_D2_r1[,c("norm_1","norm_2","norm_3")])
+summary(KRAB_D2_r2[,c("norm_1","norm_2","norm_3")])
+#raw reads expression
+summary(KRAB_D2_r1[,c("exp_1","exp_2","exp_3")])
+summary(KRAB_D2_r2[,c("exp_1","exp_2","exp_3")])
+summary(KRAB_D2_r1_cutoff[,c("exp_1","exp_2","exp_3")])
+summary(KRAB_D2_r2_cutoff[,c("exp_1","exp_2","exp_3")])
+#normalized to spikein
+summary(KRAB_D2_r1_cutoff[,c("exp_1_norm","exp_2_norm","exp_3_norm")])
+summary(KRAB_D2_r2_cutoff[,c("exp_1_norm","exp_2_norm","exp_3_norm")])
+#normalized to gDNA counts
+summary(KRAB_D2_r1_cutoff[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+summary(KRAB_D2_r2_cutoff[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+#statistics foldchange
+summary(KRAB_D2_r1_cutoff[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+summary(KRAB_D2_r2_cutoff[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+
+#normalization done
+```
+
+
+2. Merge replicates and filter
+------------------------------
+
+```{r}
+#merge replicates
+KRAB_D2_all<-merge(KRAB_D2_r1_cutoff[,c("barcode","norm_1","norm_2","norm_3","exp_1","exp_2","exp_3","exp_1_gDNA","exp_2_gDNA","exp_3_gDNA","foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3")],KRAB_D2_r2_cutoff[,c("barcode","norm_1","norm_2","norm_3","exp_1","exp_2","exp_3","exp_1_gDNA","exp_2_gDNA","exp_3_gDNA","foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3")], by=("barcode"), suffixes=c("_r1","_r2"))
+
+nrow(KRAB_D2_r1_cutoff)
+nrow(KRAB_D2_r2_cutoff)
+nrow(KRAB_D2_all)
+```
+```{r}
+#mapping the barcodes
+#Read in mapping table
+mapping<-read.table("TTRIP_K562/lb20160318_mapping_TRIP_K562/final_TRIP_data_table.txt", header=T, stringsAsFactors = F)
+#Merge with barculator tables
+KRAB_D2_all<-merge(mapping[,c("barcode","chr_f","ori_f","pos_f","reads_f","mapq_f","freq1_f","freq2_f","chr_r","ori_r","pos_r","reads_r","mapq_r","freq1_r","freq2_r")], KRAB_D2_all, by="barcode",suffixes=c("_mapping", ""))
+
+```
+
+
+```{r}
+#filter for uniquely mapped BCDs
+#this is where I lose about half of the BCDs
+#do this before deciding gDNA cutoff?
+KRAB_D2_all<-subset(KRAB_D2_all, ((reads_f > 2) & (reads_r > 2) &(freq1_f > 0.7) & (freq1_r > 0.7) & (freq2_f < 0.10) & (freq2_r < 0.10) & (mapq_f >= 10)& (mapq_r >= 10)))
+nrow(KRAB_D2_all)
+```
+
+
+```{r}
+#set cutoff gDNA
+nrow(KRAB_D2_all)
+KRAB_D2_all<- subset(KRAB_D2_all,(( norm_1_r1 >= 50) & ( norm_2_r1  >= 50) & ( norm_3_r1  >= 50) & (norm_1_r2  >= 50) & ( norm_2_r2 >= 50) & ( norm_3_r2 >= 50)))
+nrow(KRAB_D2_all)
+
+```
+
+3. Quantitative analysis on replicate means
+-------------------------------------------
+
+```{r}
+#Calculate fold change between conditions by replicate means
+#Calculate mean expression
+meanex <- function(r1, r2) {
+  if ((as.numeric(r1) > 0) & (as.numeric(r2) > 0))
+  calc <- (as.numeric(r1) + as.numeric(r2))/2
+  if ((as.numeric(r1) == 0) | (as.numeric(r2) == 0))
+  calc <- 0
+  return(calc)
+}
+
+KRAB_D2_all$exp_1_gDNA<-apply(KRAB_D2_all,1,function(x) meanex(x["exp_1_gDNA_r1"], x["exp_1_gDNA_r2"]))
+KRAB_D2_all$exp_2_gDNA<-apply(KRAB_D2_all,1,function(x) meanex(x["exp_2_gDNA_r1"], x["exp_2_gDNA_r2"]))
+KRAB_D2_all$exp_3_gDNA<-apply(KRAB_D2_all,1,function(x) meanex(x["exp_3_gDNA_r1"], x["exp_3_gDNA_r2"]))
+
+
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+KRAB_D2_all$foldch_exp_1_exp_2<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_2_gDNA"]))
+KRAB_D2_all$foldch_exp_1_exp_3<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_1_gDNA"], x["exp_3_gDNA"]))
+KRAB_D2_all$foldch_exp_3_exp_2<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_3_gDNA"], x["exp_2_gDNA"]))
+
+```
+```{r}
+#foldch replicates
+foldch <- function(cond, contr) {
+  if ((as.numeric(cond) > 0) & (as.numeric(contr) > 0))
+  calc <- as.numeric(cond) / as.numeric(contr)
+  if ((as.numeric(cond) == 0) | (as.numeric(contr) == 0))
+  calc <- NA
+  return(calc)
+}
+
+KRAB_D2_all$foldch_exp_1_gDNA_r1_r2<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_1_gDNA_r1"], x["exp_1_gDNA_r2"]))
+KRAB_D2_all$foldch_exp_2_gDNA_r1_r2<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_2_gDNA_r1"], x["exp_2_gDNA_r2"]))
+KRAB_D2_all$foldch_exp_3_gDNA_r1_r2<- apply(KRAB_D2_all, 1, function(x) foldch(x["exp_3_gDNA_r1"], x["exp_3_gDNA_r2"]))
+
+
+
+
+#how many BCDs express?
+nrow(subset(KRAB_D2_all,KRAB_D2_all$exp_2_gDNA>0))
+
+#some statistics
+#replicates
+#gDNA counts
+summary(KRAB_D2_all[,c("norm_1_r1","norm_2_r1","norm_3_r1","norm_1_r2","norm_2_r2","norm_3_r2")])
+#raw reads expression
+summary(KRAB_D2_all[,c("exp_1_r1","exp_2_r1","exp_3_r1","exp_1_r2","exp_2_r2","exp_3_r2")])
+#normalized to gDNA counts
+summary(KRAB_D2_all[,c("exp_1_gDNA_r1","exp_2_gDNA_r1","exp_3_gDNA_r1","exp_1_gDNA_r2","exp_2_gDNA_r2","exp_3_gDNA_r2")])
+#statistics foldchange
+summary(KRAB_D2_all[,c("foldch_exp_1_exp_2_r1","foldch_exp_1_exp_3_r1","foldch_exp_3_exp_2_r1","foldch_exp_1_exp_2_r2","foldch_exp_1_exp_3_r2","foldch_exp_3_exp_2_r2")])
+#replicate variation
+summary(KRAB_D2_all[ ,c("foldch_exp_1_gDNA_r1_r2","foldch_exp_2_gDNA_r1_r2","foldch_exp_3_gDNA_r1_r2")])
+
+#replicate means
+#normalized to gDNA counts
+summary(KRAB_D2_all[,c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+#statistics foldchange
+summary(KRAB_D2_all[,c("foldch_exp_1_exp_2","foldch_exp_1_exp_3","foldch_exp_3_exp_2")])
+
+```
+
+```{r}
+#merging HMM chromatin states
+#http://hgwdev.cse.ucsc.edu/cgi-bin/hgFileUi?db=hg19&g=wgEncodeBroadHmm
+HMMstates<-read.table("TTRIP_K562/wgEncodeBroadHmmK562HMM.bed", header=F, stringsAsFactors = F,sep="\t")
+head(HMMstates)
+
+HMMst <- function(chrom, pos, data) {
+  out<-0
+  sub <- subset(data,(data$V1==chrom) & (data$V2 <= (as.numeric(pos))) & (data$V3 >= (as.numeric(pos))))
+  out<-as.character(sub[4])
+  #if(is.na(out))
+  #color<-NA
+  return(out)
+}
+
+KRAB_D2_all$HMMstate <- apply(KRAB_D2_all, 1, function(x) HMMst(x[9], x[11], HMMstates))
+
+```
+
+4. Some graphs to check data quality
+-------------------------------------
+
+```{r fig.width=6, fig.heigth=15}
+#check mapping
+head(mapping)
+nrow(mapping)
+nrow(subset(mapping, !is.na(chr_f)))
+g1<-ggplot(mapping, aes(mapq_f))+
+  geom_histogram()
+g2<-ggplot(mapping, aes(mapq_r))+
+  geom_histogram()
+g3<-ggplot(mapping, aes(freq1_f))+
+  geom_histogram()
+g4<-ggplot(mapping, aes(freq2_f))+
+  geom_histogram()
+g5<-ggplot(mapping, aes(freq1_r))+
+  geom_histogram()
+g6<-ggplot(mapping, aes(freq2_r))+
+  geom_histogram()
+g7<-ggplot(mapping, aes(log10(reads_f +1)))+
+  geom_histogram()
+g8<-ggplot(mapping, aes(log10(reads_r +1)))+
+  geom_histogram()
+grid.arrange(g1,g2,g3,g4,g5,g6,g7,g8,top = "stats mapping",ncol=1)
+```
+
+
+```{r fig.width=5, fig.height=4}
+#sum counts
+colSums(KRAB_D2_r1[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+#rep1
+dataM <-c()
+dataM<-melt(KRAB_D2_r1[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+ggplot(dataM,aes(x=variable, y=value))+
+  stat_summary(fun.y = sum, geom = "bar")+
+  ggtitle("sum counts rep 1")
+```
+```{r fig.width=5, fig.height=4}
+#sum counts
+colSums(KRAB_D2_r2[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+#rep2
+dataM <-c()
+dataM<-melt(KRAB_D2_r2[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+ggplot(dataM,aes(x=variable, y=value))+
+  stat_summary(fun.y = sum, geom = "bar")+
+  ggtitle("sum counts rep 2")
+```
+```{r fig.width=6, fig.height=10}
+#cDNA and gDNA count histograms
+#rep1
+dataM <-c()
+dataM<-melt(KRAB_D2_r1[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+ggplot(dataM,aes(x=log10(value+1)))+
+  facet_grid(variable~.)+
+  geom_histogram(fill="red")+
+  ggtitle("raw counts rep 1")
+```
+```{r fig.width=6, fig.height=10}
+#rep2
+dataM <-c()
+dataM<-melt(KRAB_D2_r2[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+ggplot(dataM,aes(x=log10(value+1)))+
+  facet_grid(variable~.)+
+  geom_histogram(fill="red")+
+  ggtitle("raw counts rep 2")
+```
+```{r fig.width=6, fig.height=6}
+#rep2
+dataM <-c()
+dataM<-melt(KRAB_D2_r2[c("exp_1","exp_2","exp_3","norm_1","norm_2","norm_3")])
+ggplot(dataM,aes(x=variable, y=log10(value+1)))+
+  geom_point(size =0.2, position=position_jitter(width=.5), color="red")+
+  ggtitle("raw counts rep 2")
+```
+
+```{r fig.width=12, fig.height=5}
+#gDNA dropout between samples
+#rep1
+g1<-ggplot(KRAB_D2_r1, aes(x=log10(norm_1 +1), y=log10(norm_2 +1)))+
+  geom_point(color="red")
+g2<-ggplot(KRAB_D2_r1, aes(x=log10(norm_3 +1), y=log10(norm_2 +1)))+
+  geom_point(color="red")
+g3<-ggplot(KRAB_D2_r1, aes(x=log10(norm_1 +1), y=log10(norm_3 +1)))+
+  geom_point(color="red")
+grid.arrange(g1, g2,g3,top = "gDNA counts - variation between samples - rep1",nrow=1)
+```
+```{r fig.width=12, fig.height=5}
+#rep2
+g1<-ggplot(KRAB_D2_r2, aes(x=log10(norm_1 +1), y=log10(norm_2 +1)))+
+  geom_point(color="red")
+g2<-ggplot(KRAB_D2_r2, aes(x=log10(norm_3 +1), y=log10(norm_2 +1)))+
+  geom_point(color="red")
+g3<-ggplot(KRAB_D2_r2, aes(x=log10(norm_1 +1), y=log10(norm_3 +1)))+
+  geom_point(color="red")
+grid.arrange(g1, g2,g3,top = "gDNA counts - variation between samples - rep2",nrow=1)
+```
+```{r fig.width=6, fig.height=6}
+#normalized expr
+#rep1
+dataM <-c()
+dataM<-melt(KRAB_D2_r1_cutoff[c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+ggplot(dataM,aes(x=variable, y=log2(value+0.1)))+
+  geom_point(size =0.2, position=position_jitter(width=.5), color="red")+
+  ggtitle("normalized expr rep 1")
+```
+```{r fig.width=6, fig.height=6}
+#rep2
+dataM <-c()
+dataM<-melt(KRAB_D2_r2_cutoff[c("exp_1_gDNA","exp_2_gDNA","exp_3_gDNA")])
+ggplot(dataM,aes(x=variable, y=log2(value+0.1)))+
+  geom_point(size =0.2, position=position_jitter(width=.5), color="red")+
+  ggtitle("normalized expr rep 2")
+```
+```{r fig.width=15, fig.height=6}
+#replicates gDNA counts
+q1cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$norm_1_r1 + 1), y=log2(KRAB_D2_all$norm_1_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$norm_1_r1 + 1), y=log2(KRAB_D2_all$norm_1_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q1<-ggplot(KRAB_D2_all, aes(x=log2(norm_1_r1 + 1), y=log2(norm_1_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(norm + 1) r1")+
+  ylab("log2(norm + 1) r2")+
+  ggtitle(bquote(atop(.("replicates Gal4KRAB"), atop("",.(q1cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q2cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$norm_2_r1 + 1), y=log2(KRAB_D2_all$norm_2_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$norm_2_r1 + 1), y=log2(KRAB_D2_all$norm_2_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q2<-ggplot(KRAB_D2_all, aes(x=log2(norm_2_r1 + 1), y=log2(norm_2_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(norm + 1) r1")+
+  ylab("log2(norm + 1) r2")+
+  ggtitle(bquote(atop(.("replicates Gal4"), atop("",.(q2cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q3cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$norm_3_r1 + 1), y=log2(KRAB_D2_all$norm_3_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$norm_3_r1 + 1), y=log2(KRAB_D2_all$norm_3_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q3<-ggplot(KRAB_D2_all, aes(x=log2(norm_3_r1 +1), y=log2(norm_3_r2 +1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(norm + 1) r1")+
+  ylab("log2(norm + 1) r2")+
+  ggtitle("replicates KRAB")+ 
+  ggtitle(bquote(atop(.("replicates KRAB"), atop("",.(q3cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+grid.arrange(q1,q2,q3,nrow=1,top="replicates gDNA counts")
+
+```
+
+```{r fig.width=15, fig.height=6}
+#replicates raw expression
+
+q1cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_1_r1 + 1), y=log2(KRAB_D2_all$exp_1_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_1_r1 + 1), y=log2(KRAB_D2_all$exp_1_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q1<-ggplot(KRAB_D2_all, aes(x=log2(exp_1_r1 + 1), y=log2(exp_1_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(expr + 1) r1")+
+  ylab("log2(expr + 1) r2")+
+  ggtitle(bquote(atop(.("replicates Gal4KRAB"), atop("",.(q1cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q2cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_r1 + 1), y=log2(KRAB_D2_all$exp_2_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_r1 + 1), y=log2(KRAB_D2_all$exp_2_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q2<-ggplot(KRAB_D2_all, aes(x=log2(exp_2_r1 + 1), y=log2(exp_2_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(expr + 1) r1")+
+  ylab("log2(expr + 1) r2")+
+  ggtitle(bquote(atop(.("replicates Gal4"), atop("",.(q2cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q3cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_3_r1 + 1), y=log2(KRAB_D2_all$exp_3_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_3_r1 + 1), y=log2(KRAB_D2_all$exp_3_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q3<-ggplot(KRAB_D2_all, aes(x=log2(exp_3_r1 +1), y=log2(exp_3_r2 +1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  xlab("log2(expr + 1) r1")+
+  ylab("log2(expr + 1) r2")+
+  ggtitle(bquote(atop(.("replicates KRAB"), atop("",.(q3cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+grid.arrange(q1,q2,q3,nrow=1,top="replicates raw expr")
+
+```
+```{r fig.width=15, fig.height=6}
+#replicates normalized expression
+
+q1cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_1_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_1_gDNA_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_1_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_1_gDNA_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q1<-ggplot(KRAB_D2_all, aes(x=log2(exp_1_gDNA_r1 + 1), y=log2(exp_1_gDNA_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  ggtitle(bquote(atop(.("replicates Gal4KRAB"), atop("",.(q1cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q2cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_2_gDNA_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_2_gDNA_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q2<-ggplot(KRAB_D2_all, aes(x=log2(exp_2_gDNA_r1 + 1), y=log2(exp_2_gDNA_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  ggtitle(bquote(atop(.("replicates Gal4"), atop("",.(q2cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q3cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_3_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_3_gDNA_r2 + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_3_gDNA_r1 + 1), y=log2(KRAB_D2_all$exp_3_gDNA_r2 + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q3<-ggplot(KRAB_D2_all, aes(x=log2(exp_3_gDNA_r1 + 1), y=log2(exp_3_gDNA_r2 + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  ggtitle(bquote(atop(.("replicates KRAB"), atop("",.(q3cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+grid.arrange(q1,q2,q3,nrow=1)
+
+```
+
+
+5. Figures
+-----------
+```{r fig.width=15, fig.height=6}
+#plot scatter normalized expression
+
+q7cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA + 1), y=log2(KRAB_D2_all$exp_1_gDNA + 1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA + 1), y=log2(KRAB_D2_all$exp_1_gDNA + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q7<-ggplot(KRAB_D2_all, aes(x=log2(exp_2_gDNA + 1), y=log2(exp_1_gDNA + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,color="RED") +
+  geom_abline()+
+  stat_smooth()+
+  xlab("log2(expr Gal4 + 1)")+
+  ylab("log2(expr Gal4KRAB + 1)")+
+  #ggtitle("Gal4KRAB vs Gal4")+ 
+  ggtitle(bquote(atop(.("Gal4KRAB vs Gal4"), atop("",.(q7cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q8cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA + 0.1), y=log2(KRAB_D2_all$exp_3_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA + 0.1), y=log2(KRAB_D2_all$exp_3_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q8<-ggplot(KRAB_D2_all, aes(x=log2(exp_2_gDNA + 1), y=log2(exp_3_gDNA + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,colour="RED") +
+  geom_abline()+
+  stat_smooth() +
+  xlab("log2(expr Gal4 + 1)")+
+  ylab("log2(expr KRAB + 1)")+
+  #ggtitle("KRAB vs Gal4")+ 
+  ggtitle(bquote(atop(.("KRAB vs Gal4"), atop("",.(q8cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q9cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_1_gDNA + 0.1), y=log2(KRAB_D2_all$exp_3_gDNA + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_1_gDNA + 0.1), y=log2(KRAB_D2_all$exp_3_gDNA + 0.1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+q9<-ggplot(KRAB_D2_all, aes(x=log2(exp_3_gDNA + 1), y=log2(exp_1_gDNA + 1))) + 
+  theme(panel.background = element_rect(fill = "lavender"))+
+  geom_point(shape=19, size =0.2,colour="RED") +
+  geom_abline()+
+  stat_smooth() +
+  xlab("log2(expr KRAB + 1)")+
+  ylab("log2(expr Gal4KRAB + 1)")+
+  #ggtitle("Gal4KRAB vs KRAB")+ 
+  ggtitle(bquote(atop(.("Gal4KRAB vs KRAB"), atop("",.(q9cor)))))+ 
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+grid.arrange(q7,q8,q9,top = "normalized expression",nrow=1)
+```
+
+
+```{r fig.width=6, fig.height=10}
+#histograms foldchange
+foldch_names <- list(
+  'foldch_exp_1_exp_2'="Gal4KRAB / Gal4",
+  'foldch_exp_3_exp_2'="KRAB / Gal4",
+  'foldch_exp_1_exp_3'="Gal4KRAB / KRAB"
+)
+
+foldch_labeller <- function(variable,value){
+  return(foldch_names[value])
+}
+
+dataM <-c()
+dataM<-melt(KRAB_D2_all[c("foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3")])
+dataM<-na.omit(dataM)
+ggplot(dataM,aes(x=log2(value)))+
+  facet_grid(variable~.,labeller=foldch_labeller)+
+  geom_histogram(fill="red")+
+  ggtitle("fold change")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+```
+
+```{r fig.width=10, fig.height=12}
+#scatter plot expression vs foldchange
+#Gal4
+q1cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+#q1cor<-paste("r=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q1<-ggplot(na.omit(KRAB_D2_all[ ,c("exp_2_gDNA","foldch_exp_1_exp_2")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_1_exp_2))) + 
+  geom_point(shape=19, size =0.2,colour="red")+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (Gal4KRAB/ Gal4)") +
+  xlab("log2 (expr Gal4)") +
+  ggtitle(bquote(atop(.("Gal4KRAB/Gal4 vs expr Gal4"), atop("",.(q1cor)))))+ 
+  #ggtitle(bquote(atop(.("Gal4KRAB/Gal4 vs expression Gal4"), atop(.(q1cor)))))+ 
+  stat_smooth(method = "loess")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q2cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_3_exp_2),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_3_exp_2),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_3_exp_2),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_3_exp_2),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q2<-ggplot(na.omit(KRAB_D2_all[ ,c("exp_2_gDNA","foldch_exp_3_exp_2")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_3_exp_2))) + 
+  geom_point(shape=19, size =0.2,colour="red") +
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (KRAB/ Gal4)") +
+  xlab("log2 (expr Gal4)") +
+  ggtitle(bquote(atop(.("KRAB/Gal4 vs expr Gal4"), atop("",.(q2cor)))))+ 
+  stat_smooth(method = "loess")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+q3cor<-paste("r(p)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA ), y=log2(KRAB_D2_all$foldch_exp_1_exp_3),method = "pearson",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_3),method = "pearson",use="pairwise.complete.obs")$p.value,digits=3),"\n","r(s)=",signif(cor(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_3),method = "spearman",use="pairwise.complete.obs"), digits=3),"p=",signif(cor.test(x=log2(KRAB_D2_all$exp_2_gDNA), y=log2(KRAB_D2_all$foldch_exp_1_exp_3),method = "spearman",use="pairwise.complete.obs")$p.value,digits=3))
+
+q3<-ggplot(na.omit(KRAB_D2_all[ ,c("exp_2_gDNA","foldch_exp_1_exp_3")]), aes(x=log2(exp_2_gDNA), y=log2(foldch_exp_1_exp_3))) + 
+  geom_point(shape=19, size =0.2,colour="red") +
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(legend.position="none") +
+  ylab("log2 (Gal4KRAB/ KRAB)") +
+  xlab("log2 (expr Gal4 + 0.1)") +
+  ggtitle(bquote(atop(.("Gal4KRAB/ KRAB vs expr Gal4"), atop("",.(q3cor)))))+ 
+  stat_smooth(method = "loess")+
+  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+grid.arrange(q1,q2,q3,top="fold change vs expression Gal4",nrow=2)
+```
+```{r}
+chromsizes<-read.table("hg19_chromsizes.txt",header=F, stringsAsFactors = F)
+chromsizes
+names(chromsizes)<-c("chr_r","pos_r")
+
+
+ins_lo<-na.omit(subset(KRAB_D2_all, foldch_exp_1_exp_2 <= 0.125)[c("chr_r","pos_r")])
+ins_med<-na.omit(subset(KRAB_D2_all, (foldch_exp_1_exp_2 > 0.125) & (foldch_exp_1_exp_2 <= 0.5))[c("chr_r","pos_r")])
+ins_unch<-na.omit(subset(KRAB_D2_all, (foldch_exp_1_exp_2 > 0.5) & (foldch_exp_1_exp_2 <= 2))[c("chr_r","pos_r")])
+ins_hi<-na.omit(subset(KRAB_D2_all, foldch_exp_1_exp_2 > 2)[c("chr_r","pos_r")])
+
+ins_sil<-na.omit(subset(KRAB_D2_all, (exp_2_gDNA > 0) & (exp_1_gDNA == 0))[c("chr_r","pos_r")])
+ins_unex<-na.omit(subset(KRAB_D2_all,(exp_2_gDNA == 0))[c("chr_r","pos_r")])
+```
+```{r fig.width=10, fig.height=20}
+ggplot(chromsizes, aes(x=chr_r,y=as.numeric(pos_r)))+
+  geom_bar(stat='identity',fill="white",color="black")+
+  geom_hline(data = ins_lo, aes(yintercept= as.numeric(pos_r)),color="magenta")+
+  geom_hline(data = ins_med, aes(yintercept= as.numeric(pos_r)),color="red")+
+  geom_hline(data = ins_unch, aes(yintercept= as.numeric(pos_r)),color="yellow")+
+  geom_hline(data = ins_hi, aes(yintercept= as.numeric(pos_r)),color="green")+
+  geom_hline(data = ins_sil, aes(yintercept= as.numeric(pos_r)),color="black")+
+  geom_hline(data = ins_unex, aes(yintercept= as.numeric(pos_r)),color="grey")+
+  facet_grid(. ~ chr_r, scale = "free", space = "free_x")+
+  scale_y_continuous(breaks = c(10000000,20000000,30000000), labels=c("10 Mb","20 Mb","30 Mb")) +
+  theme(axis.title.y = element_blank(), axis.ticks.x = element_blank(),axis.text.y = element_text(angle=90, size = 15),axis.title.x = element_blank(), axis.text.x = element_blank(),strip.text.x = element_text(angle= 90))
+
+
+```
+```{r fig.width=15, fig.height=10}
+#foldch by 9 state model strip chart
+
+foldch_names <- list(
+  'foldch_exp_1_exp_2'="Gal4KRAB / Gal4",
+  'foldch_exp_3_exp_2'="KRAB / Gal4",
+  'foldch_exp_1_exp_3'="Gal4KRAB / KRAB"
+)
+
+foldch_labeller <- function(variable,value){
+  return(foldch_names[value])
+}
+
+dataM <- melt(KRAB_D2_all, measure.vars=c("foldch_exp_1_exp_2","foldch_exp_3_exp_2","foldch_exp_1_exp_3"),id.vars="HMMstate")
+dataM<-na.omit(dataM)
+
+ggplot(dataM, aes(x=as.factor(HMMstate), y=log2(value),colour=as.factor(HMMstate))) + 
+  facet_grid(. ~ variable,labeller=foldch_labeller)+
+  theme(panel.background = element_rect(fill = "lavender"))+
+  theme(strip.text.x = element_text(size = 20))+
+  geom_point(shape=19, size =0.5, position=position_jitter(width=.2))  + 
+  ggtitle("fold change by chromatin") +
+  stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+  theme(legend.position="none") +
+  theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+  theme(text = element_text(size = 20)) +
+  geom_hline(yintercept=0, colour = "grey30") +
+  theme(plot.title = element_text(size=24))+
+  scale_y_continuous(breaks=seq(-15, 15, by=1))+
+  ylab("log2 (fold change)")
+
+```
+```{r}
+#wilcox-test foldch nine state colors
+p <- list()
+tres <- list()
+states<-unique(KRAB_D2_all$HMMstate)
+states<-states[-16]
+for(i in states){
+  df2 <- KRAB_D2_all[, c("HMMstate", "foldch_exp_1_exp_2","exp_2_gDNA")]
+  df2$foldch_exp_1_exp_2 <- log2(df2$foldch_exp_1_exp_2)
+  df2$exp_2_gDNA <- log2(df2$exp_2_gDNA + 0.1)
+  df2<-na.omit(df2)
+  df2$group<-factor(df2$HMMstate == i)
+  t<-(t.test(df2$foldch_exp_1_exp_2~df2$group))
+  w<-(wilcox.test(df2$foldch_exp_1_exp_2~df2$group))
+  #print(m)
+  pval<-paste("p=",signif(w$p.value,digits = 3))
+  g1<-ggplot(df2, aes_string(x = factor("group"), y = "foldch_exp_1_exp_2")) + 
+    theme(panel.background = element_rect(fill = "lavender"))+
+    facet_wrap(~group)+
+    geom_point(position=position_jitter(width=.2),color="red") + 
+    ggtitle(bquote(atop(.(i),.(pval))))+ 
+    stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+    ylab("log2 (Gal4KRAB/Gal4)") +
+    scale_y_continuous(breaks=seq(-15, 15, by=1))+
+    theme(text = element_text(size = 10)) +
+    theme(legend.position="none",axis.text.x = element_blank(),axis.ticks.x = element_blank(), axis.title.x = element_blank())
+  i<-as.character(i)
+  tres[[i]] <- c(t$p.value,t$estimate,w$p.value)
+  p[[i]] <- g1
+}
+tres
+```
+```{r fig.width=12, fig.height=12}
+do.call(grid.arrange,p)
+
+
+```
+
+
