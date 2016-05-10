@@ -2,6 +2,7 @@
 from collections import Counter
 from bitarray import bitarray
 import re
+import operator
 from Bio.Data import IUPACData
 
 
@@ -109,7 +110,6 @@ class BKTree:
         it = iter(words)
         root = it.next()
         self.tree = (root, {})
-
         for i in it:
             self._add_word(self.tree, i)
 
@@ -120,6 +120,28 @@ class BKTree:
             self._add_word(children[d], word)
         else:
             children[d] = (word, {})
+
+    def pop(self, word):
+        def rec_child(new_parent, old_parent):
+            for cword, children in old_parent.items():
+                new_parent._add_word(new_parent, cword)
+                if children is not None:
+                    rec_child(new_parent, children)
+
+        def rec(parent):
+            pword, children = parent
+            d = self.distfn(word, pword, **self.kwargs)
+            if d == 0:
+                if children != {}:
+                    new_parent = children.pop(0)
+                    rec_child(new_parent, children)
+                    parent[0] = new_parent[0]
+                    parent[1] = new_parent[1]
+                return pword
+            child = children.get(d)
+            if child is not None:
+                return(rec(child))
+        return rec(self.tree)
 
     def query(self, word, n):
         """
@@ -258,6 +280,29 @@ if __name__ == '__main__':
     bc_len = 16
     constant1 = 'GTCACAAGGGCCGGCCACAACTCGAG'
     constant2 = 'TGATCCTGCAGTG'
-    fastq_name = '/home/cleemans/SURFdrive/TRIP/raw_data/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_13.fq'
-    test = bc_extract_exp1(fastq_name, bc_len, constant1, constant2, ind_len)
-    tree = BKTree(hamming_dist, test.keys())
+    trip_folder = '/home/cleemans/SURFdrive/TRIP'
+    fastq_base = '3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_13.fq'
+    fastq_name = '/'.paste(trip_folder, 'raw_data', fastq_base)
+    countDict = bc_extract_exp1(fastq_name, bc_len, constant1, constant2,
+                                ind_len)
+    tree = BKTree(hamming_dist, countDict.keys())
+
+
+def sort_keys(key, countDict):
+    return countDict[key]
+sorted_count = sorted(countDict.keys(),
+                      key=lambda elem: sort_keys(elem, countDict),
+                      reverse=True)
+i = 0
+while i < len(sorted_count):
+    if round(i / 10) == (i / 10):
+        print i
+        print len(sorted_count)
+    dna = sorted_count[i]
+    neighbours = tree.query(dna, 1)
+    for neighbour in neighbours:
+        other_dna = neighbour[1]
+        if other_dna != dna and other_dna in sorted_count:
+            index = sorted_count.index(other_dna)
+            dropped = sorted_count.pop(index)
+    i += 1
