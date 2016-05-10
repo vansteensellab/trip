@@ -288,21 +288,21 @@ if __name__ == '__main__':
     tree = BKTree(hamming_dist, countDict.keys())
 
 
-def sort_keys(key, countDict):
-    return countDict[key]
-sorted_count = sorted(countDict.keys(),
-                      key=lambda elem: sort_keys(elem, countDict),
-                      reverse=True)
-i = 0
-while i < len(sorted_count):
-    if round(i / 10) == (i / 10):
-        print i
-        print len(sorted_count)
-    dna = sorted_count[i]
-    neighbours = tree.query(dna, 1)
-    for neighbour in neighbours:
-        other_dna = neighbour[1]
-        if other_dna != dna and other_dna in sorted_count:
-            index = sorted_count.index(other_dna)
-            dropped = sorted_count.pop(index)
-    i += 1
+    def sort_keys(key, countDict):
+        return countDict[key]
+    sorted_count = sorted(countDict.keys(),
+                          key=lambda elem: sort_keys(elem, countDict),
+                          reverse=True)
+    i = 0
+    while i < len(sorted_count):
+        if round(i / 10) == (i / 10):
+            print i
+            print len(sorted_count)
+        dna = sorted_count[i]
+        neighbours = tree.query(dna, 1)
+        for neighbour in neighbours:
+            other_dna = neighbour[1]
+            if other_dna != dna and other_dna in sorted_count:
+                index = sorted_count.index(other_dna)
+                dropped = sorted_count.pop(index)
+        i += 1
