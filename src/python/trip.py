@@ -12,6 +12,7 @@ import pysam
 import argparse
 import itertools
 from multiprocessing import Pool
+from datetime import datetime
 
 
 class BKFilteredTree:
@@ -204,7 +205,7 @@ class BKTree:
 
 
 ##############################################################################
-############************  Function bc_extract_norm  ****************##########
+##########************  #Function bc_extract_norm#  ****************##########
 ##############################################################################
 # DESCRIPTION:
 # A subroutine to read the fastq file (typically the Single Read Illumina
@@ -321,60 +322,77 @@ def bc_extract(fastq_name, bc_len, constant1='',
                 yield(bc_this)
 
 
-def mapping_fwd(fastq_in, fastq_out, constant1, constant2, bc_len, ind_len,
-                bc_count_dict):
-    len1 = len(constant1)
-    len2 = len(constant2)
+def mapping_fwd_genuine(fastq_in, fastq_out, constant1, constant2, bc_len,
+                        ind_len, bc_count_dict):
     total = 0
     hits = 0
     genuine = 0
-    regex = make_regex('map', bc_len, constant1, constant2, ind_len)
-    fin = open(fastq_in)
     fout = open(fastq_out, 'w')
     id_dict = {}
-    for seq in SeqIO.parse(fin, 'fastq'):
-        total += 1
-        match = re.match(regex, str(seq.seq))
-        bc_this = None
-        if match is not None:
-            bc_this = match.group(1)
-            new_seq = seq[-len(match.group(2)):]
-        else:
-            hdist_1 = hamming_dist(seq.seq[ind_len:len1],
-                                   constant1)
-            constant_len = ind_len + len1 + len2 + bc_len
-            if hdist_1 <= (len1 / 7):
-                start2 = (ind_len + len1 + bc_len)
-                if hamming_dist(seq.seq[start2:len1],
-                                constant2) < (len2 / 7):
-                    bc_this = str(seq.seq[(ind_len + len1):start2])
-                    new_seq = seq[constant_len:]
-                elif hamming_dist(seq.seq[(start2 - 1):len1],
-                                  constant2) < (len2 / 7):
-                    bc_this = str(seq.seq[(ind_len + len1):(start2 - 1)])
-                    new_seq = seq[(constant_len - 1):]
-                elif hamming_dist(seq.seq[(start2 + 1):len1],
-                                  constant2) < (len2 / 7):
-                    bc_this = str(seq.seq[(ind_len + len1):(start2 + 1)])
-                    new_seq = seq[(constant_len + 1):]
-        if bc_this is not None:
-            hits += 1
-            if bc_this in bc_count_dict:
-                genuine += 1
-            id_dict[seq.id] = bc_this
-            new_id = '_'.join([seq.id, bc_this])
-            new_seq.description = re.sub(seq.id, new_id,
-                                         seq.description)
-            new_seq.id = new_id
-            SeqIO.write(new_seq, fout, 'fastq')
-    fin.close()
-    fout.close()
-    return(total, hits, genuine, id_dict)
+    with open(fastq_out, 'w') as fout:
+        for bc_this, seq in mapping_fwd(fastq_in, constant1, constant2, bc_len,
+                                        ind_len):
+            total += 1
+            if bc_this is not None:
+                hits += 1
+                if bc_this in bc_count_dict:
+                    genuine += 1
+                id_dict[seq.id] = bc_this
+                new_id = '_'.join([seq.id, bc_this])
+                seq.description = re.sub(seq.id, new_id, seq.description)
+                seq.id = new_id
+                SeqIO.write(seq, fout, 'fasta')
+    return (id_dict, total, hits, genuine)
+
+
+def mapping_fwd(fastq_in, constant1, constant2, bc_len, ind_len):
+    len1 = len(constant1)
+    len2 = len(constant2)
+    regex = make_regex('map', bc_len, constant1, constant2, ind_len)
+    with open(fastq_in) as fin:
+        for seq in SeqIO.parse(fin, 'fastq'):
+            match = re.match(regex, str(seq.seq))
+            bc_this = None
+            new_seq = None
+            if match is not None:
+                bc_this = match.group(1)
+                new_seq = seq[-len(match.group(2)):]
+            else:
+                seq_string = str(seq.seq)
+                hdist_1 = hamming_dist(seq_string[ind_len:(ind_len + len1)],
+                                       constant1)
+                if hdist_1 <= (len1 / 7):
+                    constant_len = ind_len + len1 + len2 + bc_len
+                    start2 = (ind_len + len1 + bc_len)
+                    start2 = (ind_len + len1 + bc_len)
+                    end2 = (start2 + len2)
+                    this_constant2 = seq_string[(start2 - 1):(end2 + 1)]
+                    this_len2 = end2 - start2
+                    if hamming_dist(this_constant2[1:-1],
+                                    constant2) < (this_len2 / 7):
+                        bc_this = seq_string[(ind_len + len1):start2]
+                        new_seq = seq[constant_len:]
+                        # print 'first:'
+                        # print line[(ind_len + len1):start2]
+                        # print line
+                    elif hamming_dist(this_constant2[:-2],
+                                      constant2) < (this_len2 / 7):
+                        bc_this = seq_string[(ind_len + len1):(start2 - 1)]
+                        new_seq = seq[(constant_len - 1):]
+                        # print 'second:'
+                        # print line[(ind_len + len1):start2 - 1]
+                        # print line
+                    elif hamming_dist(this_constant2[2:],
+                                      constant2) < (this_len2 / 7):
+                        bc_this = seq_string[(ind_len + len1):(start2 + 1)]
+                        new_seq = seq[(constant_len + 1):]
+            yield bc_this, new_seq
 
 
 def mapping_rev(fastq_in, fastq_out, constant, id_dict):
     hits = 0
     length = len(constant)
+    print constant
     regex = make_regex('map', 0, constant)
     fin = open(fastq_in)
     fout = open(fastq_out, 'w')
@@ -383,7 +401,7 @@ def mapping_rev(fastq_in, fastq_out, constant, id_dict):
             match = re.match(regex, str(seq.seq))
             if match is not None:
                 new_seq = seq[-len(match.group(1)):]
-                SeqIO.write(new_seq, fout, 'fastq')
+                SeqIO.write(new_seq, fout, 'fasta')
                 hits += 1
             elif (hamming_dist(str(seq.seq[:length]), constant) <
                   (length / 7)):
@@ -392,7 +410,7 @@ def mapping_rev(fastq_in, fastq_out, constant, id_dict):
                 new_seq.description = re.sub(seq.id, new_id,
                                              seq.description)
                 new_seq.id = new_id
-                SeqIO.write(new_seq, fout, 'fastq')
+                SeqIO.write(new_seq, fout, 'fasta')
                 hits += 1
     return(hits)
 
@@ -457,8 +475,8 @@ def mapping(fastq_fwd, fastq_rev, fout_fwd, fout_rev, bc_len,
                     new_rev.description = re.sub(new_fwd.id, new_id,
                                                  new_fwd.description)
                 new_fwd.id = new_rev.id = new_id
-                SeqIO.write(new_fwd, fo_fwd, 'fastq')
-                SeqIO.write(new_rev, fo_rev, 'fastq')
+                SeqIO.write(new_fwd, fo_fwd, 'fasta')
+                SeqIO.write(new_rev, fo_rev, 'fasta')
         else:
             missing_fwd += 1
             match = re.match(regex_rev, str(rev.seq))
@@ -519,7 +537,6 @@ def make_regex(kind, bc_len, constant1='', constant2='', ind_len=0):
     else:
         pattern = r'^.{%i,%i}%s%s%s'
         regex = pattern % (min1, max1, constant1, constant2, end)
-    print regex
     return re.compile(regex)
 
 
@@ -669,6 +686,12 @@ def get_arg_options():
                                   '--mapRev needs to be specified.'
                                   'The default value is undefined which means '
                                   'no mapping.'))
+    cmd_parser.add_argument('-u', '--useMagic', action='store_true',
+                            dest='useMagic',
+                            help=("use [] fields to specify multiple files. "
+                                  "e.g.: 'TRIP_normalization_[12-22,24].fq' "
+                                  "to specify all files numbered 12 to 22 "
+                                  "and 24"))
     cmd_parser.add_argument('-b', '--bcFile', dest='barcode_file',
                             help=('optional file containing barcodes. '
                                   'If this file is not provided, a list of '
@@ -760,8 +783,12 @@ def barcode_counter(file_name, bc_len, pat1, pat2, index_len, verbose=False):
     if verbose:
         print ('Counting barcodes in the file '
                '%s ....' % file_name)
+    if re.search('CBX', file_name) is not None:
+        index_len = 0
     bc_dict, hits = bc_extract_count(file_name, bc_len, pat1, pat2, index_len)
+    print hits
     file_base = os.path.basename(file_name)
+    print file_base
     if verbose:
         unique_length = len(bc_dict)
         print "Total number of unique barcodes in %s:\t%i" % (file_base,
@@ -775,59 +802,72 @@ def parse_bc_file(barcode_file):
             yield line.strip().split(' ')
 
 
-def build_tree(bc_dict, min_counts):
+def build_tree(bc_dict, min_counts, lev_dist):
+
     def sort_keys(key, bc_dict):
         return (unambiguous_ratio(key), sum(bc_dict[key].values()))
+    # bc_dict2 = {key: value for key, value in bc_dict.items()}
+    # print bc_dict2[bc_dict2.keys()[0]]
+
+    print datetime.now()
     sorted_count = sorted(bc_dict.keys(),
                           key=lambda elem: sort_keys(elem, bc_dict),
                           reverse=True)
-    bc_tree = BKTree(Levenshtein.distance, (sorted_count[0]))
+
+    bc_tree = BKTree(Levenshtein.distance, [sorted_count[0]])
     bc_index = 1
     bc_dict[sorted_count[0]]['index'] = bc_index
     part_match_dict = {}
     exact_match_dict = {}
     for bc_this in sorted_count[1:]:
-        near_list = bc_tree.query(bc_this, config_dict['lev_dist'])
-        # if there is no barcode closeby in in Levenshtein distance already
-        # in the tree to point to a mutation, assume it's genuine and
-        # add it if it's above the threshold
-        if (len(near_list) == 0 and (sum(bc_dict[bc_this].values() >=
-                                         min_counts))):
-            bc_tree.add_word(bc_this)
-            this_count = bc_dict[bc_this]
-            for key in this_count:
-                if key in exact_match_dict:
-                    exact_match_dict[key] += this_count[key]
-                else:
-                    exact_match_dict[key] = this_count[key]
-            bc_index += 1
-            this_count['index'] = bc_index
-        # else if there is one barcode that is closeby in Levenshtein
-        # distance, or there is a single barcode that is closest
-        # assume the barcode was mutated from this 'genuine' barcode.
-        # Add the count to the genuine barcode and add it to the sum
-        # of partly matched barcodes
-        elif len(near_list) == 1:
-                # or (len(near_list) > 1 and
-                #     near_list[0][0] < near_list[1][0]):
-            this_count = bc_dict.pop(bc_this)
-            other_bc = near_list[0][1]
-            if other_bc in bc_dict:
-                other_count = bc_dict[other_bc]
-            else:
+        if sum(bc_dict[bc_this].values()) >= min_counts:
+            near_list = bc_tree.query(bc_this, lev_dist)
+            # if there is no barcode closeby in in Levenshtein distance already
+            # in the tree to point to a mutation, assume it's genuine and
+            # add it if it's above the threshold
+            if len(near_list) == 0:
+                bc_tree.add_word(bc_this)
+                this_count = bc_dict[bc_this]
+                for key in this_count:
+                    if key in exact_match_dict:
+                        exact_match_dict[key] += this_count[key]
+                    else:
+                        exact_match_dict[key] = this_count[key]
                 bc_index += 1
-                bc_dict[other_bc] = other_count = {'index': bc_index}
-            for key in this_count:
-                if key in part_match_dict:
-                    part_match_dict[key] += this_count[key]
+                this_count['index'] = bc_index
+            # else if there is one barcode that is closeby in Levenshtein
+            # distance, or there is a single barcode that is closest
+            # assume the barcode was mutated from this 'genuine' barcode.
+            # Add the count to the genuine barcode and add it to the sum
+            # of partly matched barcodes
+            elif len(near_list) == 1:
+                    # or (len(near_list) > 1 and
+                    #     near_list[0][0] < near_list[1][0]):
+                this_count = bc_dict.pop(bc_this)
+                other_bc = near_list[0][1]
+                if other_bc in bc_dict:
+                    other_count = bc_dict[other_bc]
                 else:
-                    part_match_dict[key] = this_count[key]
-                if key in other_count:
-                    other_count[key] += this_count[key]
-                else:
-                    other_count[key] = this_count[key]
+                    bc_index += 1
+                    bc_dict[other_bc] = other_count = {'index': bc_index}
+                for key in this_count:
+                    if key in part_match_dict:
+                        part_match_dict[key] += this_count[key]
+                    else:
+                        part_match_dict[key] = this_count[key]
+                    if key in other_count:
+                        other_count[key] += this_count[key]
+                    else:
+                        other_count[key] = this_count[key]
+            else:
+                del bc_dict[bc_this]
         else:
             del bc_dict[bc_this]
+    bc_dict = {key: value for key, value in bc_dict.items()
+               if sum(value.values()) >= min_counts}
+    sorted_count = sorted(bc_dict.keys(),
+                          key=lambda elem: sort_keys(elem, bc_dict),
+                          reverse=True)
     return (bc_tree, bc_dict, part_match_dict, exact_match_dict)
 
 
@@ -835,18 +875,22 @@ def filter_barcodes_star(kwargs):
     return filter_barcodes(*kwargs)
 
 
-def filter_barcodes(bc_tree, bc_count_dict, bc_set=None):
+def filter_barcodes(bc_tree, bc_count_dict, lev_dist, bc_set=None):
     exact_match = 0
     part_match = 0
     if bc_set is None:
         bc_set = set(bc_tree.keys())
+    print datetime.now()
+    i = 0
     for bc_this in bc_count_dict.keys():
         # if there is a bc_dict already and barcode is in it, just count as
         # exact match
         if bc_this in bc_set:
             exact_match += bc_count_dict[bc_this]
         else:
-            near_list = bc_tree.query(bc_this, config_dict['lev_dist'])
+            near_list = bc_tree.query(bc_this, lev_dist)
+            while i < 20:
+                print near_list
             if len(near_list) == 1:
                     # or (len(near_list) > 1 and
                     #     near_list[0][0] < near_list[1][0]):
@@ -858,34 +902,292 @@ def filter_barcodes(bc_tree, bc_count_dict, bc_set=None):
                     bc_count_dict[other_bc] = bc_count_dict.pop(bc_this)
             else:
                 del bc_count_dict[bc_this]
+        i += 1
+    i = 0
+    for bc_this in bc_count_dict.keys():
+        if bc_this in bc_set:
+            exact_match += bc_count_dict[bc_this]
+        else:
+            near_list = []
+            for bc in bc_set:
+                d = Levenshtein(bc, bc_this)
+                if d <= lev_dist:
+                    near_list.append((bc, d))
+            while i < 20:
+                print near_list
+            if len(near_list) == 1:
+                    # or (len(near_list) > 1 and
+                    #     near_list[0][0] < near_list[1][0]):
+                other_bc = near_list[0][1]
+                part_match += 1
+                if other_bc in bc_count_dict:
+                    bc_count_dict[other_bc] += bc_count_dict.pop(bc_this)
+                else:
+                    bc_count_dict[other_bc] = bc_count_dict.pop(bc_this)
+            else:
+                del bc_count_dict[bc_this]
+        i += 1
     return bc_count_dict, exact_match, part_match
 
 
-def run_barcode_filter(bc_tree, bc_count_list, cores):
+def run_barcode_filter(bc_tree, bc_count_list, lev_dist, cores):
     bc_set = set(bc_tree.keys())
     if cores > 1:
         pool = Pool(processes=cores)
         it = itertools.izip(itertools.repeat(bc_tree),
                             bc_count_list,
+                            itertools.repeat(lev_dist),
                             itertools.repeat(bc_set))
         out = pool.map(filter_barcodes_star, it)
     else:
         out = []
-        for i in range(0, len(file_list)):
-            out.append(filter_barcodes(bc_tree, bc_count_list, bc_set))
+        for i in range(0, len(bc_count_list)):
+            out.append(filter_barcodes(bc_tree, bc_count_list[i], lev_dist,
+                       bc_set))
     return out
+
+
+def run_mapping_rev(map_rev_list, id_dict_list, map_pat_rev, out_dir, cores):
+    map_out_list = []
+    for fastq_in in map_rev_list:
+        file_name, extension = os.path.splitext(fastq_in)
+        base_name = os.path.basename(file_name)
+        map_out_list.append('%s/%s_rev1%s' % (out_dir, base_name, extension))
+    if cores > 1:
+        pool = Pool(processes=cores)
+        it = itertools.izip(map_rev_list, map_out_list,
+                            itertools.repeat(map_pat_rev), id_dict_list)
+        out = pool.map(mapping_rev_star, it)
+    else:
+        out = []
+        for map_rev, map_out, id_dict in zip(map_rev_list, map_out_list,
+                                             id_dict_list):
+            out.append(mapping_rev(map_rev, map_out, map_pat_rev, id_dict))
+    return {fout: output for fout, output in zip(map_out_list, out)}
+
+
+def mapping_rev_star(kwargs):
+    return mapping_rev(*kwargs)
+
+
+def mapping_fwd_star(kwargs):
+    return mapping_fwd_genuine(*kwargs)
+
+
+def run_mapping_fwd(map_fwd_list, out_dir, map_pat1, map_pat2, bc_len,
+                    index_len, bc_dict, cores):
+    map_out_list = []
+    for fastq_in in map_fwd_list:
+        file_name, extension = os.path.splitext(fastq_in)
+        base_name = os.path.basename(file_name)
+        map_out_list.append('%s/%s_fwd1%s' % (out_dir, base_name, extension))
+
+    if cores > 1:
+        pool = Pool(processes=cores)
+        it = itertools.izip(map_fwd_list, map_out_list,
+                            itertools.repeat(map_pat1),
+                            itertools.repeat(map_pat2),
+                            itertools.repeat(bc_len),
+                            itertools.repeat(index_len),
+                            itertools.repeat(bc_dict))
+        out = pool.map(mapping_fwd_star, it)
+    else:
+        out = []
+        for map_fwd, map_out in zip(map_fwd_list, map_out_list):
+            out.append(mapping_fwd_genuine(map_fwd, map_out, map_pat1,
+                                           map_pat2, bc_len, index_len,
+                                           bc_dict))
+    return {fout: output for fout, output in zip(map_out_list, out)}
+
+
+def use_magic(file_string):
+    sep_regex = r',(?![0-9,\-:]+\])'
+    bracket_regex = re.compile(r'\[([0-9,:-]+)\]')
+    split_regex = re.compile(r'[,\-:]')
+    start_regex = re.compile(r'[0-9]+\Z')
+    end_regex = re.compile(r'^[0-9]+')
+    file_pattern_list = []
+    start = 0
+    for match in re.finditer(sep_regex, file_string):
+        file_pattern_list.append(file_string[start:match.start()])
+        start = match.end()
+    file_pattern_list.append(file_string[start:])
+    file_list = []
+    for file_pattern in file_pattern_list:
+        base_name = os.path.basename(file_pattern)
+        bracket_match = re.search(bracket_regex, base_name)
+        if bracket_match is not None:
+            file_string = re.sub(bracket_regex, '%s', file_pattern)
+            range_string = bracket_match.group(1)
+            first_int = re.findall(end_regex, range_string)[0]
+            range_list = [int(first_int)]
+            for split_match in re.finditer(split_regex, range_string):
+                split = split_match.group(0)
+                start = re.findall(start_regex,
+                                   range_string[:split_match.start()])[0]
+                end = re.findall(end_regex,
+                                 range_string[split_match.end():])[0]
+                if split == ',':
+                    range_list.append(int(end))
+                elif split == '-' or split == ':':
+                    range_list.extend(range(int(start) + 1, int(end) + 1))
+            for num in range_list:
+                file_name = file_string % num
+                if os.path.exists(file_name):
+                    file_list.append(file_name)
+        else:
+            file_list.append(file_pattern)
+    return file_list
+
+
+def norm_and_exp(norm_file_list, exp_file_list, bc_file, out_dir, bc_len,
+                 pat1, pat2, index_length, min_counts, lev_dist,
+                 cores, verbose):
+    file_list = []
+    file_list.extend(norm_file_list)
+    file_list.extend(exp_file_list)
+    count_out = run_barcode_counter(file_list,
+                                    bc_len,
+                                    pat1,
+                                    pat2,
+                                    index_length,
+                                    cores,
+                                    verbose)
+
+    total_match_dict = {}
+    exact_match_dict = {}
+    part_match_dict = {}
+    if bc_file is not None:
+        bc_dict = {key: {'index': value}
+                   for value, key in parse_bc_file(bc_file)}
+        bc_tree = BKTree(Levenshtein.distance, bc_dict.keys())
+        bc_count_list = [count_dict for count_dict, hits in count_out]
+        name_list = [os.path.basename(file_name) for file_name in file_list]
+        total_match_dict = {name: hits for name, (cd, hits) in zip(name_list,
+                                                                   count_out)}
+        exact_match_dict = {}
+        part_match_dict = {}
+        filter_out = run_barcode_filter(bc_tree, bc_count_list, lev_dist,
+                                        cores)
+        for name, (bc_count_dict, exact_match, part_match) in zip(name_list,
+                                                                  filter_out):
+            for bc_this in bc_count_dict:
+                bc_dict[bc_this][name] = bc_count_dict[bc_this]
+            exact_match_dict[name] = exact_match
+            part_match_dict[name] = part_match
+    else:
+        bc_dict = {}
+        for i in range(0, len(norm_file_list)):
+            norm_base = os.path.basename(norm_file_list[i])
+            bc_norm_dict, hits = count_out[i]
+            total_match_dict[norm_base] = hits
+            exact_match_dict[norm_base] = 0
+            part_match_dict[norm_base] = 0
+            for bc in bc_norm_dict:
+                if bc in bc_dict:
+                    bc_dict[bc][norm_base] = bc_norm_dict[bc]
+                else:
+                    bc_dict[bc] = {norm_base: bc_norm_dict[bc]}
+        print 'building tree...'
+        tree_out = build_tree(bc_dict, min_counts, lev_dist)
+        bc_tree, bc_dict, part_match_dict, exact_match_dict = tree_out
+        bc_count_list = [count_dict for count_dict, h in
+                         count_out[len(norm_file_list):]]
+        name_list = [os.path.basename(file_name)
+                     for file_name in norm_file_list]
+        print 'filter_barcodes...'
+        for i in range(0, len(exp_file_list)):
+            exp_base = os.path.basename(exp_file_list[i])
+            bc_exp_dict, hits = count_out[len(norm_file_list) + i]
+            total_match_dict[exp_base] = hits
+            exact_match_dict[exp_base] = 0
+            for bc in bc_exp_dict:
+                if bc in bc_dict:
+                    bc_dict[bc][exp_base] = bc_exp_dict[bc]
+                    exact_match_dict[exp_base] += bc_exp_dict[bc]
+        # filter_out = run_barcode_filter(bc_tree, bc_count_list, lev_dist,
+        #                                 cores)
+        # for name, (bc_count_dict, exact_match, part_match) in zip(name_list,
+        #                                                           filter_out):
+        #     for bc_this in bc_count_dict:
+        #         bc_dict[bc_this][name] = bc_count_dict[bc_this]
+        #     exact_match_dict[name] = exact_match
+        #     part_match_dict[name] = part_match
+
+    print total_match_dict
+    print exact_match_dict
+    print part_match_dict
+    with open('/'.join((out_dir, 'bc_count.txt')), 'w') as f_out:
+        first_line_list = ['bc']
+        first_line_list.extend([os.path.basename(f) for f in file_list])
+        f_out.write('\t'.join(first_line_list))
+        f_out.write('\n')
+        for bc in bc_dict:
+            line_list = [bc]
+            this_count_dict = bc_dict[bc]
+            for file_name in first_line_list[1:]:
+                if file_name in this_count_dict:
+                    line_list.append(str(this_count_dict[file_name]))
+                else:
+                    line_list.append('0')
+            f_out.write('\t'.join(line_list))
+            f_out.write('\n')
+    return bc_dict, bc_tree
+
+
+def extract_multi_hits(sam_in, fastq_out):
+    seq_list = []
+    for line in pysam.AlignmentFile(sam_in):
+        if line.has_tag('XS'):
+            quality_dict = {'phred_quality': line.query_qualities}
+            seq = SeqIO.SeqRecord(line.query_sequence, line.query_name,
+                                  description=line.query_name,
+                                  letter_annotations=quality_dict)
+            seq_list.append(seq)
+    with open(fastq_out, 'w') as fout:
+        SeqIO.write(seq_list, fout, 'fastq')
 
 
 if __name__ == '__main__':
     options = get_arg_options()
     config_file = options.configuration_file
-    norm_file_list = options.normalization_file.split(',')
-    exp_file_list = options.expression_file.split(',')
+    if options.normalization_file is not None:
+        if options.useMagic:
+            norm_file_list = use_magic(options.normalization_file)
+        else:
+            norm_file_list = options.normalization_file.split(',')
+    else:
+        norm_file_list = []
+    if options.expression_file is not None:
+        if options.useMagic:
+            exp_file_list = use_magic(options.expression_file)
+        else:
+            exp_file_list = options.expression_file.split(',')
+    else:
+        exp_file_list = []
+    if options.mapping_forward is not None:
+        if options.useMagic:
+            map_fwd_list = use_magic(options.mapping_forward)
+        else:
+            map_fwd_list = options.mapping_forward.split(',')
+    else:
+        map_fwd_list = []
+    if options.mapping_reverse is not None:
+        if options.useMagic:
+            map_rev_list = use_magic(options.mapping_reverse)
+        else:
+            map_rev_list = options.mapping_reverse.split(',')
+    else:
+        map_rev_list = []
+
     out_dir = options.output_directory
     bc_file = options.barcode_file
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
-    map_style = options.map_style
+    if options.map_style is not None:
+        map_style = options.map_style
+    else:
+        map_style = 'n'
     if map_style not in ['n', 'b', 'r', 'f']:
         raise ValueError('map_style is not recognized as a valid '
                          'mapping style, options are [n OR b OR r OR f]')
@@ -937,84 +1239,61 @@ if __name__ == '__main__':
                                  % config_dict['max_dist_rev'])
         debug_file.write('min_counts:\t%i' % config_dict['min_counts'])
 
-    file_list = []
-    file_list.extend(norm_file_list)
-    file_list.extend(exp_file_list)
-    count_out = run_barcode_counter(file_list,
-                                    config_dict['barcode_length'],
-                                    config_dict['pat1'],
-                                    config_dict['pat2'],
-                                    config_dict['index_length'],
-                                    config_dict['cores'],
-                                    verbose)
-
-    total_match_dict = {}
-    exact_match_dict = {}
-    part_match_dict = {}
-    if bc_file is not None:
+    if (len(norm_file_list) + len(exp_file_list)) > 0:
+        bc_dict, bc_tree = norm_and_exp(norm_file_list, exp_file_list,
+                                        bc_file, out_dir,
+                                        config_dict['barcode_length'],
+                                        config_dict['pat1'],
+                                        config_dict['pat2'],
+                                        config_dict['index_length'],
+                                        config_dict['min_counts'],
+                                        config_dict['lev_dist'],
+                                        config_dict['cores'], verbose)
+    else:
         bc_dict = {key: {'index': value}
                    for value, key in parse_bc_file(bc_file)}
         bc_tree = BKTree(Levenshtein.distance, bc_dict.keys())
-        bc_count_list = [count_dict for count_dict, hits in count_out]
-        name_list = [os.path.basename(file_name) for file_name in file_list]
-        total_match_dict = {name: hits for name, (cd, hits) in zip(name_list,
-                                                                   count_out)}
-        exact_match_dict = {}
-        part_match_dict = {}
-        filter_out = run_barcode_filter(bc_tree, bc_count_list,
-                                        config_dict['cores'])
-        for name, (bc_count_dict, exact_match, part_match) in zip(name_list,
-                                                                  filter_out):
-            for bc_this in bc_count_dict:
-                bc_dict[bc_this][name] = bc_count_dict[bc_this]
-            exact_match_dict[name] = exact_match
-            part_match_dict[name] = part_match
-    else:
-        bc_dict = {}
-        for i in range(0, len(norm_file_list)):
-            norm_base = os.path.basename(norm_file_list[i])
-            bc_norm_dict, hits = count_out[i]
-            total_match_dict[norm_base] = hits
-            exact_match_dict[norm_base] = 0
-            part_match_dict[norm_base] = 0
-            for bc in bc_norm_dict:
-                if bc in bc_dict:
-                    bc_dict[bc][norm_base] = bc_norm_dict[bc]
-                else:
-                    bc_dict[bc] = {norm_base: bc_norm_dict[bc]}
-        tree_out = build_tree(bc_dict, config_dict['min_counts'])
-        bc_tree, bc_dict, part_match_dict, exact_match_dict = tree_out
-        bc_count_list = [count_dict for count_dict, h in
-                         count_out[len(norm_file_list):]]
-        name_list = [os.path.basename(file_name)
-                     for file_name in norm_file_list]
-        filter_out = run_barcode_filter(bc_tree, bc_count_list,
-                                        config_dict['cores'])
-        for name, (bc_count_dict, exact_match, part_match) in zip(name_list,
-                                                                  filter_out):
-            for bc_this in bc_count_dict:
-                bc_dict[bc_this][name] = bc_count_dict[bc_this]
-            exact_match_dict[name] = exact_match
-            part_match_dict[name] = part_match
 
-    print total_match_dict
-    print exact_match_dict
-    print part_match_dict
-    with open('/'.join((out_dir, 'bc_count.txt')), 'w') as f_out:
-        first_line_list = ['bc']
-        first_line_list.extend([os.path.basename(f) for f in file_list])
-        f_out.write('\t'.join(first_line_list))
-        f_out.write('\n')
-        for bc in bc_dict:
-            line_list = [bc]
-            this_count_dict = bc_dict[bc]
-            for file_name in first_line_list[1:]:
-                if file_name in this_count_dict:
-                    line_list.append(str(this_count_dict[file_name]))
-                else:
-                    line_list.append('0')
-            f_out.write('\t'.join(line_list))
-            f_out.write('\n')
+    map_fwd_out = run_mapping_fwd(map_fwd_list, out_dir,
+                                  config_dict['map_pat1'],
+                                  config_dict['map_pat2'],
+                                  config_dict['barcode_length'],
+                                  config_dict['index_length'],
+                                  bc_dict, config_dict['cores'])
+    id_dict_list = [id_dict for id_dict, t, h, g in map_fwd_out.values()]
+    total_fwd_dict = {map_fwd: total for map_fwd, (i, total, h, g)
+                      in zip(map_fwd_list, map_fwd_out.values())}
+    hits_fwd_dict = {map_fwd: hits for map_fwd, (i, t, hits, g)
+                     in zip(map_fwd_list, map_fwd_out.values())}
+    genuine_fwd_dict = {map_fwd: genuine for map_fwd, (i, t, h, genuine)
+                        in zip(map_fwd_list, map_fwd_out.values())}
+
+    map_rev_out = run_mapping_rev(map_rev_list, id_dict_list,
+                                  config_dict['map_pat_rev'], out_dir,
+                                  config_dict['cores'])
+    hits_rev_dict = {map_rev: hits for map_rev, hits in
+                     zip(map_rev_list, map_rev_out.values())}
+    map_fwd_list = [(fq, '%s.sam' % os.path.splitext(fq)[0])
+                    for fq in map_fwd_out.keys()]
+    map_rev_list = [(fq, '%s.sam' % os.path.splitext(fq)[0])
+                    for fq in map_rev_out.keys()]
+    print hits_fwd_dict
+    print total_fwd_dict
+    print genuine_fwd_dict
+    print hits_rev_dict
+
+    for map_fq, map_sam in map_fwd_list:
+        align_command = ("bowtie2 -p %i -f -t --very-sensitive"
+                         " -x %s -U %s -S %s" % (config_dict['cores'],
+                                                 config_dict['bowtie_base'],
+                                                 map_fq, map_sam))
+        os.system(align_command)
+    for map_fq, map_sam in map_rev_list:
+        align_command = ("bowtie2 -p %i -f -t --very-sensitive-local"
+                         " -x %s -U %s -S %s" % (config_dict['cores'],
+                                                 config_dict['bowtie_base'],
+                                                 map_fq, map_sam))
+        os.system(align_command)
 
     # ind_len = 10
     # bc_len = 16
