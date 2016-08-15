@@ -1,0 +1,147 @@
+
+# knitr document van Steensel lab
+
+# TRIP on repetitive elements
+## Christ Leemans, 31-05-2016 - to date 
+
+## Introduction
+The current pipeline for Laura's thethered TRIP experiments only considers uniquely reads that can be uniquely mapped. But TRIP intergrations inside repetitive elements might also provide valuable information on how the genome is organized.
+
+In answering the question of how TRIP intergations behave in repetitive elements, I would also like to really dive into the mechanisms of the pipeline. Right now Laura and Eva are using two completely different scripts and in addition Eva still has another script of Wasseem that is his most recent work, but unfortunately it is not in use since there were still some unanswered questions about how to make it work.
+
+## Input types
+The input for the TRIP pipeline is made up of 4 different sets of fastq from different sources. These contain gDNA for normalization, cDNA for expression levels, forward iPCR and reverse iPRC reads for mapping the intergrations.
+
+read structure:
+
+**gDNA/cDNA:**  
+\# index - pat1 - barcode - pat2  
+\# [N*10]GTCACAAGGGCCGGCCACAACTCGAG[N*16]TGATCCTGCAGTGTCACCTAAATCGTATGCGGCCGCGAATTCTTACTT
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* pat1 = GTCACAAGGGCCGGCCACAACTCGAG
+* pat2 = TGATC
+* min_counts = 3 # amount of times a barcode has to be counted to be considered
+* hd = 2 # the max hamming distance between two barcodes for them to still be considered the same
+
+**forward iPCR:**  
+\# index - pat1 - barcode - pat2 - gDNA  
+\# [N*10]GTCACAAGGGCCGGCCACAACTCGAG[N*16]TGATC[N*43]
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* map_pat1 = GTCACAAGGGCCGGCCACAACTCGAG
+* map_pat2 = TGATC
+* max_dist_for = 500 # two forward iPCR reads mapped less than 500bp apart are considered the same intergration site
+
+**reverse iPCR:**  
+\# map_pat_rev - gDNA  
+\# GTACGTCACAATATGATTATCTTTCTAGGGTTAA[N*66]
+
+In the config file the following settings are used for these reads:  
+* map_pat_rev = GTACGTCACAATATGATTATCTTTCTAGGGTT
+* max_dist_for = 50 # two reverse iPCR reads mapped less than 50bp apart are considered the same intergration site
+
+## Experimental setup
+At this moment Laura has data for 3 different tethering experiments using KRAB, G9a and CBX5. For each protein of interest (POI) there are 12 expression and 12 gDNA files: 3 conditions * 2 different days after induction * 2 replicates. One condition uses an unthethered POI, the second uses only GAL4 and the third condition uses the POI thethered to GAL4 (GAL4-POI). Expression and gDNA data was obtained on day 2 and day 9. With each sequencing run, spikeins were added to normalize across different experiments. There is a different config file to extract the expression values of the spikeins.
+
+## TRIP pipeline
+
+With my new version of the trip pipeline with the following two commands I could get the expression and normalization values as well as the genomic intergration positions for each file with the following two commands:
+
+```shell
+nice -19 ~/python/bin/python src/python/trip.py -o norm_exp_cl20160614 -c lb20160318_config_K562_TTRIP.txt -n "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[13:24].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[13:24]_modified.fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[13:24].fq" -e "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[1:12]_modified.fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[1:12].fq" -m b -f raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq,raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[10-14].fastq -r raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq,raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_[10-14].fastq -u -v -d
+
+nice -19 ~/python/bin/python src/python/trip.py -o spikein_norm_exp_cl20160702 -c cl20160602_config_spikein_K562_TTRIP.txt -n "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[13:24].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[13:24]_modified.fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[13:24].fq" -e "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[1:12]_modified.fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[1:12].fq" -u -v -d
+
+```
+### Output:
+- samFor.sam	+	# forward reads mapped to genome  
+- samRev.sam            # reverse reads mapped to genome  
+- bc_count.txt          # barcode counts  
+- 3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[09-14]_fwd1.fastq (6 files)  
+						# 6 fastqs with only gDNA of forward reads and barcode in sequence id  
+- 3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[09-14]_rev1.fastq (6 files)  
+						# 6 fastqs with only gDNA of reverse reads and barcode in sequence id  
+- final_mapping.txt     # mapped barcode locations
+- stats.txt 			# stats.txt
+
+
+
+##
+
+
+```shell
+samtools view -Sb test/samRev.sam |  bedtools intersect -abam stdin -b raw_data/repeatMasker_hg19_fa_out_20140131.bed -bed -wa -wb | awk '{sub(/.*_/,"",$4);print $4"\t"$16}' | awk -F"|" '{print $1"\t"$2}' | sort -k 1,2 | uniq -c
+```
+### Path, Libraries, Parameters and Useful Functions
+```{r message=FALSE}
+
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+
+
+```
+
+### Custom functions
+Functions used
+
+
+### Load data
+Data loading 
+
+
+```{r}
+
+# Data loading
+
+```
+
+
+### Some data pre-processing
+Calculate some basic values/quality control
+
+```{r}
+# pre-processing
+
+```
+
+
+### Step 1
+How reprodicible are the Hi-C data (only dynamic LAD bins):
+
+```{r}
+# perform analysis
+```
+**Conclusion:** the conclusion
+
+
+
+### Step 2
+description
+
+```{r warning=FALSE, fig.width=8, fig.height=5, out.width=700}
+# next step
+```
+**Conclusion:**
+conclusion of step 2
+
+
+### Session Info
+```{r}
+
+sessionInfo()
+getwd()
+date()
+paste("Run time: ",format(Sys.time()-StartTime))
+
+```
+
+</body>

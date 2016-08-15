@@ -1,0 +1,683 @@
+
+# knitr document van Steensel lab
+
+# Thethered TRIP data pre-processing
+## Christ Leemans, 31-05-2016 - to date 
+
+## Introduction
+The current pipeline for Laura's thethered TRIP experiments only considers uniquely reads that can be uniquely mapped. But TRIP intergrations inside repetitive elements might also provide valuable information on how the genome is organized.
+
+In answering the question of how TRIP intergations behave in repetitive elements, I would also like to really dive into the mechanisms of the pipeline. Right now Laura and Eva are using two completely different scripts and in addition Eva still has another script of Wasseem that is his most recent work, but unfortunately it is not in use since there were still some unanswered questions about how to make it work.
+
+## Experimental setup
+At this moment Laura has data for 3 different tethering experiments using KRAB, G9a and CBX5. For each protein of interest (POI) there are 12 expression and 12 gDNA files: 3 conditions * 2 different days after induction * 2 replicates. One condition uses an unthethered POI, the second uses only GAL4 and the third condition uses the POI thethered to GAL4 (GAL4-POI). Expression and gDNA data was obtained on day 2 and day 9. With each sequencing run, spikeins were added to normalize across different experiments. There is a different config file to extract the expression values of the spikeins.
+
+## Input types
+The input for the TRIP pipeline is made up of 4 different sets of fastq from different sources. These contain gDNA for normalization, cDNA for expression levels, forward iPCR and reverse iPRC reads for mapping the intergrations.
+
+read structure:
+
+**gDNA/cDNA:**
+\# index - pat1 - barcode - pat2  
+\# [N*10]GTCACAAGGGCCGGCCACAACTCGAG[N*16]TGATCCTGCAGTGTCACCTAAATCGTATGCGGCCGCGAATTCTTACTT
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* pat1 = GTCACAAGGGCCGGCCACAACTCGAG
+* pat2 = TGATC
+* min_counts = 3 # amount of times a barcode has to be counted to be considered
+* hd = 2 # the max hamming distance between two barcodes for them to still be considered the same
+
+**forward iPCR:**  
+\# index - pat1 - barcode - pat2 - gDNA  
+\# [N*10]GTCACAAGGGCCGGCCACAACTCGAG[N*16]TGATC[N*43]
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* map_pat1 = GTCACAAGGGCCGGCCACAACTCGAG
+* map_pat2 = TGATC
+* max_dist_for = 500 # two forward iPCR reads mapped less than 500bp apart are considered the same intergration site
+
+**reverse iPCR:**  
+\# map_pat_rev - gDNA  
+\# GTACGTCACAATATGATTATCTTTCTAGGGTTAA[N*66]
+
+In the config file the following settings are used for these reads:  
+* map_pat_rev = GTACGTCACAATATGATTATCTTTCTAGGGTT
+* max_dist_for = 50 # two reverse iPCR reads mapped less than 50bp apart are considered the same intergration site
+
+
+
+## TRIP pipeline
+
+With my new version of the trip pipeline with the following commands I could get the expression and normalization values as well as the genomic intergration positions for each file:
+
+```shell
+## normalization and expression values for the experimental conditions
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160707_trip_without_bc_list -c cl20160621_config_K562_TTRIP.txt -n "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[13:24].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[13:24].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[13:24].fq" -e "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[1:12].fq" -u -v -d 2>&1 | tee cl20160707_trip_without_bc_list/norm_exp.stdout.stderr.txt
+
+## expression values for the spike-in library
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160715_trip_spikein -n "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_25.fq" -c cl20160602_config_spikein_K562_TTRIP.txt -e "/home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_[1:12].fq,/home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_[1:12].fq" -u -v -d 2>&1 | tee cl20160715_trip_spikein/norm_exp.stdout.stderr.txt
+
+## we are only interested in finding the intergration site of a barcode if, for a single experiment, normalization reads are found in each replicate
+tail -n+2 cl20160707_trip_without_bc_list/bc_count.txt | awk '{g=0;c=0;k=0;for(i=2;i<=13;i++)g+=$i;for(i=14;i<=25;i++)c+=$i;for(i=26;i<=37;i++)k+=$i;if(g!=0 || c!=0 || k!=0)print NR"\t"$1}' > cl20160707_trip_without_bc_list/bc_table.txt
+
+## find the intergration sites
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160707_trip_without_bc_list -c cl20160621_config_K562_TTRIP.txt -b cl20160707_trip_without_bc_list/bc_table.txt -m b -f "raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq,raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[10-14].fastq" -r "raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq,raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_[10-14].fastq" -u -v -d 2>&1 | tee cl20160707_trip_without_bc_list/mapping.stdout.stderr.txt
+
+## combine the two sam files with reverse reads so that remapped reads are replaced in samRev.sam
+nice -15 awk 'FNR==NR{if ($1 ~ /^@/) {print $0; next} else {arr[$1]=$0};next}{if ($1 in arr){print arr[$1]}else{print $0}}' cl20160707_trip_without_bc_list/samRev2.sam cl20160707_trip_without_bc_list/samRev.sam | samtools view -Sb - > cl20160707_trip_without_bc_list/samRev_combined.bam
+
+```
+### Output:
+- samFor.sam			# forward reads mapped to genome  
+- samRev.sam            # reverse reads mapped to genome  
+- samRev2.sam           # substrings of reads that needed remapping
+- samRev_combined.bam   # combined reverse reads   
+- bc_count.txt          # barcode counts  
+- bc_table.txt			# barcode table for mapping
+- 3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[09-14]_fwd1.fastq (6 files)  
+						# 6 fastqs with just the gDNA of forward reads (see read structure) and barcode in sequence id  
+- 3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_[09-14]_rev1.fastq (6 files)  
+						# 6 fastqs with just the gDNA of reverse reads (see read structure) and barcode in sequence id  
+- final_mapping.txt     # mapped barcode locations
+- stats.txt 			# stats.txt
+
+
+## Linking barcodes to repetitive elements
+For each read we have a barcode and a location, this location can be overlapping with a repetitive element. First all reads need to be matched with repetitive elements, then the barcode of that read can be linked. One barcode will have multiple reads and also repetitive elements. In the end we want a count of how many times a barcode has been linked to a type of repetitive element.
+```
+
+samtools view cl20160707_trip_without_bc_list/samRev_combined.bam | \
+awk '{
+  if ($1 !~ /^@/ && $12 ~ /AS:i:/)
+  {
+    sub(/AS:i:/ ,"", $12)
+    if($2==0){
+      match($6,/([0-9]+)S$/,s)
+    }else if($2==16){
+      match($6, /^([0-9]+)S/, s)
+      sub(/[0-9]+[SI]/,"",$6)
+      n=split($6,a,"[MD]")
+      for (i=1;i<=n;i++){
+        $4+=a[i]
+      }
+    }
+    print $3"\t"$4-1"\t"$4"\t"$1"\t"$12/(length($10)-s[1])
+  }
+}' | \
+bedtools intersect -wb -wa -a - -b raw_data/repeatMasker_hg19_fa_out_20140131.bed | \
+awk '{print $4"|"$5"|"$9}' | \
+awk -F"|" '
+BEGIN {
+print "barcode\tper_base_quality\tclass\tfamily\tname"
+}
+sub(/[0-9:]*_/, "", $1){
+  if($3 ~ /\//){
+    match($3,/(.*)\/(.*)/, a)
+    class=a[1]
+    fam=a[2]
+  } else{
+    class=$3
+    fam="-"
+  }
+  print $1"\t"$2"\t"class"\t"fam"\t"$4}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/bc_in_repeats_samRev.txt
+
+nice -18 bedtools intersect -abam cl20160707_trip_without_bc_list/samRev_combined.bam -b raw_data/repeatMasker_hg19_fa_out_20140131.bed -bed -wa -wb | awk '{print $4"\t"$5"\t"$16}' | awk -F"|" 'sub(/[0-9:]*_/, "", $1){print $1"\t"$2"\t"$3"\t"$4}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/bc_in_repeats_samRev.txt
+
+```
+
+## Linking barcodes to LAD states
+I found an rData file of Caroline with LAD states for different cell types from microarray experiments. In this rdata file is a table with binarized LAD information (1 for iLAD, 2 for cLAD) called 'allHumanStateHg19'. There is also a table called 'allHumanAvHg19' with raw peaks and a table called cLADhs where constitutive LAD states are defined.
+
+For now I am using only the allHumanStateHg19 table. 4 different 'states' can be described in the context of the K562 thethered-TRIP expiriment: constitutive LADs (cLADs), constitutive inter-LADs (ciLADs), facultative LADs (fLADs) which are associated with the lamina in K562 cell line and fLADs which are not associated with the lamina in K562 cell line, but with different cell types.
+
+```r
+
+load('CdG140714humanLmnb1wK562.rData')
+allHumanStateHg19$LAD = 'ciLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])==24] = 'cLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])<24&rowSums(allHumanStateHg19[,5:16])>12&allHumanStateHg19$K6==2] = 'K562_fLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])<24&rowSums(allHumanStateHg19[,5:16])>12&allHumanStateHg19$K6!=2] = 'other_fLAD'
+
+write.table(allHumanStateHg19[,c('seqname', 'start','end','LAD')],file = 'LAD_K562_cl160629.bed', col.names = F, quote=F,row.names=F) 
+
+## count probes linked to each state
+table(allHumanStateHg19$LAD)
+
+```
+**probe counts for each state:**
+
+|  ciLAD |   cLAD | K562_fLAD | other_fLAD |
+|:------:|:------:|:---------:|:----------:|
+| 218851 | 306059 |    600094 |    1009375 |
+
+Now that we have the probe locations with states in a bed file, we need to translate this to regions for each state. Otherwise we can only match insertions that took place at the exact probe sites.
+
+```
+
+cat LAD_K562_cl160629.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > LAD_K562_continuous_cl160629.bed 
+
+## count number of regions linked to each state
+cat LAD_K562_continuous_cl160629.bed | sort -k4,4 | uniq -c -f 3 | awk '{print $5"\t"$1}'
+
+```
+**number of regions for each state:**
+
+|  ciLAD |   cLAD | K562_fLAD | other_fLAD |
+|:------:|:------:|:---------:|:----------:|
+|   2656 |   2607 |      5208 |       5456 |
+
+With this file, the barcodes can be linked:
+
+```
+
+nice -18 bedtools intersect -abam cl20160707_trip_without_bc_list/samRev_combined.bam -b /home/NFS/users/c.leemans/data/tracks/LAD_K562_continuous_cl160629.bed -wa -wb -bed | awk 'sub(/[0-9:]*_/, "", $4){print $4"\t"$16}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/barcode_LAD_state.txt
+
+```
+
+
+## linking barcodes to chromatin state
+I recieved a bed file with the annotations of chromatin states from Laura called 'wgEncodeBroadHmmK562HMM.bed'. I could use a similar command to the previous barcode linking steps:
+
+```
+nice -18 bedtools intersect -abam cl20160707_trip_without_bc_list/samRev_combined.bam -b /home/NFS/users/c.leemans/data/tracks/wgEncodeBroadHmmK562HMM.bed -wa -wb -bed | awk 'sub(/[0-9:]*_/, "", $4){print $4"\t"$16}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/barcode_chrom_state.txt
+
+```
+## linking barcodes to replication timing
+
+```
+bedtools bamtobed -i cl20160707_trip_without_bc_list/samRev_combined.bam | awk '{$6=="+" ? $3=$2+1 : $2=$3-1;print $1"\t"$2"\t"$3"\t"$4}' | bedtools sort -i - > cl20160707_trip_without_bc_list/samRev_combined.bed
+
+for state in $(echo 'G1 S1 S2 S3 S4 G2')
+do
+  nice -15 bwtool extract bed cl20160707_trip_without_bc_list/samRev_combined.bed '/home/NFS/users/c.leemans/data/tracks/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562'$state'PctSignalRep1.bigWig'  /dev/stdout/ | awk 'sub(/.*_/, "", $4){print $4"\t"$6}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > 'cl20160707_trip_without_bc_list/replication_'$state'.txt' &
+done
+
+```
+
+## finding nearest CpG island
+
+```
+nice -18 bedtools closest -t all -D a -a cl20160707_trip_without_bc_list/samRev_combined.bed -b /home/NFS/users/c.leemans/data/tracks/cpgIslandExtUnmasked_140601.bed | awk 'sub(/.*_/, "", $4){print $4"\t"$8"\t"$9}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr >cl20160707_trip_without_bc_list/cpg_distance.txt
+
+```
+
+# R analysis
+Now that we have barcodes linked to gDNA and cDNA counts and barcodes linked to repetitive element annotations, LAD states and chromatin states, we can combine this in R to calculate expression values and fold changes and produce some nice plots.
+
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r, cache=T}
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+
+path = '/home/cleemans/SURFdrive/TRIP'
+
+```
+
+
+
+## Load data
+First we need to load the data and have some description of which column contains which information
+
+```{r, cache=T}
+counts_with_bc = read.table('/media/HPC_Home/projects/trip/cl20160711_trip_with_bc_list/bc_count.txt', stringsAsFactors=F, header=T, row.names=1)
+counts_without_bc = read.table('/media/HPC_Home/projects/trip/cl20160707_trip_without_bc_list/bc_count.txt', stringsAsFactors=F, header=T, row.names=1)
+spike_counts = read.table('/media/HPC_Home/projects/trip/cl20160707_trip_spikein/bc_count.txt', stringsAsFactors=F, header=T, row.names=1)
+spike_counts = spike_counts[spike_counts[,1]>1000, 2:ncol(spike_counts)]
+mapping = read.table(paste(path, 'raw_data/norm_exp_cl20160614/final_mapping.txt', sep='/'), header=TRUE, row.names=1)
+
+bc_repeats = read.table(paste(path, 'raw_data/norm_exp_cl20160614/bc_in_repeats_samRev.txt', sep='/'), stringsAsFactors=F)
+bc_lads = read.table(paste(path, 'raw_data/norm_exp_cl20160614/barcode_LAD_states.txt', sep='/'), stringsAsFactors=F)
+bc_chromatin = read.table(paste(path, 'raw_data/norm_exp_cl20160614/barcode_chromatin_state.txt', sep='/'), stringsAsFactors=F)
+colnames(bc_repeats) = c('count', 'barcode', 'rep_family', 'rep_name')
+colnames(bc_lads) = c('count', 'barcode', 'lad_state')
+colnames(bc_chromatin) = c('count', 'barcode', 'chromatin_state')
+
+
+## laura's data to double check
+KRAB_D2_r1<-read.table("/media/TRIP_K562/lb20160331_KRAB_D2_r1/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D2_r1<-KRAB_D2_r1[,2:ncol(KRAB_D2_r1)]
+
+KRAB_D2_r2<-read.table("/media/TRIP_K562/lb20160331_KRAB_D2_r2/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D2_r2<-KRAB_D2_r2[,2:ncol(KRAB_D2_r2)]
+
+KRAB_D11_r1<-read.table("/media/TRIP_K562/lb20160331_KRAB_D11_r1/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D11_r1<-KRAB_D11_r1[,2:ncol(KRAB_D11_r1)]
+
+KRAB_D11_r2<-read.table("/media/TRIP_K562/lb20160331_KRAB_D11_r2/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D11_r2<-KRAB_D11_r2[,2:ncol(KRAB_D11_r2)]
+
+
+KRAB_D2_r1_sp<-read.table("/media/TRIP_K562/lb20160331_KRAB_D2_r1_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D2_r1_sp<-KRAB_D2_r1_sp[,2:ncol(KRAB_D2_r1_sp)]
+
+KRAB_D2_r2_sp<-read.table("/media/TRIP_K562/lb20160331_KRAB_D2_r2_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D2_r2_sp<-KRAB_D2_r2_sp[,2:ncol(KRAB_D2_r2_sp)]
+
+KRAB_D11_r1_sp<-read.table("/media/TRIP_K562/lb20160331_KRAB_D11_r1_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D11_r1_sp<-KRAB_D11_r1_sp[,2:ncol(KRAB_D11_r1_sp)]
+
+KRAB_D11_r2_sp<-read.table("/media/TRIP_K562/lb20160331_KRAB_D11_r2_sp/final_barcode_data_table.txt", header=T, stringsAsFactors = F, row.names=2)
+KRAB_D11_r2_sp<-KRAB_D11_r2_sp[,2:ncol(KRAB_D11_r2_sp)]
+
+match_D2_r2 = match(rownames(KRAB_D2_r1), rownames(KRAB_D2_r2))
+match_D11_r1 = match(rownames(KRAB_D2_r1), rownames(KRAB_D11_r1))
+match_D11_r2 = match(rownames(KRAB_D2_r1), rownames(KRAB_D11_r2))
+
+match_D2_r2_sp = match(rownames(KRAB_D2_r1_sp), rownames(KRAB_D2_r2_sp))
+match_D11_r1_sp = match(rownames(KRAB_D2_r1_sp), rownames(KRAB_D11_r1_sp))
+match_D11_r2_sp = match(rownames(KRAB_D2_r1_sp), rownames(KRAB_D11_r2_sp))
+
+counts_laura = cbind(KRAB_D2_r1[,1:3], KRAB_D2_r2[match_D2_r2,1:3], KRAB_D11_r1[match_D11_r1,1:3], KRAB_D11_r2[match_D11_r2,1:3],
+                     KRAB_D2_r1[,4:6], KRAB_D2_r2[match_D2_r2,4:6], KRAB_D11_r1[match_D11_r1,4:6], KRAB_D11_r2[match_D11_r2,4:6])
+spike_counts_laura = cbind(KRAB_D2_r1_sp[,4:6], KRAB_D2_r2_sp[match_D2_r2_sp,4:6], KRAB_D11_r1_sp[match_D11_r1_sp,4:6], KRAB_D11_r2_sp[match_D11_r2_sp,4:6])
+
+
+mapping_laura = read.table("/media/TRIP_K562/lb20160318_mapping_TRIP_K562/final_TRIP_data_table.txt", header=T, stringsAsFactors = F)
+mapping_laura = mapping_laura[,-c(2,3)]
+
+
+info = data.frame(POI=rep(c('G9a','CBX','KRAB'), each=12, 2),
+                  condition=c(rep(c('GAL4', 'GAL4.POI', 'POI'),4), rep(c('GAL4.POI', 'GAL4', 'POI'),4),rep(c('GAL4','GAL4.POI',  'POI'),4)),
+                  type=rep(c('norm', 'exp'),each=36),
+                  day=rep(c(2,12,2,9,2,11), each=6, 2),
+                  replicate=rep(c(1,2),each=3, 12), stringsAsFactors=F)
+
+info_laura = info[info$POI=='KRAB',]
+
+colnames(counts_with_bc) = do.call(sprintf, c('%s_%s_%s_D%s_r%s', info))
+colnames(counts_without_bc) = do.call(sprintf, c('%s_%s_%s_D%s_r%s', info))
+colnames(spike_counts) = do.call(sprintf, c('%s_%s_%s_D%s_r%s',info[info$type=='exp',]))
+colnames(counts_laura) = do.call(sprintf, c('%s_%s_%s_D%s_r%s',info[info$POI=='KRAB', ]))
+colnames(spike_counts_laura) = do.call(sprintf, c('%s_%s_%s_D%s_r%s',info[info$type=='exp'&info$POI=='KRAB',]))
+
+```
+
+
+## Some data pre-processing
+
+We have to link each barcode to a unique LAD/chromatin state and repetitive element and need to normalize expression values by the total amount of spike-in reads for each sample.
+
+### unique barcode links
+
+first let's see how many barcodes have multiple hits with different states/repeats:
+
+```{r, cache=T}
+
+plot1 = ggplot(as.data.frame(table(bc_repeats$barcode)),aes(x=Freq)) + geom_histogram(binwidth = 1) + xlim(0,10) + xlab('number of unique repetitive elements')
+plot2 = ggplot(as.data.frame(table(bc_lads$barcode)),aes(x=Freq)) + geom_histogram(binwidth = 1) + xlim(0,10) + xlab('number of unique lad states')
+plot3 = ggplot(as.data.frame(table(bc_chromatin$barcode)),aes(x=Freq)) + geom_histogram(binwidth = 1) + xlim(0,10) + xlab('number of unique\nchromatin states')
+
+grid.arrange(plot1, plot2,plot3,top = "count of barcodes linked to each number of states",nrow=1)
+
+stat_bc_link = data.frame('#barcodes'=c('barcodes linked to repeats'=length(table(bc_repeats$barcode)), 'barcodes linked to lads'=length(table(bc_lads$barcode)), 'barcodes linked to chromatin states'=length(table(bc_chromatin$barcode))))
+
+stat_bc_link$ratio = c(length(which(table(bc_repeats$barcode)==1)), length(which(table(bc_lads$barcode)==1)), length(which(table(bc_chromatin$barcode)==1))) / stat_bc_link$count
+
+kable(stat_bc_link)
+
+```
+**Conclusion:**
+The number of barcodes having a single, unique element/state linked to them are in for each of the 3 types fairly high. For repetitive elements, this number is lower, but there are also less barcodes in general so in the end the ratio of uniquely mapped barcodes is the highest.
+
+These barcodes are unfiltered for multiple mapping locations, so after removing barcodes with multiple mapping locations, these numbers should get better. 
+
+
+### select most abundant barcode link
+For each barcode we would ideally want a single repeat/state. But we want to know if there are alternative states/repeats found. To decide wether a barcode is linked to a unique state/repeat I am using the same threshold as Laura used for deciding on unique mapping locations: the most abundant must be occuring in a ratio of at least 0.7 with the other hits and the second hit in a ratio less than 0.1.
+
+For the barcodes linked to repeats I decided to add a seperate overview for barcodes linked to unique repeat family's instead of unique names, since there are only minor differences between repeat names in the same family.
+
+```{r, cache=T}
+
+unique_bc_link <- function(bc, bc_link, link_type){
+    this_link = bc_link[bc_link[,2]==bc,,drop=F]
+    if (nrow(this_link) == 1 |
+   	   (this_link[1,1]/sum(this_link[,1]) > 0.7 &
+         this_link[2,1]/sum(this_link[,1]) < 0.1)) unique=T
+    else unique=F
+    result = cbind(this_link[which(this_link[,1]==max(this_link[,1],na.rm=T))[1],], unique)
+    names(result)[length(result)] = paste0('unique_',link_type)
+    return(result)
+}
+
+bc_unique_repeat = lapply(unique(bc_repeats[,2]), unique_bc_link, bc_repeats, 'rep_name')
+bc_unique_repeat = do.call(rbind, bc_unique_repeat)
+
+bc_unique_repeat$unique_rep_family = unlist(
+	lapply(unique(bc_repeats[,2]),
+            function(x,bc_repeats){
+                this_repeat = bc_repeats[bc_repeats[,'barcode']==x,,drop=F]
+                this_repeat = this_repeat[order(this_repeat$Sum, decreasing=T),]
+                if (nrow(this_repeat) == 1 |
+                   (this_repeat[1,'Sum']/sum(this_repeat[,'Sum']) > 0.7  &
+                    this_repeat[2,'Sum']/sum(this_repeat[,'Sum']) < 0.1)) unique=T
+                else unique=F
+                return(unique)
+            },ddply(bc_repeats, .(barcode, rep_family), summarize, Sum=sum(count))))
+
+bc_unique_lad_state = lapply(unique(bc_lads[,2]), unique_bc_link, bc_lads, 'lad')
+bc_unique_lad_state = do.call(rbind, bc_unique_lad_state)
+
+bc_unique_chrom_state = lapply(unique(bc_chromatin[,2]), unique_bc_link, bc_chromatin, 'chrom')
+bc_unique_chrom_state = do.call(rbind, bc_unique_chrom_state)
+
+bc_unique_repeat_count = ddply(bc_unique_repeat, .(unique_rep_name), summarize, y=length(unique_rep_name))
+bc_unique_repeat_fam_count = ddply(bc_unique_repeat, .(unique_rep_family), summarize, y=length(unique_rep_family))
+bc_unique_lad_state_count = ddply(bc_unique_lad_state, .(unique_lad_state), summarize, y=length(unique_lad_state))
+bc_unique_chrom_state_count = ddply(bc_unique_chrom_stateatin, .(unique_chrom_state), summarize, y=length(unique_chrom_state))
+
+
+```
+
+### find barcodes with multiple mapping locations.
+to make a better comparison between the barcode-state/repeat links and barcode-location links, I added a plot filtering on reverse reads only, since this approach was also used in the other links.
+
+```{r, cache=T}
+
+mapping2$unique_map = F
+isUnique = which(mapping2$t_reads_f>2 & mapping2$t_reads_r>2 & mapping2$freq1_f>0.7 &mapping2$freq1_r>0.7 & mapping2$freq2_f<0.1 & mapping2$freq2_r<0.1 & mapping2$mapq_f>=10 &mapping2$mapq_r>=10)
+mapping2[isUnique,'unique_map'] = T
+
+mapping_laura$unique_map = F
+isUnique = which(mapping_laura$reads_f>2 & mapping_laura$reads_r>2 & mapping_laura$freq1_f>0.7 &mapping_laura$freq1_r>0.7 & mapping_laura$freq2_f<0.1 & mapping_laura$freq2_r<0.1 & mapping_laura$mapq_f>=10 &mapping_laura$mapq_r>=10)
+mapping_laura[isUnique,'unique_map'] = T
+
+unique_rev = rep(F, nrow(mapping))
+isUnique = which(mapping$t_reads_r>2 &mapping$freq1_r>0.7 & mapping$freq2_r<0.1 & mapping$mapq_f>=10)
+unique_rev[isUnique] = T
+
+mapping_count = ddply(mapping, .(unique_map), summarize, y=length(unique_map))
+mapping_count_rev = ddply(data.frame('unique_map_rev'=unique_rev), .(unique_map_rev), summarize, y=length(unique_map_rev))
+ymax = max(c(mapping_count_rev$y, mapping_count_rev$y, bc_unique_repeat_count$y, bc_unique_repeat_fam_count$y, bc_unique_lad_state_count$y, bc_unique_chrom_state_count$y))
+
+unique_table = melt(cbind('barcode'=rownames(KRAB_fc),KRAB_fc[,c("unique_map","unique_rep_name","unique_rep_family","unique_lad_state", "unique_chrom_state")]), id.vars='barcode')
+
+levels(unique_table$variable) = c('mapping location', 'repeat name', 'repeat family', 'lad state', 'chromatin state')
+ggplot(unique_table[!is.na(unique_table$value),], aes(x=factor(variable), fill=factor(value, levels=c(T,F)))) + geom_bar() + 
+     ylab('count') +
+     xlab('datatype to which the barcode is linked') + 
+     ggtitle('number of barcodes linked to\ndifferent sources of information,\nseperated unique vs multiple states/locations') +
+     scale_fill_discrete(name = 'unique?') 
+
+
+unique_class = data.frame(map=rep(NA,nrow(fc_table)),
+						  rep_fam=rep(NA,nrow(fc_table)),
+                          lad_state=rep(NA, nrow(fc_table)),
+                          chrom_state=rep(NA, nrow(fc_table)))
+unique_class = unique_class[,c('map', 'rep_fam', 'lad_state', 'chrom_state')]
+
+unique_class$rep_fam[fc_table$rep_family!='-'] = 'not unique'
+unique_class$rep_fam[fc_table$unique_rep_family] = 'unique family/state'
+unique_class$rep_fam[fc_table$unique_map&fc_table$rep_family!='-'] = 'unique location'
+
+unique_class$lad_state[fc_table$lad_state!='-'] = 'not unique'
+unique_class$lad_state[fc_table$unique_lad_state&fc_table$lad_state!='-'] = 'unique family/state'
+unique_class$lad_state[fc_table$unique_map&fc_table$lad_state!='-'] = 'unique location'
+
+unique_class$chrom_state[fc_table$chrom_state!='-'] = 'not unique'
+unique_class$chrom_state[fc_table$unique_chrom_state] = 'unique family/state'
+unique_class$chrom_state[fc_table$unique_map&fc_table$chrom_state!='-'] = 'unique location'
+
+unique_class$map[!fc_table$unique_map] = 'not unique'
+unique_class$map[fc_table$unique_map] = 'unique location'
+colnames(unique_class) = c('mapping', 'repeat family', 'LAD-state', 'Chromatin-state')
+
+unique_table = melt(cbind('barcode'=rownames(fc_table),unique_class),id.vars='barcode')
+ggplot(unique_table[!is.na(unique_table$value),], aes(x=factor(variable), fill=factor(value, levels=c('unique location', 'unique family/state', 'not unique')))) + geom_bar() + 
+    ylab('count') +
+    xlab('datatype to which the barcode is linked') + 
+    ggtitle('number of barcodes linked to\ndifferent sources of information') +
+    scale_fill_discrete(name = 'unique?') 
+```
+
+**Conclusion:**
+There is a relatively small amount of barcodes with multiple hits left for LAD states and chromatin states with multiple hits after Laura's filtering. These should overlap with the barcodes mapped at different locations.
+
+The barcodes mapped at different locations however show a lot more multiple locations. Only partly because the selection is more stringent since the forward read is taken into account.
+
+
+## Normalization of expression
+Before we normalize by normalization count, let's make sure that in each replicate counts are normalized by spike-in
+
+
+```{r, cache=T, fig.width=15, fig.height=6}
+sum_spike_counts = colSums(spike_counts)
+exp_info = info[info$type=='exp',]
+exp_norm_counts = t(t(counts_with_bc[,info$type=='exp'])/sum_spike_counts * 1000000)
+
+sum_spike_counts_laura = colSums(spike_counts_laura)
+exp_info_laura = info_laura[info_laura$type=='exp',]
+exp_norm_counts_laura = t(t(counts_laura[,info_laura$type=='exp'])/sum_spike_counts_laura * 1000000)
+
+
+norm_counts =  counts[,info$type=='norm']
+norm_counts_laura =  counts_laura[,info_laura$type=='norm']
+
+poi_cpm <- function(poi,norm_counts, info){
+    cpm = do.call(cbind, lapply(unique(info$replicate),
+		function(rep, poi, norm_counts, info){
+			cpm = do.call(cbind, lapply(unique(info$day[info$POI==poi&info$replicate==rep]), 
+				function(day,rep,poi,norm_counts, info){
+					poi = which(info$POI==poi & info$replicate==rep & info$day==day)
+				    below_cut = rowSums(norm_counts[,poi]>=1) != length(poi)
+				    norm_counts[below_cut,poi] = NA
+				    norm_sum = colSums(norm_counts[,poi], na.rm=T)/ 1000000
+				    cpm = t(t(norm_counts[,poi]) / norm_sum)
+				    return(cpm)
+				}, rep, poi, norm_counts, info))
+			return(cpm)
+		}, poi, norm_counts, info))
+    return(cpm[,colnames(norm_counts[,info$POI==poi])])
+}
+## filter normalization counts so that norm > 1 and counts per million
+norm_cpm =  do.call(cbind,lapply(unique(info$POI), poi_cpm, counts_with_bc[,info$type=='norm'], info[info$type=='norm',]))
+
+norm_cpm_laura = poi_cpm('KRAB', counts_laura[,info_laura$type=='norm'],info_laura[info_laura$type=='norm',])
+
+exp_gDNA = exp_norm_counts/norm_cpm
+
+exp_gDNA_laura = exp_norm_counts_laura/norm_cpm_laura
+
+## calculate mean expression.
+meanex <- function(replicates) {
+  if (any(is.na(replicates))){
+  	calc <- NA
+  }
+  else if (all(as.numeric(replicates) > 0)){
+  	calc <- mean(replicates)
+  }
+  else {
+    calc <- 0
+  }
+  return(calc)
+}
+
+
+## There has to be a better way to do these next two steps, but I can't think of anythin that makes sense from a reproducible point of view
+rep_columns = tapply(1:nrow(exp_info), do.call(paste, c(exp_info[,colnames(exp_info)!='replicate'], sep='_')), I)
+mean_exp = sapply(rep_columns, function(x, exp_gDNA){apply(exp_gDNA[,x],1,meanex)}, exp_gDNA)
+mean_exp_info = exp_info[sapply(rep_columns,function(x){x[1]}),]
+short_vec = c('GAL4.POI'='GP','POI'='P','GAL4'='G')
+comb_matrix = combn(names(short_vec),2)
+
+rep_columns_laura = tapply(1:nrow(exp_info_laura), apply(exp_info_laura[,colnames(exp_info_laura)!='replicate'], 1, paste, collapse='_'), I)
+mean_exp_laura = sapply(rep_columns_laura, function(x, exp_gDNA_laura){apply(exp_gDNA_laura[,x],1,meanex)}, exp_gDNA_laura)
+mean_exp_info_laura = exp_info_laura[sapply(rep_columns_laura,function(x){x[1]}),]
+
+plot_vs <- function(poi, exp_matrix, exp_info){
+	comb_matrix = combn(c('GAL4.POI', 'POI', 'GAL4'),2)
+	result = c()
+	for (day in unique(exp_info$day[exp_info$POI==poi])){
+		day_result = apply(comb_matrix,2,
+			function(condition_vec, day, poi, exp_matrix, exp_info){
+				exp_data = cbind(exp_matrix[, exp_info$POI==poi & exp_info$day==day & exp_info$condition == condition_vec[1]], exp_matrix[, exp_info$POI==poi & exp_info$day==day & exp_info$condition == condition_vec[2]])
+				exp_data = data.frame(exp_data)
+				colnames(exp_data) = c('col1', 'col2')
+				cor_line = paste("r(p)=",signif(cor(x=log2(exp_data[!is.na(exp_data[,2]),'col2'] + 0.1), y=log2(exp_data[!is.na(exp_data[,1]),'col1'] + 0.1),method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=log2(exp_data[,'col2'] + 1), y=log2(exp_data[,'col1']  + 1),method = "spearman",use="pairwise.complete.obs"),digits=3))
+    	        condition_vec = str_replace(condition_vec,'[.]' ,'-')
+    			condition_vec = str_replace(condition_vec, 'POI', poi)
+    			label_vec = paste('log2(expr',condition_vec, '+ 1)')
+				title = paste(condition_vec, collapse = ' vs ')
+				title = paste(title, 'day', day)
+				
+				ggplot(exp_data, aes(x=log2(col2 + 1), y=log2(col1 + 1))) +
+					theme(panel.background = element_rect(fill = "lavender"))+
+			    	geom_point(shape=19, size =0.8,colour="RED") +
+			    	geom_abline()+
+			    	#stat_smooth() +
+			    	xlab(label_vec[2])+
+			    	ylab(label_vec[1]) +
+			    	#ggtitle("Gal4KRAB vs Gal4")+ 
+			    	ggtitle(bquote(atop(.(title), atop("",.(cor_line)))))+ 
+		    		theme(plot.title = element_text(size=24),text = element_text(size=20))
+			}, day, poi, exp_matrix, exp_info)
+		result = cbind(result, day_result)
+	}
+	return(result)
+}
+
+
+do.call(grid.arrange, c(plot_vs('KRAB', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", nrow=2))
+do.call(grid.arrange, c(plot_vs('G9a', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", nrow=2))
+do.call(grid.arrange, c(plot_vs('CBX', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", nrow=2))
+
+do.call(grid.arrange, c(plot_vs('KRAB', mean_exp_laura, mean_exp_info_laura), top = "normalized mean expression (Laura's data)", nrow=2))
+
+```
+**conclusion:**
+the samples from day 2 clearly show an effect of thethering any of the protein of interests,
+but for KRAB this seems to be most clear. There seems to be some noise in each of the datasets, 
+but there is no filtering done yet.
+
+
+## Calculate foldchange and link locations and states
+Now that we have expression values we can calculate fold changes and link these fold changes to chromosomal location, the lad/chromatin states and repetitive elements.
+
+```{r, cache=T, fig.width=15, fig.height=6}
+## calculate foldchange
+## but leave out BCDs with zero reads
+foldch <- function(exp_vec) {
+  if (all(!is.na(exp_vec)) & all(as.numeric(exp_vec) > 0)) {
+    calc <- as.numeric(exp_vec[1]) / as.numeric(exp_vec[2])
+  }
+  else {
+    calc <- NA
+  }
+  return(calc)
+}
+
+apply_foldch <- function(cd_vec, mean_exp, mean_exp_info, short_vec){
+	column_matrix = sapply(cd_vec,function(cd, info){
+			this_info = info[which(cd==info$condition), colnames(info)!='replicate']
+			col_vec = do.call(paste, c(this_info, sep='_'))
+			names(col_vec) = paste0(this_info$POI, '_%s_day', this_info$day)
+			return(col_vec)
+		}, mean_exp_info)
+    result = data.frame(apply(column_matrix, 1, function(col_name, mean_exp){
+    	        apply(mean_exp[,col_name],1,foldch)
+    		}, mean_exp))
+   	names = paste(short_vec[cd_vec],collapse='vs')
+   	this_exp_info = mean_exp_info[str_sub(colnames(result), 2,3),]
+   	colnames(result) = do.call(sprintf, list(rownames(column_matrix), names))
+    return(result)
+}
+
+
+fc_table = apply(comb_matrix,2, apply_foldch, mean_exp, mean_exp_info, short_vec)
+fc_table = do.call(cbind, fc_table)
+
+fc_table_laura = apply(comb_matrix,2, apply_foldch, mean_exp_laura, mean_exp_info_laura, short_vec)
+fc_table_laura = do.call(cbind, fc_table_laura)
+
+above_cut <- function(poi,norm_counts, info){
+    poi_vec = which(info$POI==poi)
+    day_vec = unique(info[poi_vec,'day'])
+    out= sapply(day_vec, function(day, poi, norm_counts, info){
+    	col_vec = which(info$day==day & info$POI==poi)
+    	rowSums(norm_counts[,col_vec]>=50) == length(col_vec)
+    	}, poi, norm_counts, info)
+    colnames(out) = sprintf('%s_D%i_above_norm_cut',poi, day_vec)
+    return(out)
+    }
+
+above_norm_cut = do.call(cbind, lapply(unique(info$POI), above_cut, counts_with_bc[,info$type=='norm'], info[info$type=='norm',]))
+fc_table = cbind(fc_table, above_norm_cut)
+
+
+above_norm_cut_laura = do.call(cbind, lapply(unique(info_laura$POI), above_cut, counts_laura[,info_laura$type=='norm'], info_laura[info_laura$type=='norm',]))
+fc_table_laura = cbind(fc_table_laura, above_norm_cut_laura)
+
+
+map_match = match(rownames(fc_table), rownames(mapping))
+fc_table = cbind(fc_table, mapping[map_match,])
+
+map_match_laura = match(rownames(fc_table_laura), mapping_laura$barcode)
+fc_table_laura = cbind(fc_table_laura, mapping_laura[map_match_laura,])
+
+
+fc_table[['chrom_state']] = fc_table[['lad_state']] = fc_table[['rep_name']] = fc_table[['rep_family']] = '-'
+fc_table[['unique_chrom_state']] = fc_table[['unique_lad_state']] = fc_table[['unique_rep_family']] = fc_table[['unique_rep_name']] = NA
+
+rep_match = match(rownames(fc_table), bc_unique_repeat$barcode)
+lad_match = match(rownames(fc_table), bc_unique_lad_state$barcode)
+chrom_match = match(rownames(fc_table), bc_unique_chrom_state$barcode)
+
+fc_table[!is.na(rep_match),c('rep_family', 'rep_name','unique_rep_name','unique_rep_family')] = bc_unique_repeat[rep_match[!is.na(rep_match)], 3:6]
+fc_table[!is.na(lad_match),c('lad_state', 'unique_lad_state')] = bc_unique_lad_state[lad_match[!is.na(lad_match)], 3:4]
+fc_table[!is.na(chrom_match),c('chrom_state', 'unique_chrom_state')] = bc_unique_chrom_state[chrom_match[!is.na(chrom_match)], 3:4]
+
+plot_unique_vs <- function(mean_exp, fc_table, info, top, unique_map=T){
+	for (poi in unique(info$POI)){
+		for (day in sort(unique(info[info$POI==poi,'day']))){
+			col_name = sprintf('%s_D%i_above_norm_cut', poi, day)
+			if (unique_map){
+				selection = fc_table[,col_name]&fc_table$unique_map
+			} else { 
+				selection = fc_table[,col_name]
+			}
+			plots = plot_vs(poi, mean_exp[which(selection),info$day==day], info[info$day==day,])
+			do.call(grid.arrange, c(plots[c(2,3,1)], top = top, nrow=1))
+		}
+	}
+}
+
+plot_unique_vs(mean_exp_laura, fc_table_laura, mean_exp_info_laura, "normalized mean expression filtered on normalization counts (Laura's data)", unique_map=F)
+plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on  normalization counts (Christ's data)", unique_map=F)
+
+plot_unique_vs(mean_exp_laura, fc_table_laura, mean_exp_info_laura, "normalized mean expression filtered on unique mapping and normalization (Laura's data)")
+plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on unique mapping and normalization (Christ's data)")
+
+
+```
+**conclusion:**
+I managed to do the same with my data as Laura did with Laura's. There is only one difference in the pipeline due to how starcode (the program I use to seperate genuine barcodes from mutated ones) reports it's data. With previous trip pipeline expression counts got added to the genuine barcode only if this was the only available barcode in the barcode list within the Levenhstein distance. So barcodes that had 2 possible genuine ones got discarded. Starcode however does not report these instances different from barcodes that have just one possibility since it always choses the 'best' genuine barcode. 
+
+## Save fold change data and mean expressions
+
+```{r}
+f_name = paste0(path,'/results/TTRIP_K562_FC_exp.rData')
+fc_table = cbind(exp_gDNA, mean_exp, fc_table)
+save(fc_table, mean_exp_info, file=f_name)
+
+## Session Info
+sessionInfo()
+getwd()
+date()
+paste("Run time: ",format(Sys.time()-StartTime))
+```
