@@ -193,6 +193,7 @@ filter_data <- function(fc_table, conditionx, conditiony, poi, day, xtype, ytype
 				new_values = factor(fc_table[,condition], levels=c('cLAD','K562_fLAD', 'other_fLAD', 'ciLAD', '-'))
 			} else if(condition=='chrom_state'){
 				chrom_levels = unique(fc_table[,condition])
+				chrom_levels = chrom_levels[!is.na(chrom_levels)]
 				# sort on the number in the state name
 				chrom_levels = chrom_levels[order(sapply(chrom_levels,function(x){
 					# if the state is unknown, return a high number so that it ends up at the end of the sort
@@ -270,7 +271,8 @@ plot_values <- function(xy_table, xlab, ylab, bc_vec = c(), which_state=NA, text
 }
 
 
-plot_2vs9 <- function(xy_table, xlab, ylab, mem_day, ylim = ylim(-7.5,2.5), xlim=xlim(-10,2), ncol=NULL, label_size=20, text_size=10){
+
+plot_2vs9 <- function(xy_table, xlab, ylab, mem_day, y_lim = ylim(-7.5,2.5), x_lim=xlim(-10,2), nCol=NULL, label_size=20, text_size=10){
 	# function to plot fold change of day 2 against fold change after day 9, 11 or12
 	# seperated by state
 	# Args:
@@ -340,8 +342,8 @@ plot_2vs9 <- function(xy_table, xlab, ylab, mem_day, ylim = ylim(-7.5,2.5), xlim
 		theme(text = element_text(size = text_size)) +
 		geom_hline(yintercept=0, colour = "grey30") +
 		geom_text(aes(x=x,y=y,label=label), data=fit_table, vjust=1, hjust=1, size=5) +
-		ggtitle('P=Pearson; S=Spearman') + ylim + xlim +
-		ylab(ylab) + xlab(xlab) + stat_smooth(method = "lm") + facet_wrap(~ state, ncol=ncol)
+		ggtitle('P=Pearson; S=Spearman') + y_lim + x_lim +
+		ylab(ylab) + xlab(xlab) + stat_smooth(method = "lm") + facet_wrap(~ state, ncol=nCol)
 	return(list(g, grob_list))
 }
 
@@ -400,7 +402,7 @@ We can make an easy loop function to first create all plots for each classificat
 plots_2 = plots_9 = plots_exp = plots_wilcox_2 = plots_wilcox_9 = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = list(rep_family=list(),lad_state=list(),chrom_state=list())
 
 for (poi in c('KRAB', 'G9a', 'CBX')){
-	for (class in c('rep_family', 'lad_state', 'chrom_state')){
+	for (class in c('lad_state', 'chrom_state', 'rep_class', 'rep_family','cpg_distance')){
 		# for different classes use descriptive x-axis labels
 		# and if there is a lot of different classes, use a smaller font 
 		if (class=='rep_family'){
@@ -411,15 +413,28 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 			} else {
 				ncol = 4
 			}
+			xtype = 'factor'
 			
 		} else if(class=='lad_state'){
 			xlab = 'LAD-state'
 			text_size = 20
 			ncol = 2
-		} else {
+			xtype = 'factor'
+		} else if(class=='chrom_state'){
 			xlab = 'Chromatin state'
 			text_size = 20
 			ncol = 3
+			xtype = 'factor'
+		}else if(class=='cpg_distance'){
+			xlab = 'distance to nearest cpg'
+			text_size = 20
+			ncol = 3
+			xtype = 'value'
+		}else if(class=='rep_class'){
+			xlab = 'repeat class'
+			text_size = 20
+			ncol = 3
+			xtype = 'factor'
 		}
 		# the column name of the fold-change on day 2
 		condition_2 = paste0(poi, '_GPvsG_day2')
@@ -429,7 +444,7 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 		# 	y: the log2 transformed fold changes
 		# statistics table:
 		#	for each selection criteria how many barcodes were kicked out and how many were left.
-		fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, 'factor', 'log2')
+		fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, xtype, 'log2')
 		xy_table_2= fc_2[[1]]
 		# create a grob for plotting the statistics and a plot for the fold-changes
 		stats_2[[class]][[poi]] = tableGrob(fc_2[[2]], rows=NULL)
@@ -438,7 +453,8 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 
 		# do the same for day 9
 		condition_9 = sprintf('%s_GPvsG_day%i',poi,days[poi])
-		fc_9 = filter_data(fc_table, class,  condition_9, poi, days[poi], 'factor', 'log2')
+
+		fc_9 = filter_data(fc_table, class,  condition_9, poi, days[poi], xtype, 'log2')
 		xy_table_9 = fc_9[[1]]
 		stats_9[[class]][[poi]] = tableGrob(fc_9[[2]], rows=NULL)
 		plots_9[[class]][[poi]] = plot_values(xy_table_9, xlab, 'log2(fold change)', 
@@ -446,7 +462,7 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 
 		# and for the expression at day 2
 		condition_exp = paste0(poi,'_GAL4_exp_2')
-		fc = filter_data(fc_table, class, condition_exp, poi, 2, 'factor', 'log2')
+		fc = filter_data(fc_table, class, condition_exp, poi, 2, xtype, 'log2')
 		xy_table = fc[[1]]
 		stats_exp[[class]][[poi]] = tableGrob(fc[[2]], rows=NULL)
 		plots_exp[[class]][[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
@@ -473,7 +489,7 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 		print(length(which(is.na(xy_table))))
 		stats_expVs9[[class]][[poi]] = tableGrob(fc_expVs9[[2]], rows=NULL)
 		p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 
-			          days[poi], ncol=ncol, text_size=text_size)
+			          days[poi], nCol=ncol, text_size=text_size)
 		plots_expVs9[[class]][[poi]] = p[[1]]
 		
 		corr_expVs9[[class]][[poi]] = p[[2]]
@@ -483,7 +499,7 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 		xy_table = fc_2vs9[[1]]
 		stats_2vs9[[class]][[poi]] = tableGrob(fc_2vs9[[2]], rows=NULL)
 		p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 
-			          days[poi], ncol=ncol, text_size=text_size)
+			          days[poi], nCol=ncol, text_size=text_size)
 		plots_2vs9[[class]][[poi]] = p[[1]]
 		
 		corr_2vs9[[class]][[poi]] = p[[2]]

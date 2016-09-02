@@ -1,0 +1,1117 @@
+
+# knitr document van Steensel lab
+
+# Thethered TRIP data pre-processing
+## Christ Leemans, 17-08-2016 - to date 
+
+## Introduction
+Previously we used the thetered trip approach on K562 to recruit specific proteins of interest(POI) (KRAB, CBX5 and G9a) to randomly intergrated reporter construct to look at the interplay between local DNA environment and the specific POI. Because the dynamic range of the expression of the reporter in the human K562 pool is relatively narrow, we decided to repeat the experiment in a cell pool with a wider dynamic range.
+
+The cell pool used for this experiment was the tet-Off-D cell pool which was published in [Ahktar et. al. cell 2014](http://dx.doi.org/10.1016/j.cell.2013.07.018).
+
+Because we are also interested in intergrations in repetitive elements I downloaded the raw reads of the mapping and re-mapped them using the new version of the trip pipeline.
+
+In this experiment we hope to see back some of the observations made in the previous thetered trip experiments (K562 and Kc167). In K562 experiments we saw a memmory effect in a subgroup of integrations in heterochromatin regions. In this pool we also saw that rRNA repeats specifically were resistant against repression by any of the POI's. In the Kc167 cell line we saw that thetering Hp1 (orthologue of CBX5) was more effective in reporters integrated in Hp1's native environment.
+
+## Experimental setup
+At this moment Laura has data for 4 different tethering experiments using Krab, G9a, Cbx5 and Suv39h2. For each protein of interest (POI) there are 12 expression and 12 gDNA files: 3 conditions * 2 different days after induction * 2 replicates. One condition uses an unthethered POI, the second uses only GAL4 and the third condition uses the POI thethered to GAL4 (GAL4-POI). Expression and gDNA data was obtained on day 2 and day 9. With each sequencing run, spikeins were added to normalize across different experiments. There is a different config file to extract the expression values of the spikeins.
+
+## Input types
+The input for the TRIP pipeline is made up of 4 different sets of fastq files from different sources. These contain gDNA for normalization, cDNA for expression levels, forward iPCR and reverse iPRC reads for mapping the intergrations.
+
+read structure:
+
+**gDNA/cDNA:**
+\# index - pat1 - barcode - pat2  
+\# [N*10]GTCANAAGGGCCGGCCACAACTCGAG[N*16]TGATCCTGCAGTG
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* pat1 = GTCANAAGGGCCGGCCACAACTCGAG # N is used because reads that came from this sequence run all contained an N at that position.
+* pat2 = TGATCCTGCAGTG
+* min_counts = 3 # amount of times a barcode has to be counted to be considered
+* hd = 2 # the max hamming distance between two barcodes for them to still be considered the same
+
+**forward iPCR:**  
+\# index - pat1 - barcode - pat2 - gDNA  
+\# [N*10]GTCACAAGGGCCGGCCACAACTCGAG[N*16]TGATC[N*43]
+
+In the config file the following settings are used for these reads:  
+* index_length = 10
+* barcode_length = 16
+* map_pat1 = GTCACAAGGGCCGGCCACAACTCGAG
+* map_pat2 = TGATC
+* max_dist_for = 500 # two forward iPCR reads mapped less than 500bp apart are considered the same intergration site
+
+**reverse iPCR:**  
+\# map_pat_rev - gDNA  
+\# GTACGTCACAATATGATTATCTTTCTAGGGTTAA[N*66]
+
+In the config file the following settings are used for these reads:  
+* map_pat_rev = GTACGTCACAATATGATTATCTTTCTAGGGTTAA
+* max_dist_for = 50 # two reverse iPCR reads mapped less than 50bp apart are considered the same intergration site
+
+
+## TRIP pipeline
+
+With my new version of the trip pipeline with the following commands I could get the expression and normalization values as well as the genomic intergration positions for each file:
+
+```shell
+## normalization and expression values for the experimental conditions
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160817_trip_mESC -c cl20160817_config_mESC.txt -l cl20160817_mESC_norm_exp_files.lst -b cl20160817_trip_mESC/bc_table.txt -u -v -d 2>&1 | tee cl20160817_trip_mESC/norm_exp.stdout.stderr.txt
+
+tail -n+2 cl20160817_trip_mESC/bc_count.txt | awk '{print NR"\t"$1}' > cl20160817_trip_mESC/new_bc_table.txt
+
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160817_trip_mESC_1 -c cl20160817_config_mESC.txt -l cl20160822_mESC_mapping_filelist_rep1.lst -b cl20160817_trip_mESC/new_bc_table.txt -u -v -d 2>&1 | tee cl20160817_trip_mESC_1/mapping_1.stdout.stderr.txt
+
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160817_trip_mESC_2 -c cl20160817_config_mESC.txt -l cl20160822_mESC_mapping_filelist_rep2.lst -b cl20160817_trip_mESC/new_bc_table.txt -u -v -d 2>&1 | tee cl20160817_trip_mESC_2/mapping_2.stdout.stderr.txt
+
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160824_trip_mESC_nobc_1 -c cl20160817_config_mESC.txt -l cl20160822_mESC_mapping_filelist_rep1.lst -u -v -d 2>&1 | tee cl20160824_trip_mESC_nobc_1/mapping_1.stdout.stderr.txt
+
+nice -19 ~/python/bin/python src/python/trip.py -o cl20160824_trip_mESC_nobc_2 -c cl20160817_config_mESC.txt -l cl20160822_mESC_mapping_filelist_rep2.lst -u -v -d 2>&1 | tee cl20160824_trip_mESC_nobc_2/mapping_2.stdout.stderr.txt
+
+nice -15 ~/python/bin/python src/python/trip.py -o cl20160825_trip_mESC_nobc -c cl20160817_config_mESC.txt -l cl20160818_mESC_mapping_filelist.lst -u -v -d 2>&1 | tee cl20160825_trip_mESC_nobc/mapping.stdout.stderr.txt
+
+
+nice -15 awk 'FNR==NR{if ($1 ~ /^@/) {print $0; next} else {arr[$1]=$0};next}{if ($1 in arr){print arr[$1]}else{print $0}}' cl20160825_trip_mESC_nobc/samRev2.sam cl20160825_trip_mESC_nobc/samRev.sam | samtools view -Sb - > cl20160825_trip_mESC_nobc/samRev_combined.bam
+
+## find the overlap with repetitive elements
+bedtools intersect -wb -wa -a cl20160825_trip_mESC_nobc/rev_mapping.bed -b /home/NFS/users/c.leemans/data/tracks/mm9/repeatMasker_mm9_fa_out_20090604.bed | \
+awk -F"[|\t]" '
+BEGIN {
+print "barcode\tclass\tfamily\tname\tcount\ttotal"
+}{
+  if($10 ~ /\//){
+    match($10,/(.*)\/(.*)/, a)
+    class=a[1]
+    fam=a[2]
+  } else{
+    class=$10
+    fam="-"
+  }
+  i=($4"\t"class"\t"fam"\t"$11)
+  count[i] += $5
+  total[i] = $6
+}END {
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160825_trip_mESC_nobc/barcode_repeats.txt
+
+```
+
+## chromatin states
+I used a 15-state model from http://doi.org/10.1128/MCB.00955-15 to start out with.
+
+```
+
+## find the overlap with chromatin states
+awk '{if ($1!="*") {print $0}}' cl20160825_trip_mESC_nobc/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/tracks/mm9/cl20160819_meryChromHMM7sEsBruce.bed -wa -wb | awk 'BEGIN {
+print "barcode\tchrom_state\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160825_trip_mESC_nobc/barcode_chrom_7state.txt
+
+awk '{if ($1!="*") {print $0}}' cl20160825_trip_mESC_nobc/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/tracks/mm9/cl20160826_mESC_cStates_HMM_Bogu_15s.bed -wa -wb | awk 'BEGIN {
+print "barcode\tchrom_state\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160825_trip_mESC_nobc/barcode_chrom_15state.txt
+
+```
+
+
+```r
+load("/home/NKI/ca.d.graaf/projects/analyses/CdG130501mouseLmnb1Atlas/CdG140219mouseAtlas10CellType.rData")
+
+ES = annot
+ES$state = '-'
+ES$state[rowSums(allStates)==20] = 'cLAD'
+ES$state[rowSums(allStates)==10] = 'ciLAD'
+ES$state[rowSums(allStates)>10 & allStates[,'ES']==1] = 'fiLAD'
+ES$state[rowSums(allStates)<20 & allStates[,'ES']==2] = 'fLAD'
+write.table(ES[,c('seqname', 'start','end','state')],file = 'LAD_mES_cl160823.bed', col.names = F, quote=F,row.names=F) 
+```
+```
+cat LAD_mES_cl160823.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > LAD_mES_continuous_cl160823.bed
+
+awk '{if ($1!="*") {print $0}}' cl20160825_trip_mESC_nobc/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/tracks/mm9/LAD_mES_continuous_cl160823.bed -wa -wb | awk 'BEGIN {
+print "barcode\tlad_state\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160825_trip_mESC_nobc/barcode_LAD_state.txt
+
+```
+
+
+# R analysis
+Unfortunately we don't have a spike-in control in this experiment, so all expression values will be relative to the expression of other barcodes within the same experiment.
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r}
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+```
+
+## read the data
+The two main datasets used here is the set of gDNA and cDNA barcode counts produced in laura's thetered trip experiments. The other dataset is the one published in the TRIP paper W. Akthar et al., cell 2013. This dataset contains the known mapping locations of the barcodes
+
+```{r preperation}
+counts_without_bc = read.table('/media/HPC_Home/projects/trip/cl20160817_trip_mESC/bc_count.txt', stringsAsFactors=F, header=T, row.names=1)
+
+## some files were named ..._2.fq, while others had no such suffix. yet from every experiment there was only 1 .fq file. Let's remove this _2 from the names
+colnames(counts_without_bc) = gsub('_2.fq','.fq',colnames(counts_without_bc))
+## some filenames contained SUV39H2 while others SUV39H
+colnames(counts_without_bc) = gsub('SUV39H2','SUV39H',colnames(counts_without_bc))
+## also let's shorten the names
+colnames(counts_without_bc) = gsub('X[0-9]+_1_BarcodedPool_NoIndex_[0-9]+_','',colnames(counts_without_bc))
+mapping = read.table('/media/HPC_Home/projects/trip/raw_data/tet-Off-D_BC-Pos-Exp.txt', stringsAsFactors=F, header=T, row.names=2)
+
+lad_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_LAD_state.txt', header=T)
+## at least 30 reads have to be alligned to the state and 90% of total reads have to be aligned against that state for it to be a unique match between barcode and state
+lad_table = lad_table[lad_table$count>30&lad_table$count/lad_table$total>0.9,]
+rownames(lad_table) = lad_table$barcode
+lad_table$barcode = NULL
+
+
+chrom_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_chrom_15state.txt', header=T, stringsAsFactors=F)
+## at least 30 reads have to be alligned to the state and 90% of total reads have to be aligned against that state for it to be a unique match between barcode and state
+chrom_table = chrom_table[chrom_table$count>30&chrom_table$count/chrom_table$total>0.9,]
+## some barcodes were mapped on the border of two states, let's remove these
+chrom_table = chrom_table[!chrom_table$barcode%in%names(which(table(chrom_table$barcode)>1)),]
+rownames(chrom_table) = chrom_table$barcode
+chrom_table$barcode = NULL
+
+chrom_levels = unique(chrom_table[,'chrom_state'])
+# sort on the number in the state name
+chrom_levels = chrom_levels[order(sapply(chrom_levels,function(x){
+    # if the state is unknown, return a high number so that it ends up at the end of the sort
+    if (x!='-'){
+        return(as.numeric(str_split(x,'_')[[1]][1]))
+    } else{
+        return(Inf)
+    }}))]
+
+repeat_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_repeats.txt', header=T)
+unique_name = repeat_table$count > 30 & repeat_table$count/repeat_table$total > 0.9
+## had one occasion where there were two different SINE elements annotated at the same position, let's just remove this
+multiple = names(which(table(repeat_table$barcode[unique_name])>1))
+in_multiple = repeat_table$barcode%in%multiple
+repeat_table = repeat_table[!in_multiple,]
+rep_fam_table = ddply(repeat_table, .(barcode, class, family, total), summarize, count=sum(count))
+rep_fam_table= rep_fam_table[rep_fam_table$count > 30 & rep_fam_table$count/rep_fam_table$total > 0.9, ]
+
+rep_class_table = ddply(repeat_table, .(barcode, class, total), summarize, count=sum(count))
+rep_class_table = rep_class_table[rep_class_table$count > 30 & rep_class_table$count/rep_class_table$total > 0.9, ]
+
+repeat_table = repeat_table[unique_name[!in_multiple],]
+
+rownames(repeat_table) = repeat_table$barcode
+rownames(rep_fam_table) = rep_fam_table$barcode
+rownames(rep_class_table) = rep_class_table$barcode
+repeat_table$barcode = rep_fam_table$barcode = rep_class_table$barcode = NULL
+
+## see if there are more mappable reads with new method
+new_mapping = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/final_mapping.txt', header=TRUE, row.names=1)
+
+## apply same threshold as in paper.
+isUnique = new_mapping$t_reads_f>3 & new_mapping$t_reads_r>3 & new_mapping$freq1_f>0.7 &new_mapping$freq1_r>0.9 & new_mapping$freq2_f<0.05 & new_mapping$freq2_r<0.025
+new_mapping = new_mapping[isUnique, ]
+
+cat(sprintf('# of new mapping locations: %i', length(which(isUnique))))
+cat(sprintf('# of old mapping locations: %i', nrow(mapping)))
+cat(sprintf('# of old mapping locations not in new one: %i', length(which(!rownames(mapping)%in%rownames(new_mapping)))))
+
+
+```
+
+## distribution of the reads accros the different barcodes.
+Let's see how the barcode counts are distributed in each of the datasets.
+
+```{r hist_count, fig.width=10, fig.height=50}
+## first let's see the general picture
+plot_list = list()
+for (name in colnames(counts_without_bc)){
+    plot_list[[name]] = ggplot(counts_without_bc[counts_without_bc[,name]>5,], aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+## and now the barcodes for which we have mapping data
+plot_list = list()
+for (name in colnames(counts_without_bc)){
+    counts = counts_without_bc[counts_without_bc[,name]>5,]
+    plot_list[[name]] = ggplot(counts[rownames(counts)%in%rownames(new_mapping),], aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+```
+## look at the representation of the top barcodes
+I would like to know if the top 10 and top 1% take up a large percentage of the reads.
+Also I am interested to know if the top reads are found back in the mappable barcodes as published by ahktar et al 2013. 
+```{r mapping}
+for (name in grep('gDNA', colnames(counts_without_bc), value=T)){
+    num_bc = length(which(counts_without_bc[,name]>0))
+    top1 = sum(head(counts_without_bc[order(counts_without_bc[,name], decreasing=T),name], n=num_bc/100))/sum(counts_without_bc[,name])
+    top_10 = counts_without_bc[order(counts_without_bc[,name], decreasing=T),name,drop=F]
+    top_10$isMapped = rownames(counts_without_bc)%in%rownames(mapping)
+    top_10$isNewMapped = rownames(counts_without_bc)%in%rownames(new_mapping)
+    colnames(top_10) = c('count', 'in_mapping_table', 'in_new_mapping')
+    cat('\nTop 10 barcodes:\n')
+    print(write.table(top_10[1:10,], quote=F))
+    cat('\nHighest count mappable barcodes: ')
+    cat(top_10[rownames(top_10)%in%rownames(mapping),1])
+    cat('\n')
+    top_10_r = sum(top_10[1:10,])/sum(counts_without_bc[,name])
+    sprintf("%-58stop10 = %0.5f top1%% = %0.5f #bc = %i\n", name, top_10_r, top1, num_bc)
+}
+```
+**conclusions:**
+
+There are some weird peaks in some of the gDNA, but other than that the distributions look ok, except for r1_Gal4_D10_cDNA, KRAB_D10_cDNA and Gal4.SUV39H_D10_cDNA. Laura also experienced challanges with doing PCR in this replicate and had to go through an unusually high amount of cycles. In addition she had challanges with SUV39H_D10_cDNA.
+
+```{r}
+
+## let's mark these challanges
+
+challanges = c('KRAB_D10', 'Gal4.SUV39H_D10', 'SUV39H_D10')
+```
+
+
+## normalize
+
+We can only normalize by gDNA reads and by total barcode count
+
+```{r normalize}
+norm_exp = lapply(grep('cDNA', colnames(counts_without_bc), value=T), function(x, counts){
+    y = str_replace(x, 'cDNA', 'gDNA')
+    above_x = paste0(x,'_above_norm')
+    ## normalize counts by total reads
+    exp = counts[,x] / sum(counts[,x])
+    norm = counts[,y] / sum(counts[,y])
+
+    ## apply cut-off of 100 reads
+    above_norm = counts[,y] > 100
+    result = cbind.data.frame(exp/norm, above_norm)
+    colnames(result) = c(x, above_x)
+    return(result)
+}, counts_without_bc)
+norm_exp = do.call(cbind.data.frame, norm_exp)
+rownames(norm_exp) = rownames(counts_without_bc)
+
+```
+
+
+## correlation between replicates
+
+There were only two samples with replicates, these were the GAL4 day 2 and 10 samples.
+
+```{r replicates1, fig.width=10, fig.height=10}
+Gal4_D2 = norm_exp[norm_exp[,'r1_Gal4_D2_cDNA.fq_above_norm'] & norm_exp[,'r2_Gal4_D2_cDNA.fq_above_norm'] & rownames(norm_exp)%in%rownames(new_mapping),c('r1_Gal4_D2_cDNA.fq','r2_Gal4_D2_cDNA.fq')]
+
+print (head(Gal4_D2))
+
+cor_line = paste("r(p)=",signif(cor(x=Gal4_D2[,'r2_Gal4_D2_cDNA.fq'], y=Gal4_D2[, 'r1_Gal4_D2_cDNA.fq'],method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=Gal4_D2[,'r2_Gal4_D2_cDNA.fq'], y=Gal4_D2[, 'r1_Gal4_D2_cDNA.fq'],method = "spearman",use="pairwise.complete.obs"),digits=3))
+
+title = 'GAL4 Day 2 rep 1 vs 2'
+
+lims = c(min(log2(Gal4_D2[Gal4_D2>0]), na.rm=T), max(log2(Gal4_D2), na.rm=T))
+
+ggplot(Gal4_D2, aes(x=log2(r1_Gal4_D2_cDNA.fq), y = log2(r2_Gal4_D2_cDNA.fq)))+geom_point() + ggtitle(paste(title, cor_line, sep='\n')) + theme(aspect.ratio=1) + xlim(lims) + ylim(lims)
+
+
+Gal4_D10 = norm_exp[norm_exp[,'r1_Gal4_D10_cDNA.fq_above_norm'] & norm_exp[,'r2_Gal4_D10_cDNA.fq_above_norm'] & rownames(norm_exp)%in%rownames(new_mapping),c('r1_Gal4_D10_cDNA.fq','r2_Gal4_D10_cDNA.fq')]
+
+title = 'GAL4 Day 10 rep 1 vs 2'
+cor_line = paste("r(p)=",signif(cor(x=Gal4_D10[,'r2_Gal4_D10_cDNA.fq'], y=Gal4_D10[, 'r1_Gal4_D10_cDNA.fq'],method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=Gal4_D10[,'r2_Gal4_D10_cDNA.fq'], y=Gal4_D10[, 'r1_Gal4_D10_cDNA.fq'],method = "spearman",use="pairwise.complete.obs"),digits=3))
+
+lims = c(min(log2(Gal4_D10[Gal4_D10>0]), na.rm=T), max(log2(Gal4_D10), na.rm=T))
+
+ggplot(Gal4_D10, aes(x=log2(r1_Gal4_D10_cDNA.fq), y = log2(r2_Gal4_D10_cDNA.fq))) + geom_point() + ggtitle(paste(title, cor_line, sep='\n')) + xlim(lims) + ylim(lims) + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+
+```
+**conclusion:**
+
+the reproducability appears to be very low, especially in the D10 sample. One of the replicates on day 10 shows a weird distribution of read counts as shown previously. Laura also experienced challanges with doing PCR in this replicate and had to go through an unusually high amount of cycles.
+
+
+### deal with replicates
+```{r replicates2}
+## take the mean between replicates
+norm_exp$Gal4_D2_cDNA.fq = rowMeans(norm_exp[,c('r1_Gal4_D2_cDNA.fq', 'r2_Gal4_D2_cDNA.fq')])
+norm_exp$Gal4_D2_cDNA.fq_above_norm = norm_exp$r1_Gal4_D2_cDNA.fq_above_norm & norm_exp$r2_Gal4_D2_cDNA.fq_above_norm
+
+
+## because there was something wrong with replicate 1, let's only take replicate 2
+norm_exp$Gal4_D10_cDNA.fq = norm_exp$r2_Gal4_D10_cDNA.fq 
+norm_exp$Gal4_D10_cDNA.fq_above_norm = norm_exp$r2_Gal4_D10_cDNA.fq_above_norm
+
+```
+
+
+## relative expression
+let's see how the relative expression is distributed. First I will show the complete set of barcodes, then I will select for mappable only.
+
+```{r hit_exp_all, fig.width=15, fig.height=20}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        plotList = list()
+        for (condition in c(paste0('Gal4.',poi), poi, 'Gal4')){
+            name = sprintf('%s_%s_cDNA.fq all barcodes', condition, day)
+            print(name)
+            plotList[[condition]] = ggplot(norm_exp[norm_exp[, paste0(name, '_above_norm')], ], aes_string(paste0('log2(', name, ')')))+ geom_histogram(binwidth=0.1)+ xlim(-15,10)
+            if (sprintf('%s_%s',condition, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+
+### mappable only
+```{r hist_exp_map, fig.width=15, fig.height=20}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        plotList = list()
+        for (condition in c(paste0('Gal4.',poi), poi, 'Gal4')){
+            name = sprintf('%s_%s_cDNA.fq mappable only', condition, day)
+            print(name)
+            plotList[[condition]] = ggplot(norm_exp[norm_exp[, paste0(name, '_above_norm')]& rownames(norm_exp)%in%rownames(new_mapping), ], aes_string(paste0('log2(', name, ')')))+ geom_histogram(binwidth=0.1) + xlim(-15,10)
+
+            if (sprintf('%s_%s',condition, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+**conclusions:**
+Wasseem was able to obtain expression differences of 10 log2 units. The expression range shown above is very similar.
+
+
+## correlation between experiments
+Let's plot the relative expression of each condition and see how well they correlate. First I would like to see the scatter plots.
+
+```{r scatter_vs, fig.width=20, fig.height=7.5}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2 & rownames(norm_exp)%in%rownames(new_mapping),s_names]
+
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            cor_line = paste("r(p)=",signif(cor(x=this_exp[,2], y=this_exp[,1], method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=this_exp[,2], y=this_exp[,1], method = "spearman",use="pairwise.complete.obs"),digits=3))
+
+            aes_names = paste0('log2(', s_names, ')')
+
+            lims = c(min(log2(this_exp[this_exp>0]), na.rm=T), max(log2(this_exp), na.rm=T))
+
+            plotList[[i]] = ggplot(this_exp, aes_string(x=aes_names[2], y=aes_names[1])) + geom_point() + ggtitle(paste(title, cor_line, sep='\n')) + xlim(lims) + ylim(lims)
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=3))
+    }
+}
+```
+**conclusion:**
+
+In general (except for the 4 day 10 experiments that looked bad in the beginning) the samples of the different experiments have a correlation that is just as high, or higher than the replicates. Since there is normalization on read counts, this is not that unexpected. Let's hope that the barcodes that do not correlate can be split by the state definitions.
+
+## relative expression per state
+we would expect the relative expression levels to be lower in some states as compared to others (e.g. heterochromatin domains and LADs). Let's test if this is indeed the case.
+
+### relative expression per LAD state
+In the paper by Akhtar et al. it was shown that the relative expression of integrations in lamina associated was much lower compared to reporters intergrated in interLADs 
+
+```{r lad_exp, fig.width=15, fig.height=30}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        plotList = list()
+        for (condition in c(paste0('Gal4.',poi), poi, 'Gal4')){
+            name = sprintf('%s_%s_cDNA.fq', condition, day)
+            print(name)
+            this_exp = norm_exp[norm_exp[, paste0(name, '_above_norm')],name, drop=F]
+            match_vec = match(rownames(this_exp),rownames(lad_table))
+            xy_table = cbind.data.frame(lad_table[match_vec[!is.na(match_vec)],'lad_state'], this_exp[!is.na(match_vec),])
+            colnames(xy_table) = c('x', 'y')
+            ylab =  paste0('log2(', condition,')')
+            title = sprintf('normalized expressoin\n%s %s', condition, day)
+
+            plotList[[condition]] = ggplot(xy_table, aes(x=factor(x, levels=c('cLAD', 'fLAD', 'fiLAD', 'ciLAD')), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ggtitle(title) + ylab(ylab) + xlab('lad state')
+            
+
+            if (sprintf('%s_%s',condition, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+**conclusion:**
+Akhtar et al. previously reported a mean relative expression of around 1.2 for interLADs and a mean relative expression of 0.25 LADs, although these values are slightly different and there are 4 states defined instead of 2, they are much alike.
+
+
+### relative expression per chromatin state
+I used a 15 state model
+
+```{r chrom_exp, fig.width=15, fig.height=30}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        plotList = list()
+        for (condition in c(paste0('Gal4.',poi), poi, 'Gal4')){
+            name = sprintf('%s_%s_cDNA.fq', condition, day)
+            print(name)
+            this_exp = norm_exp[norm_exp[, paste0(name, '_above_norm')],name, drop=F]
+            match_vec = match(rownames(this_exp),rownames(chrom_table))
+            xy_table = cbind.data.frame(chrom_table[match_vec[!is.na(match_vec)],'chrom_state'], this_exp[!is.na(match_vec),])
+            colnames(xy_table) = c('x', 'y')
+            ylab = paste0('log2(', condition,')')
+            
+            title = sprintf('normalized expressoin\n%s %s', condition, day)
+
+            plotList[[condition]] = ggplot(xy_table, aes(x=factor(x, levels=chrom_levels), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ggtitle(title) + ylab(ylab) + xlab('chromatin state')
+
+
+            if (sprintf('%s_%s',condition, day) %in% challanges){
+                plotList[[condition]] = plotList[[condition]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+
+**conclusion:**
+Transcriptional active states can be discerned from silenced states. State 13 seems to be carying integrations with the lowest expression.
+
+
+## Repeat classes
+
+I have focused on classes for now, to have enough data points to see general trends.
+
+```{r rep_class_exp, fig.width=15, fig.height=30}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        plotList = list()
+        for (condition in c(paste0('Gal4.',poi), poi, 'Gal4')){
+            name = sprintf('%s_%s_cDNA.fq', condition, day)
+            print(name)
+            this_exp = norm_exp[norm_exp[, paste0(name, '_above_norm')],name, drop=F]
+            match_vec = match(rownames(this_exp),rownames(rep_class_table))
+            xy_table = cbind.data.frame(rep_class_table[match_vec[!is.na(match_vec)],'class'], this_exp[!is.na(match_vec),])
+            colnames(xy_table) = c('x', 'y')
+            xy_table$x = paste(xy_table$color, xy_table$x, sep='|')
+            ylab = paste0('log2(', condition,')')
+
+            title = sprintf('normalized expressoin\n%s %s', condition, day)
+            plot = ggplot(xy_table, aes(x=factor(x), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ggtitle(title) + ylab(ylab) + xlab('repeat family')
+
+            if (sprintf('%s_%s', condition, day) %in% challanges){
+                plotList[[condition]] = plot + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            } else {
+                plotList[[condition]] = plot
+            }
+            
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+**conclusions:**
+
+There seems to be a clear distinction between LINEs, DNA-repeats and low-complexity regions and SINE integrations. This probably has something to do with the preference for LINE and SINEs reported in the literature.
+
+```{r hist_vs, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), 'Gal4', poi),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+            x = log2(this_exp[,1]/this_exp[,2])
+            x = x[!is.infinite(x)]
+            lim = max(abs(x), na.rm=T)
+            lims = c(-lim,lim)
+
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            xlab = sprintf('log2(%s / %s)', s1, s2)
+
+
+            plotList[[i]] = ggplot(data.frame(x), aes(x=x)) + geom_histogram(binwidth=0.1) + 
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ggtitle(title) + xlab(xlab) + xlim(lims)
+
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+
+
+## relative expression differences in LADs
+
+```{r lad_vs, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), 'Gal4', poi),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2 ,s_names]
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(lad_table))
+            xy_table = cbind.data.frame(lad_table[match_vec[!is.na(match_vec)],'lad_state'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x, levels=c('cLAD', 'fLAD', 'fiLAD', 'ciLAD')), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ggtitle(title) + ylab(ylab) + xlab('lad state')
+
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+```
+## relative expression differences in chromatin
+
+```{r chrom_vs, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), 'Gal4', poi),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(chrom_table))
+            xy_table = cbind.data.frame(chrom_table[match_vec[!is.na(match_vec)],'chrom_state'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x, levels=chrom_levels), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) + ggtitle(title) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+            theme(axis.text = element_text(size = 15)) +
+            geom_hline(yintercept=0, colour = "grey30") + ylab(ylab) + xlab('chromatin state')
+
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+```
+
+## relative expression differences in repetitive elements
+
+first I show the differences per repeat family and after I show difference's per repeat class
+
+```{r rep_fam_vs, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), 'Gal4', poi),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(rep_fam_table))
+            xy_table = cbind.data.frame(rep_fam_table[match_vec[!is.na(match_vec)],c('class', 'family')], y[!is.na(match_vec)])
+            colnames(xy_table) = c('color','x', 'name', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x), y=log2(y), color=factor(color))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) + ggtitle(title) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+            theme(axis.text = element_text(size = 10)) +
+            geom_hline(yintercept=0, colour = "grey30") +
+            theme(plot.title = element_text(size=24)) + ylab(ylab) + xlab('repeat family')
+
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+```
+
+```{r rep_class_vs, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(rep_class_table))
+            xy_table = cbind.data.frame(rep_class_table[match_vec[!is.na(match_vec)],'class'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) + ggtitle(title) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+            theme(axis.text = element_text(size = 10)) +
+            geom_hline(yintercept=0, colour = "grey30") +
+            theme(plot.title = element_text(size=24)) + ylab(ylab) + xlab('repeat class')
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+```
+
+
+
+## barcodes in rRNA
+
+there seems to be something going on again in rRNA integrations, but it is not as clear. When looking at the bed file I found that, just as in the K562, barcodes are integrated at the same places in the SSU-rRNA-Hsa repeat. I wonder if the barcodes that are mapped to the same positions are also sharing a similar expression change.
+
+```{r, rep_rRNA}
+rRNA_barcodes = rownames(rep_class_table)[rep_class_table$class=='rRNA']
+
+mapping_bed = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/rev_mapping.bed', header=F)
+colnames(mapping_bed) = c('chrom', 'start','end','barcode', 'count','total')
+
+mapping_bed=mapping_bed[mapping_bed$barcode%in%rRNA_barcodes,]
+
+# The idea is to see if the locations on the repeat overlap, so let's take one repeat and compare the locations.
+# let's see if we can just focus on the rRNA repeat on chromosome 17
+length(which(!rRNA_barcodes%in%mapping_bed$barcode[mapping_bed$chrom=='chr17']))
+
+# if they are not on chromosome 17, can they still be grouped?
+not17 =rRNA_barcodes[!rRNA_barcodes%in%mapping_bed$barcode[mapping_bed$chrom=='chr17']]
+mapping_bed[mapping_bed$barcode%in%not17,]
+# this subset can best be grouped on chr12
+
+# first let's focus on chr17
+bed_chr17 = mapping_bed[mapping_bed$chrom=='chr17',]
+# get the top occurence on chr17
+bed_chr17 = bed_chr17[match(unique(bed_chr17$barcode), bed_chr17$barcode),]
+# there are a few barcodes that occur on a really low ratio, let's remove them
+bed_chr17 = bed_chr17[bed_chr17$count/bed_chr17$total > 0.1,]
+
+bed_chr12 = mapping_bed[mapping_bed$chrom=='chr12',]
+bed_chr12 = bed_chr12[match(unique(bed_chr12$barcode), bed_chr12$barcode),]
+bed_chr12 = bed_chr12[bed_chr12$count/bed_chr12$total > 0.1,]
+
+# now we can combine them
+unique_bed = rbind.data.frame(bed_chr17, bed_chr12)
+rownames(unique_bed) = unique_bed$barcode
+unique_bed$barcode = NULL
+
+print(nrow(unique_bed))
+print(length(rRNA_barcodes))
+# we have unique locations for barcodes on chromosome 17 and 12 (otherwise rownames could not be assigned) and we have not lost any barcodes in the process
+# now lets plot the expression changes per position.
+
+```
+
+```{r rep_rRNA_plot, fig.width=15, fig.height=40}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2 ,s_names]
+
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(unique_bed))
+            xy_table = cbind.data.frame(unique_bed[match_vec[!is.na(match_vec)],c('start')], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2) 
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) + ggtitle(title) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+            theme(axis.text = element_text(size = 10)) +
+            geom_hline(yintercept=0, colour = "grey30") +
+            theme(plot.title = element_text(size=24)) + ylab(ylab) + xlab('rRNA repeats per position')
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+
+```
+
+**conclusions:**
+
+There appears to be correlation between the barcode expression of barcodes that were integrated at the same location in the rRNA repeats. Maybe there are some other integrations with two barcodes linked and if so, maybe these are correlated as well...
+
+```{r multi_bc, fig.width=15, fig.height=40}
+## let's just assume that it's unlikely to have the same base position on different chromosomes
+multiple_bc = as.numeric(names(which(table(new_mapping$pos_r)>1)))
+
+multi_mapping = new_mapping[new_mapping$pos_r%in%multiple_bc, ]
+
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+
+            y = this_exp[,1]/this_exp[,2]
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(multi_mapping))
+
+            xy_table = cbind.data.frame(multi_mapping[match_vec[!is.na(match_vec)],c('chr_r','pos_r')], y[!is.na(match_vec)])
+            colnames(xy_table)[3] = 'y'
+            xy_table$x = paste(xy_table[,1], xy_table[,2], sep='_')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2) 
+            ylab = sprintf('log2(%s / %s)', s1, s2)
+
+            plotList[[i]] = ggplot(xy_table, aes(x=factor(x), y=log2(y), color=factor(x))) + geom_boxplot() + geom_point(pch=19, position=position_jitter(width=.2),size=0.5) + ggtitle(title) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+            theme(axis.text = element_text(size = 10)) +
+            geom_hline(yintercept=0, colour = "grey30") +
+            theme(plot.title = element_text(size=24)) + ylab(ylab) + xlab('barcodes with at equal position')
+
+            if (sprintf('%s_%s',s1, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+            if (sprintf('%s_%s',s2, day) %in% challanges){
+                plotList[[i]] = plotList[[i]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+            }
+        }
+        do.call(grid.arrange, c(plotList, ncol=1))
+    }
+}
+```
+
+```{r}
+plot_wilcox <- function(xy_table, state, poi, day, title, xlab, ylab="log2 (fold change)", text_size=20){
+    # function to perform wilcoxon tests for a certain state (e.g. cLADs), and if significant,
+    # display the results and plot the log2 fold change that state against the values of the
+    # other states.
+    # Args:
+    #   xy_table: table with filtered x and y values and a state linked to each barcode
+    #   title: title of the plot
+    #   xlab: label on x-axis
+    #   ylab: label on y-axis
+    #   text_size: size of the text on the axis
+    # Return:
+    #   ggplot object with plot and ggplot object with outcome of Wilcoxon-test statistiscs
+    if (length(which(xy_table$x==state)) > 0){
+        wc = wilcox.test(xy_table$y[xy_table$x==state],xy_table$y[xy_table$x!=state], conf.int=T)
+        wc$data.name = sprintf('%s %s %s vs NOT %s', poi, day, state, state)
+        nlevels = length(levels(xy_table$x))
+        if (wc$p.value < 0.05/nlevels){
+            notx = paste('NOT', state)
+            xy_table$this_x[xy_table$x==state] = state
+            xy_table$this_x[xy_table$x!=state] = notx
+            xy_table$this_x = factor(xy_table$this_x, levels=c(state,notx))
+            t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\nadjusted p-value threshold:\n0.05 / %0.1f = %0.6f\ndata:%s %s %s vs NOT %s\nW = %0.1f, p-value = %0.5f\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f',  nlevels, 0.05/nlevels, poi, day, state, state, wc$statistic, wc$p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
+            p = ggplot(xy_table,aes(x = this_x, y=y, colour=state)) +
+                theme(panel.background = element_rect(fill = "lavender")) +
+                theme(strip.text.x = element_text(size = 28)) + geom_boxplot(aes(colour=factor(this_x)), outlier.colour=NA) +
+                geom_point(shape=19, position=position_jitter(width=.2))  + ggtitle(title) +
+                stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+                theme(legend.position="none") +
+                theme(axis.title = element_text(size = 28)) +
+                theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+                theme(axis.text = element_text(size = text_size)) +
+                geom_hline(yintercept=0, colour = "grey30") +
+                theme(plot.title = element_text(size=24)) +
+                ylab(ylab) + xlab(xlab)
+            return(list(p,t))
+        } else{
+            return(NA)
+        }
+    } else {
+        return(NA)
+    }
+    
+}
+```
+```{r, fig.width=15, fig.height=15}
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+            y = log2(this_exp[,1]/this_exp[,2])
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(rep_class_table))
+            xy_table = cbind.data.frame(rep_class_table[match_vec[!is.na(match_vec)],'class'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            for (state in unique(xy_table$x)){
+                wc = plot_wilcox(xy_table, state, poi, day, title, 
+                    state, ylab="log2 (fold change)", text_size=20)
+                if (all(!is.na(wc))){
+                    if (sprintf('%s_%s',s1, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    if (sprintf('%s_%s',s2, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    grid.arrange(wc[[2]], wc[[1]], top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+
+                }
+            }
+        }
+    }
+}
+
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+            y = log2(this_exp[,1]/this_exp[,2])
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(lad_table))
+            xy_table = cbind.data.frame(lad_table[match_vec[!is.na(match_vec)],'lad_state'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            for (state in unique(xy_table$x)){
+                wc = plot_wilcox(xy_table, state, poi, day, title, 
+                    state, ylab="log2 (fold change)", text_size=20)
+                if (all(!is.na(wc))){
+                    if (sprintf('%s_%s',s1, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    if (sprintf('%s_%s',s2, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    grid.arrange(wc[[2]], wc[[1]], top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+
+                }
+            }
+        }
+    }
+}
+
+for (day in c('D2', 'D10')){
+    for (poi in c('SUV39H', 'KRAB', 'CBX5', 'G9a')){
+        comb_matrix = combn(c(paste0('Gal4.',poi), poi, 'Gal4'),2)
+        plotList = list()
+        for (i in 1:ncol(comb_matrix)){
+            s1 = comb_matrix[1,i]
+            s2 = comb_matrix[2,i]
+
+            s_names = sprintf('%s_%s_cDNA.fq', comb_matrix[,i], day)
+
+            this_exp = norm_exp[rowSums(norm_exp[,paste0(s_names, '_above_norm')])==2,s_names]
+            y = log2(this_exp[,1]/this_exp[,2])
+            this_exp = this_exp[!is.infinite(y),]
+            y = y[!is.infinite(y)]
+
+            match_vec = match(rownames(this_exp),rownames(chrom_table))
+            xy_table = cbind.data.frame(chrom_table[match_vec[!is.na(match_vec)],'chrom_state'], y[!is.na(match_vec)])
+            colnames(xy_table) = c('x', 'y')
+            title = sprintf('%s %s %s vs %s', poi, day, s1, s2)
+            for (state in unique(xy_table$x)){
+                wc = plot_wilcox(xy_table, state, poi, day, title, 
+                    state, ylab="log2 (fold change)", text_size=20)
+                if (all(!is.na(wc))){
+                    if (sprintf('%s_%s',s1, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    if (sprintf('%s_%s',s2, day) %in% challanges){
+                        wc[[1]] = wc[[1]] + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+                    }
+                    grid.arrange(wc[[2]], wc[[1]], top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+
+                }
+            }
+        }
+    }
+}
+
+```
