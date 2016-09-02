@@ -45,9 +45,6 @@
 # the length of index seqeunce. If no index is part of the read (formats Exp2, Exp3, map2 and map3), then right 0.
 # please note that the read structure at the start
  
-norm_index_length=	10,10,10,10,10,10,10,10,10,10,10,10,0,0,0,0,0,0,0,0,0,0,0,0,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10 
-exp_index_length=      10,10,10,10,10,10,10,10,10,10,10,10,0,0,0,0,0,0,0,0,0,0,0,0,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10
-map_fwd_index_length= 10
 index_length= 10
 
 # the length of the barcode. The program looks for barcodes which are barcode_length ± 1. 
@@ -104,7 +101,7 @@ map_pat_rev=	GTACGTCACAATATGATTATCTTTCTAGGGTTAA
 
 # the number of processors to be used for Bowtie2 alignments 
 
-cores=	1
+cores=	15
 
 
 

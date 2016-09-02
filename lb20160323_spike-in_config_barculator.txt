@@ -1,0 +1,5 @@
+index_length    = 10  # length of the index (0 = if no index used)
+barcode_length  = 16  # length of the barcode
+pat1            = GTCACAAGGGCCGGCCACAA  # first constant part of normalization and expression reads
+pat2            = GATCGGTACCCA # second constant part of normalization and expression reads
+hd              = 2  # the maximum distance from a given barcode for a query barcode to be included in the analysis

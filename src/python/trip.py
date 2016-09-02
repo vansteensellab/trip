@@ -1,7 +1,6 @@
 #!/home/NFS/users/c.leemans/python/bin/python2.7
 from __future__ import division
 from collections import Counter
-import read_parser
 import re
 import gzip
 from Bio.Data import IUPACData
@@ -15,6 +14,10 @@ import itertools
 import subprocess
 from multiprocessing import Pool
 from datetime import datetime
+import imp
+
+read_parser = imp.load_source('run', '/home/NFS/users/c.leemans/Programs/'
+                                     'parse-reads/read_parser.py')
 
 
 ##############################################################################
@@ -219,10 +222,12 @@ def parse_reads(fastq_name, structure_file, out_dir):
     of the file. Can be used with pair of forward and reverse read files, or
     with single fastq files.
     """
+    print(fastq_name)
     if type(fastq_name) == str:
         base_name = get_base_noext(fastq_name)
         out_base = '/'.join((out_dir, base_name))
         fastq_name = [fastq_name, False]
+
     else:
         base_pair = [get_base_noext(f) for f in fastq_name]
         base_name = ''.join((ca for ca, cb in
@@ -261,23 +266,21 @@ def parse_parsing_stats(stat_file):
 def config_parse(file_name, map_style):
     def check_integer(integer, default):
         if integer not in option_dict:
-            warnings.warn('%s is not set, defaults to %i' % (integer, default))
             option_dict[integer] = default
         elif not option_dict[integer].isdigit():
             line_split = option_dict[integer].split(',')
             if all(value.isdigit() for value in line_split):
                 option_dict[integer] = [int(value) for value in line_split]
             else:
-                warnings.warn('The %s given is not an integer, defaults to %i'
-                              % (integer, default))
                 option_dict[integer] = default
         else:
             option_dict[integer] = int(option_dict[integer])
 
     def check_pat(pat):
+        dna_pattern = r'[^%s]' % IUPACData.ambiguous_dna_letters
         if pat not in option_dict:
             raise NameError("Could not find any specification of %s\n" % pat)
-        elif (re.search('[^ACGT]', option_dict[pat]) is not None and
+        elif (re.search(dna_pattern, option_dict[pat]) is not None and
               option_dict[pat] != 'NA'):
             raise ValueError('The %s contains non-DNA characters\n' % pat)
 
@@ -326,6 +329,7 @@ def top_map(map_dict_in, max_dist):
         return (map_dict_in[key][0])
 
     map_dict_out = {}
+    print(map_dict_in['ATAGCCTATCTTCCGA'])
     for bc in map_dict_in:
         this_map_dict = map_dict_in[bc]
         if len(this_map_dict) == 1:
@@ -341,11 +345,19 @@ def top_map(map_dict_in, max_dist):
                                      key=lambda elem: sort_keys(elem,
                                                                 this_map_dict),
                                      reverse=True)
+            if bc == 'ATAGCCTATCTTCCGA':
+                print(sorted_key_list)
+                print(this_map_dict)
             top_key, \
                 top_reads, \
                 top_mapq, \
                 sorted_key_list = refine_map(this_map_dict, sorted_key_list,
                                              max_dist)
+            if bc == 'ATAGCCTATCTTCCGA':
+                print(sorted_key_list)
+                print(top_key)
+                print(top_reads)
+                print(top_mapq)
             reference_name, ori, start_pos = top_key
             av_mapq = top_mapq / top_reads
             freq1 = top_reads / total_reads
@@ -380,6 +392,39 @@ def refine_map(this_map_dict, sorted_key_list, max_dist):
     return(top_key, this_reads, this_mapq, sorted_key_list)
 
 
+def write_bed(map_dict_in, out_file, max_dist):
+    def sort_keys(key, map_dict_in):
+        return (map_dict_in[key][0])
+    with open(out_file, 'w') as f_out:
+        for bc in map_dict_in:
+            this_map_dict = map_dict_in[bc]
+            sorted_key_list = sorted(this_map_dict.keys(),
+                                     key=lambda elem: sort_keys(elem,
+                                                                this_map_dict),
+                                     reverse=True)
+            total_reads = sum(value[0] for value in this_map_dict.values())
+            while len(sorted_key_list) > 0:
+                top_key, \
+                    top_reads, \
+                    top_mapq, \
+                    sorted_key_list = refine_map(this_map_dict,
+                                                 sorted_key_list,
+                                                 max_dist)
+                reference_name, ori, start_pos = top_key
+                if ori == '+':
+                    start = start_pos - 4
+                    end = start_pos
+                elif ori == '-':
+                    start = start_pos
+                    end = start_pos + 4
+                f_out.write('%s\t%i\t%i\t%s\t%i\t%i\n' % (reference_name,
+                                                          start,
+                                                          end,
+                                                          bc,
+                                                          top_reads,
+                                                          total_reads))
+
+
 def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
               remap_soft_clip=17):
     remap_list = []
@@ -399,7 +444,6 @@ def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
             add_mapping = False
             if line.cigarstring is None:
                 mapping = ('*', ori, 0)
-                add_mapping = True
             else:
                 if line.is_reverse:
                     first_cigar = line.cigartuples[-1]
@@ -417,7 +461,7 @@ def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
                                               description=line.query_name,
                                               letter_annotations=quality_dict)
                         remap_list.append(seq)
-                if first_cigar[0] == 0 and first_cigar[1] >= 10:
+                if first_cigar[0] == 0 and first_cigar[1] >= min_first_match:
                     add_mapping = True
             mapping_quality = line.mapping_quality
             if add_mapping:
@@ -462,7 +506,7 @@ def get_arg_options():
     cmd_parser.add_argument('-o', '--out_dir', dest='output_directory',
                             help=('path to the directory where output should '
                                   'be saved'))
-    cmd_parser.add_argument('-m', '--map', dest='map_style',
+    cmd_parser.add_argument('-m', '--map', dest='map_style', default='b',
                             help=('[n OR b OR r OR f]\n'
                                   'should mapping be done from both '
                                   'forward and reverse (b) '
@@ -471,8 +515,7 @@ def get_arg_options():
                                   'If (f) only --mapFor needs to be specified '
                                   'otherwise (b or r) both  --mapFor and '
                                   '--mapRev needs to be specified.'
-                                  'The default value is undefined which means '
-                                  'no mapping.'))
+                                  'The default value is both.'))
     cmd_parser.add_argument('-u', '--useMagic', action='store_true',
                             dest='useMagic',
                             help=("use [] fields to specify multiple files. "
@@ -498,6 +541,14 @@ def get_arg_options():
                                   'the count of the "genuine" barcode it was '
                                   'mutated from. "Genuine" barcodes are based '
                                   'on either bcFile or normalization reads'))
+    cmd_parser.add_argument('-l', '--fileList', dest='file_list',
+                            help=('optional file containing tab seperated '
+                                  'data with file, read-type (norm, exp, '
+                                  'map_fwd or map_rev) '
+                                  'and length of the index.'
+                                  'If this file is not provided, '
+                                  'files from the -f -r -n and -e arguments'
+                                  'are used.'))
     cmd_parser.description = ('trippy version 0.0.1\n'
                               'Adapted from the trip tool from TRIP Analysis '
                               'Software Kit (TASK), by Waseem Akhtar, '
@@ -559,6 +610,22 @@ def run_top_map(map_dict_in_list, max_dist_list, cores):
         out = []
         for i in range(0, len(map_dict_in_list)):
             out.append(top_map(map_dict_in_list[i], max_dist_list[i]))
+    return out
+
+
+def run_write_bed(map_dict_in_list, out_dir, max_dist, cores):
+    out_list = [string % out_dir for string in '%s/fwd_mapping.bed',
+                '%s/rev_mapping.bed']
+    if cores > 1:
+        pool = Pool(processes=cores)
+        it = itertools.izip(itertools.repeat(write_bed),
+                            map_dict_in_list, out_list, max_dist)
+        out = pool.map(function_star, it)
+    else:
+        out = []
+        for i in range(0, len(map_dict_in_list)):
+            out.append(write_bed(map_dict_in_list[i], out_list[i],
+                                 max_dist[i]))
     return out
 
 
@@ -751,14 +818,14 @@ class parsing_runner:
         return(map_out, exp_out)
 
 
-def run_parse_sam(sam_list, cores, max_soft_clip=5, min_first_match=10,
+def run_parse_sam(sam_list, cores, max_soft_clip=5, min_first_match=(0, 10),
                   remap_soft_clip=17):
     if cores > 1:
         pool = Pool(processes=cores)
         it = itertools.izip(itertools.repeat(parse_sam),
                             sam_list,
                             itertools.repeat(max_soft_clip),
-                            itertools.repeat(min_first_match),
+                            min_first_match,
                             itertools.repeat(remap_soft_clip))
         out = pool.map(function_star, it)
     else:
@@ -806,6 +873,8 @@ def use_magic(file_string):
                     file_list.append(file_name)
         else:
             file_list.append(file_pattern)
+    if len(file_list) == 0:
+        print('did not find any files with magic string: %s' % file_string)
     return file_list
 
 
@@ -850,12 +919,8 @@ def get_base_noext(file_name):
     return(os.path.splitext(base)[0])
 
 
-def norm_and_exp(parse_out, norm_file_list, bc_file, out_dir, min_counts,
+def norm_and_exp(parse_out, norm_file_list, bc_set, out_dir, min_counts,
                  lev_dist, count_mutated, cores, verbose):
-    if bc_file is not None:
-        bc_set = set(bc for index, bc in parse_bc_file(bc_file))
-    else:
-        bc_set = None
     bc_dict, stats, base_list = combine_parse_out(parse_out, 'norm_exp')
     norm_base_list = [get_base_noext(file) for file in norm_file_list]
     starcode_out = '/'.join((out_dir, 'norm_exp_starcode.txt'))
@@ -974,7 +1039,7 @@ def run_filter_reads(base_list, out_dir, mutant_dict, cores):
     return out
 
 
-def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
+def map_fwd_rev(parse_out, bc_set, max_dist_for, max_dist_rev,
                 lev_dist, count_mutated, bowtie_base, out_dir, cores):
     map_bc_dict, stats, base_list = combine_parse_out(parse_out, 'map')
     starcode_out = '/'.join((out_dir, 'mapping_starcode.txt'))
@@ -983,7 +1048,7 @@ def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
     mutant_dict = {}
     print(datetime.now())
     for genuine_bc, mutant_list in run_starcode(map_bc_dict, lev_dist,
-                                                bc_set=exp_bc_dict,
+                                                bc_set=bc_set,
                                                 cores=cores,
                                                 starcode_out=starcode_out):
         if genuine_bc in map_bc_dict:
@@ -1011,27 +1076,6 @@ def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
                      "-S %s" % (cores, bowtie_base, rev_out_name,
                                 map_sam_list[1]))
     os.system(align_command)
-
-    # map_fwd_out = run_mapping_fwd(map_fwd_list, out_dir, map_pat1, map_pat2,
-    #                               bc_len, index_len, bc_dict, cores)
-    # id_dict_list = [map_fwd_out[fwd_fastq][1][0] for fwd_fastq in map_fwd_list]
-
-    # total_fwd_dict = {map_fwd: map_fwd_out[map_fwd][1][1]
-    #                   for map_fwd in map_fwd_list}
-    # hits_fwd_dict = {map_fwd: map_fwd_out[map_fwd][1][2]
-    #                  for map_fwd in map_fwd_list}
-    # genuine_fwd_dict = {map_fwd: map_fwd_out[map_fwd][1][3]
-    #                     for map_fwd in map_fwd_list}
-    # if verbose:
-    #     print 'parsing reverse iPCR reads...'
-    # map_rev_out = run_mapping_rev(map_rev_list, id_dict_list, map_pat_rev,
-    #                               out_dir, cores)
-
-    # hits_rev_dict = {map_rev: hits for map_rev, hits in
-    #                  zip(map_rev_list, map_rev_out.values())}
-
-    # map_fwd_string = ','.join(map_out for map_out, t in map_fwd_out.values())
-    # map_rev_string = ','.join(map_rev_out.keys())
 
     print 'parsing sam'
     print map_sam_list
@@ -1063,6 +1107,8 @@ def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
             else:
                 rev_map_dict[bc] = remap_sam_out[0][bc]
     fwd_map_dict = sam_out[0][0]
+    run_write_bed([fwd_map_dict, rev_map_dict], out_dir,
+                  [max_dist_for, max_dist_rev], cores)
     top_map_out = run_top_map([fwd_map_dict, rev_map_dict],
                               [max_dist_for, max_dist_rev],
                               cores)
@@ -1083,7 +1129,7 @@ def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
         file_out.write('\n')
         fwd_map_dict = top_map_out[0]
         rev_map_dict = top_map_out[1]
-        for bc in fwd_map_dict:
+        for bc in set(fwd_map_dict.keys()).union(set(rev_map_dict.keys())):
             file_out.write(bc)
             if (map_style == 'f' or map_style == 'b'):
                 file_out.write('\t')
@@ -1109,6 +1155,39 @@ def map_fwd_rev(parse_out, exp_bc_dict, max_dist_for, max_dist_rev,
                 part_match_dict, base_list)
 
 
+def parse_file_list_file(file_list, is_use_magic):
+    norm_file_list = []
+    exp_file_list = []
+    map_fwd_list = []
+    map_rev_list = []
+    norm_index_len_list = []
+    exp_index_len_list = []
+    map_fwd_index_len_list = []
+
+    with open(file_list) as f_in:
+        for line in f_in:
+            file_name, read_type, index_len = line.strip().split('\t')
+            assert read_type in ('norm', 'exp', 'map_fwd', 'map_rev')
+            if is_use_magic:
+                file_name = use_magic(file_name)
+                index_len = [int(index_len) for i in range(0, len(file_name))]
+            else:
+                index_len = int(index_len)
+            if read_type == 'norm':
+                norm_file_list.extend(file_name)
+                norm_index_len_list.extend(index_len)
+            elif read_type == 'exp':
+                exp_file_list.extend(file_name)
+                exp_index_len_list.extend(index_len)
+            elif read_type == 'map_fwd':
+                map_fwd_list.extend(file_name)
+                map_fwd_index_len_list.extend(index_len)
+            elif read_type == 'map_rev':
+                map_rev_list.extend(file_name)
+    return (norm_file_list, exp_file_list, map_fwd_list, map_rev_list,
+            norm_index_len_list, exp_index_len_list, map_fwd_index_len_list)
+
+
 def extract_multi_hits(sam_in, fastq_out):
     seq_list = []
     for line in pysam.AlignmentFile(sam_in):
@@ -1130,54 +1209,65 @@ if __name__ == '__main__':
     else:
         map_style = 'n'
     config_dict = config_parse(config_file, map_style)
-    if options.normalization_file is not None:
-        if options.useMagic:
-            print options.normalization_file
-            norm_file_list = use_magic(options.normalization_file)
-        else:
-            norm_file_list = options.normalization_file.split(',')
-        norm_index_len = config_dict['norm_index_length']
-        if type(norm_index_len) == int:
-            norm_index_len_list = [norm_index_len for i in norm_file_list]
-        else:
-            norm_index_len_list = norm_index_len
+    if options.file_list is not None:
+        norm_file_list, exp_file_list, map_fwd_list, map_rev_list, \
+            norm_index_len_list, exp_index_len_list, map_index_len_list \
+            = parse_file_list_file(options.file_list, options.useMagic)
     else:
-        norm_file_list = []
-        norm_index_len_list = []
-    if options.expression_file is not None:
-        if options.useMagic:
-            print options.expression_file
-            exp_file_list = use_magic(options.expression_file)
+        if options.normalization_file is not None:
+            if options.useMagic:
+                print options.normalization_file
+                norm_file_list = use_magic(options.normalization_file)
+            else:
+                norm_file_list = options.normalization_file.split(',')
+            norm_index_len = config_dict['norm_index_length']
+            if type(norm_index_len) == int:
+                norm_index_len_list = [norm_index_len for i in norm_file_list]
+            else:
+                if len(norm_index_len) != len(norm_file_list):
+                    print('WARNING: length of index list != length of file '
+                          'list for normalization files')
+                norm_index_len_list = norm_index_len
         else:
-            exp_file_list = options.expression_file.split(',')
-        exp_index_len = config_dict['exp_index_length']
-        if type(exp_index_len) == int:
-            exp_index_len_list = [exp_index_len for i in exp_file_list]
+            norm_file_list = []
+            norm_index_len_list = []
+        if options.expression_file is not None:
+            if options.useMagic:
+                print options.expression_file
+                exp_file_list = use_magic(options.expression_file)
+            else:
+                exp_file_list = options.expression_file.split(',')
+            exp_index_len = config_dict['exp_index_length']
+            if type(exp_index_len) == int:
+                if len(norm_index_len_list) != len(norm_file_list):
+                    print('WARNING: length of index list != length of file '
+                          'list for normalization files')
+                exp_index_len_list = [exp_index_len for i in exp_file_list]
+            else:
+                exp_index_len_list = exp_index_len
         else:
-            exp_index_len_list = exp_index_len
-    else:
-        exp_file_list = []
-        exp_index_len_list = []
-    if options.mapping_forward is not None:
-        if options.useMagic:
-            map_fwd_list = use_magic(options.mapping_forward)
+            exp_file_list = []
+            exp_index_len_list = []
+        if options.mapping_forward is not None:
+            if options.useMagic:
+                map_fwd_list = use_magic(options.mapping_forward)
+            else:
+                map_fwd_list = options.mapping_forward.split(',')
+            map_index_len = config_dict['map_fwd_index_length']
+            if type(map_index_len) == int:
+                map_index_len_list = [map_index_len for i in
+                                      map_fwd_list]
+            else:
+                map_index_len_list = map_index_len
         else:
-            map_fwd_list = options.mapping_forward.split(',')
-        map_index_len = config_dict['map_fwd_index_length']
-        if type(map_index_len) == int:
-            map_index_len_list = [map_index_len for i in
-                                  map_fwd_list]
+            map_fwd_list = []
+        if options.mapping_reverse is not None:
+            if options.useMagic:
+                map_rev_list = use_magic(options.mapping_reverse)
+            else:
+                map_rev_list = options.mapping_reverse.split(',')
         else:
-            map_index_len_list = map_index_len
-    else:
-        map_fwd_list = []
-    if options.mapping_reverse is not None:
-        if options.useMagic:
-            map_rev_list = use_magic(options.mapping_reverse)
-        else:
-            map_rev_list = options.mapping_reverse.split(',')
-    else:
-        map_rev_list = []
+            map_rev_list = []
     count_mutated = options.count_mutated
     out_dir = options.output_directory
     bc_file = options.barcode_file
@@ -1250,26 +1340,15 @@ if __name__ == '__main__':
         index_len_list.extend(norm_index_len_list)
         index_len_list.extend(exp_index_len_list)
         pat1 = '' if config_dict['pat1'] == 'NA' else config_dict['pat1']
-        # bc_dict = norm_and_exp(norm_file_list, exp_file_list, bc_file, out_dir,
-        #                        config_dict['barcode_length'], pat1,
-        #                        config_dict['pat2'], index_len_list,
-        #                        config_dict['min_counts'],
-        #                        config_dict['lev_dist'], count_mutated,
-        #                        config_dict['cores'], verbose)
-
         runner.add_norm_exp(itertools.chain(norm_file_list, exp_file_list),
                             index_len_list, pat1, config_dict['pat2'])
-        # build_exp_structure(config_dict['index_length'],
-        #                     config_dict['barcode_length'], pat1,
-        #                     config_dict['pat2'], 'tomtest/exp_structure.txt')
-        # test = parse_reads(norm_file_list[0], 'tomtest/exp_structure.txt',
-        #                    out_dir)
-    else:
+
+    if bc_file is not None:
         if verbose:
             print 'parsing barcode file...'
-        bc_dict = {key: {'index': value}
-                   for value, key in parse_bc_file(bc_file)}
-        # bc_tree = BKTree(Levenshtein.distance, bc_dict.keys())
+        bc_set = set(bc for index, bc in parse_bc_file(bc_file))
+    else:
+        bc_set = None
 
     if len(map_fwd_list) > 0:
         if verbose:
@@ -1279,67 +1358,20 @@ if __name__ == '__main__':
         runner.add_mapping(zip(map_fwd_list, map_rev_list), map_index_len_list,
                            map_pat1, config_dict['map_pat2'],
                            config_dict['map_pat_rev'])
-        # build_mapping_structure(config_dict['index_length'],
-        #                         config_dict['barcode_length'],
-        #                         map_pat1,
-        #                         config_dict['map_pat2'],
-        #                         config_dict['map_pat_rev'],
-        #                         'tomtest/map_struc.txt')
-        # test = parse_reads((map_fwd_list[0], map_rev_list[0]),
-        #                    'tomtest/map_struc.txt', out_dir)
-        # map_fwd_rev(map_fwd_list, map_rev_list, bc_dict,
-        #             map_pat1, config_dict['map_pat2'],
-        #             config_dict['map_pat_rev'], config_dict['barcode_length'],
-        #             map_fwd_index_len_list, config_dict['max_dist_for'],
-        #             config_dict['max_dist_rev'], config_dict['bowtie_base'],
-        #             out_dir, config_dict['cores'])
+
     print 'parsing fastq files...'
     map_out, exp_out = runner.run()
     if exp_out is not None:
         print 'analysing normalization and expression reads...'
-        bc_dict = norm_and_exp(exp_out, norm_file_list, bc_file, out_dir,
-                               config_dict['min_counts'],
-                               config_dict['lev_dist'], count_mutated,
-                               config_dict['cores'], verbose)
+        bc_set = norm_and_exp(exp_out, norm_file_list, bc_set, out_dir,
+                              config_dict['min_counts'],
+                              config_dict['lev_dist'], count_mutated,
+                              config_dict['cores'], verbose)
     if map_out is not None:
         print 'analysing mapping reads...'
-        map_fwd_rev(map_out, bc_dict, config_dict['max_dist_for'],
+        map_fwd_rev(map_out, bc_set, config_dict['max_dist_for'],
                     config_dict['max_dist_rev'], config_dict['lev_dist'],
                     count_mutated, config_dict['bowtie_base'], out_dir,
                     config_dict['cores'])
-    # ind_len = 10
-    # bc_len = 16
-    # min_count = 5
-    # pat1 = 'GTCACAAGGGCCGGCCACAACTCGAG'
-    # pat2 = 'TGATCCTGCAGTG'
-    # map_pat1 = 'GTCACAAGGGCCGGCCACAACTCGAG'
-    # map_pat2 = 'TGATC'
-    # map_pat_rev = 'GTACGTCACAATATGATTATCTTTCTAGGGTT'
-    # trip_folder = '/home/cleemans/SURFdrive/TRIP'
-    # laura_folder = '/'.join(('/home/NFS/users/l.brueckner',
-    #                          'TTRIP_K562',
-    #                          'lb20160331_fastqs_TRIP_KRAB'))
-    # fastq_base = '3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_13.fq'
-    # fastq_name = '/'.join([laura_folder, fastq_base])
-    # fastq_name = '/'.join([trip_folder, 'raw_data', fastq_base])
-    # fwd_base = '3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq'
-    # rev_base = '3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq'
-    # fwd_fastq = '/'.join((trip_folder, 'raw_data', fwd_base))
-    # rev_fastq = '/'.join((trip_folder, 'raw_data', rev_base))
-    # bc_count_dict = bc_extract_exp1(fastq_name, bc_len, pat1, pat2,
-    #                                 ind_len)
-    # for_map_tbl = '/'.join([trip_folder, 'workspace', 'mapping_tabe_for.fq'])
-    # rev_map_tbl = '/'.join([trip_folder, 'workspace',
-    #                         'mapping_table_rev.fq.gz'])
-    # mapping_fwd(fwd_fastq, for_map_tbl, map_pat1, map_pat2, bc_len, ind_len,
-    #             bc_count_dict)
-
-    # ratioDict = {}
-    # for dna in countDict.keys():
-    #     ratio = trip.unambiguous_ratio(dna)
-    #     if ratio in ratioDict:
-    #         ratioDict[ratio].append(dna)
-    #     else:
-    #         ratioDict[ratio] = [dna]
     if options.debug:
         debug_file.close()
