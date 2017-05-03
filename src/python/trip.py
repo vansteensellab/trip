@@ -1,4 +1,4 @@
-#!/home/NFS/users/c.leemans/python/bin/python2.7
+#!/usr/bin/env python
 from __future__ import division
 from collections import Counter
 import re
@@ -280,7 +280,8 @@ def config_parse(file_name, map_style):
         if pat not in option_dict:
             raise NameError("Could not find any specification of %s\n" % pat)
         elif (re.search(dna_pattern, option_dict[pat]) is not None and
-              option_dict[pat] != 'NA'):
+              option_dict[pat] != 'NA' and option_dict[pat] != '13'):
+            print(option_dict[pat])
             raise ValueError('The %s contains non-DNA characters\n' % pat)
 
     option_dict = {}
@@ -439,6 +440,7 @@ def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
                 else:
                     first_cigar = line.cigartuples[0]
                 mapping = (line.reference_name, ori, start_pos)
+
                 if first_cigar[0] == 4:
                     if first_cigar[1] <= max_soft_clip:
                         add_mapping = True
@@ -807,7 +809,7 @@ class parsing_runner:
         return(map_out, exp_out)
 
 
-def run_parse_sam(sam_list, cores, max_soft_clip=5, min_first_match=(0, 10),
+def run_parse_sam(sam_list, cores, max_soft_clip=5, min_first_match=[0, 10],
                   remap_soft_clip=17):
     if cores > 1:
         pool = Pool(processes=cores)
@@ -816,11 +818,13 @@ def run_parse_sam(sam_list, cores, max_soft_clip=5, min_first_match=(0, 10),
                             itertools.repeat(max_soft_clip),
                             min_first_match,
                             itertools.repeat(remap_soft_clip))
+
         out = pool.map(function_star, it)
     else:
         out = []
-        for sam_file in sam_list:
-            out.append(parse_sam(sam_file, max_soft_clip, min_first_match,
+        for i in range(0, len(sam_list)):
+            out.append(parse_sam(sam_list[i], max_soft_clip,
+                                 min_first_match[i],
                                  remap_soft_clip))
     return out
 
@@ -1057,11 +1061,11 @@ def map_fwd_rev(parse_out, bc_set, max_dist_for, max_dist_rev,
     print(datetime.now())
     map_sam_list = ['/'.join([out_dir, 'samFor.sam']),
                     '/'.join([out_dir, 'samRev.sam'])]
-    align_command = ("bowtie2 -p %i -t --very-sensitive -x %s -U %s -S %s"
+    align_command = ("bowtie2 -p %i -t -x %s -U %s -S %s"
                      % (cores, bowtie_base, fwd_out_name, map_sam_list[0]))
     os.system(align_command)
 
-    align_command = ("bowtie2 -p %i -t --very-sensitive-local -x %s -U %s "
+    align_command = ("bowtie2 -p %i -t --local -x %s -U %s "
                      "-S %s" % (cores, bowtie_base, rev_out_name,
                                 map_sam_list[1]))
     os.system(align_command)
@@ -1098,6 +1102,7 @@ def map_fwd_rev(parse_out, bc_set, max_dist_for, max_dist_rev,
     fwd_map_dict = sam_out[0][0]
     run_write_bed([fwd_map_dict, rev_map_dict], out_dir,
                   [max_dist_for, max_dist_rev], cores)
+
     top_map_out = run_top_map([fwd_map_dict, rev_map_dict],
                               [max_dist_for, max_dist_rev],
                               cores)

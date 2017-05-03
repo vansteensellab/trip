@@ -26,11 +26,15 @@ with open(count_file) as f:
             stdin.append('%s\t1' % barcode)
 
 
-args = ['/home/NFS/users/c.leemans/Programs/starcode/starcode',
-        '-t %i' % snakemake.threads, '-s', '--print-clusters']
-starcode = subprocess.Popen(args, shell=True, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+args = ('/home/NFS/users/c.leemans/Programs/starcode/starcode'
+        ' --print-clusters -d %i -t %i -s' % (snakemake.params.lev_dist,
+                                              snakemake.threads))
+
+starcode = subprocess.Popen(args, shell=True, stdin=subprocess.PIPE,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 try:
-    outs, errs = starcode.communicate(bytes('\n'.join(stdin), 'UTF-8'), timeout=15)
+    outs, errs = starcode.communicate(bytes('\n'.join(stdin), 'UTF-8'),
+                                      timeout=15)
 except subprocess.TimeoutExpired:
     starcode.kill()
     outs, errs = starcode.communicate()
@@ -58,9 +62,12 @@ for line in outs.decode('UTF-8').split('\n'):
         if len(line_split) == 3:
             other_list = line_split[2].split(',')
             for other_barcode in other_list:
-                mutated.write('%s\t%i\n' % (barcode, count_dict[barcode]))
-                if use_other:
-                    barcode_set.remove(barcode)
+                if other_barcode != barcode:
+                    mutated.write('%s\t%i\t%s\n' % (other_barcode,
+                                                    count_dict[other_barcode],
+                                                    barcode))
+                    if use_other:
+                        barcode_set.remove(other_barcode)
 
 mutated.close()
 genuine.close()

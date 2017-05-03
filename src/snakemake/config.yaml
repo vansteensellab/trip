@@ -323,22 +323,22 @@ input_file:
 
   mapping:
     pool1_rep1:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq.gz]
       - 10
     pool1_rep2:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_10.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_10.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_10.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_10.fastq.gz]
       - 10
     pool1_rep3:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_11.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_11.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_11.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_11.fastq.gz]
       - 10
     pool2_rep1:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_12.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_12.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_12.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_12.fastq.gz]
       - 10
     pool2_rep2:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_13.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_13.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_13.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_13.fastq.gz]
       - 10
     pool2_rep3:
-      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_14.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_14.fastq]
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_14.fastq.gz, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_14.fastq.gz]
       - 10
 
   spike:
@@ -386,6 +386,13 @@ repeatMasker: /home/NFS/users/c.leemans/data/tracks/hg19/repeatMasker_hg19_fa_ou
 
 structure:
   mapping: |
+    ID      5'      3'      type    req     second-read     pos   keep-bases
+    index   %i      -       const   present False   fixed   -
+    map_pat1a       GTCACAAGGGCCGGCCACAAC   -       const   present False   fixed   -
+    const_bar       TCGAG\{16\}TGATC  -       const_bar       present False   fixed   -
+    rev_map_complement      -       TTAACCCTAGAAAGATAATCATATTGTGACGTAC      const   -       False   var   -
+    rev_map GTACGTCACAATATGATTATCTTTCTAGGGTTAA      -       const   present True    fixed   -
+    fwd_map_complement      -       GATCA[BC]CTCGAGTTGTGGCCGGCCCTTGTGAC     const_bar_comp  -       True    var   -
 
   gDNA: |
     ID      5'      3'      type    req     second-read     pos                   keep-bases

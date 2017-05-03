@@ -2,6 +2,7 @@ import getpass
 import datetime
 import inspect
 import os
+import re
 
 filename = inspect.getframeinfo(inspect.currentframe()).filename
 path = os.path.dirname(os.path.abspath(filename))
@@ -11,36 +12,68 @@ path = os.path.dirname(os.path.abspath(filename))
 # date = datetime.datetime.now()
 # date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
 # OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
-OUTDIR = ''.join(('cl20161205','_', config["dir_suffix"]))
+OUTDIR = ''.join(('cl20170329','_', config["dir_suffix"]))
 
 if 'extract' in config:
     TIMING = glob_wildcards(config["extract"]["timing"])[0]
 # TYPE_LIST = ['mapping', 'gDNA', 'cDNA', 'spike']
 # TYPE_LIST = [read_type for read_type in TYPE_LIST if read_type in config]
 
-
-group_name_vec = [group[0] for group in config['groups']]
-replicate_dict = {}
-if 'replicate' in group_name_vec:
-    index = group_name_vec.index('replicate')
-    for name in config['input_file']['gDNA'].keys():
-        if 'spike' in config['input_file']:
-            file_name = '%s/cDNA.%s.cpm.gDNA.spike' % (OUTDIR, name)
-        else:
-            file_name = '%s/cDNA.%s.cpm.gDNA' % (OUTDIR, name)
-        name_split = name.split('_')
-        if index < len(name_split):
-            name_vec = [name_split[i] for i in range(0, len(name_split))
-                        if i != index]
-            mean_name = '_'.join(name_vec)
-            if mean_name in replicate_dict:
-                replicate_dict[mean_name].append(file_name)
+if 'groups' in config:
+    group_name_vec = [group[0] for group in config['groups']]
+    replicate_dict = {}
+    if 'replicate' in group_name_vec:
+        index = group_name_vec.index('replicate')
+        for name in config['input_file']['gDNA'].keys():
+            if 'spike' in config['input_file']:
+                file_name = '%s/cDNA.%s.cpm.gDNA.spike' % (OUTDIR, name)
             else:
-                replicate_dict[mean_name] = [file_name]
+                file_name = '%s/cDNA.%s.cpm.gDNA' % (OUTDIR, name)
+            name_split = name.split('_')
+            if index < len(name_split):
+                name_vec = [name_split[i] for i in range(0, len(name_split))
+                            if i != index]
+                mean_name = '_'.join(name_vec)
+                if mean_name in replicate_dict:
+                    replicate_dict[mean_name].append(file_name)
+                else:
+                    replicate_dict[mean_name] = [file_name]
 rule all:
     input:
-        # expand('{outdir}/mapping.{num}.bam', outdir=OUTDIR, num=(1,2)),
-        expand('{outdir}/cDNA.{name}.normalized', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
+        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
+               name=config['input_file']['mapping'].keys(), num=(1,2)),
+        # expand('{outdir}/cDNA.{name}.normalized', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
+
+if 'cDNA' in config['input_file']:
+    rule cDNA_only:
+        input:
+            expand('{outdir}/cDNA.{name}.raw.count', outdir=OUTDIR,
+                   name=config['input_file']['cDNA'].keys())
+
+if 'polyA' in config['input_file']:
+    rule polyA_only:
+        input:
+            expand('{outdir}/polyA.{name}.normalized', outdir=OUTDIR,
+                   name=config['input_file']['polyA'].keys())
+
+if 'gDNA' in config['input_file']:
+    rule gDNA_only:
+        input:
+            expand('{outdir}/gDNA.{name}.starcode.count', outdir=OUTDIR,
+                   name=config['input_file']['gDNA'].keys())
+
+rule mapping_split:
+    input:
+        expand('%s/allelic/mapping.{name}.alleles' % (OUTDIR),
+               name=config['input_file']['mapping'].keys())
+
+rule mapping_only:
+    input:
+        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
+               name=config['input_file']['mapping'].keys(), num=(1,2)),
+        expand('{outdir}/mapping.{name}.starcode.count', outdir=OUTDIR,
+                   name=config['input_file']['mapping'].keys())
+
 # rule all:
 #     input:
 #         expand('{outdir}/bc_{sample}.txt', outdir=OUTDIR,
@@ -152,40 +185,179 @@ rule all:
 #     "mkdir -p {output.dir}"
 #     "nice -19 ~/python/bin/python src/python/trip.py -t {THREADS} -o {output.dir} -l {input.lst} -c {input.cfg} -u -v -d 2>&1 | tee {output.stdout}"
 
+rule allele_barcodes:
+    input:
+        table='%s/allelic/mapping.{name}.table' % (OUTDIR),
+        fasta=config['fasta']
+    output:
+        '%s/allelic/mapping.{name}.alleles' % (OUTDIR)
+    params:
+        vcf=config['vcf']
+    script:
+        'scripts/allele.py'
 
-# rule parse_sam:
-#     input:
-#         bam=expand('{outdir}/mapping.{{num}}.bam', outdir=OUTDIR),
-#         count=expand('{outdir}/mapping.{{map}}.starcode.count', outdir=OUTDIR)
-#     output:
-#         '{outdir}/mapping.{num}.bed',
-#         '{outdir}/mapping.{num}.table'
-#     run:
-#         starcode_set = set()
-#         for count_file in input.count:
-#             with open(count_file) as cf:
-#                 for line in cf.readlines():
-#                     barcode = line.split('\t')[0]
-#                     if barcode
 
+
+rule combine_table:
+    input:
+        expand('%s/mapping.{{name}}.{num}.table' % (OUTDIR), num=(1,2)),
+        '%s/mapping.{name}.starcode.count' % (OUTDIR)
+    output:
+        '%s/allelic/mapping.{name}.table' % (OUTDIR)
+    run:
+        bc_dict = {}
+        with open(input[2]) as bc_file:
+            for line in bc_file:
+                bc_dict[line.split()[0]] = ['' for i in range(0,16)]
+
+        with open(input[0]) as fwd_file:
+            for line in fwd_file:
+                line_split = line.strip(' |\t').split()
+                bc = line_split[0]
+                if bc in bc_dict:
+                    bc_dict[bc][7:14] = line_split[1:8]
+                    bc_dict[bc][15] = line_split[8]
+
+        with open(input[1]) as rev_file:
+            for line in rev_file:
+                line_split = line.strip(' |\t').split()
+                bc = line_split[0]
+                if bc in bc_dict:
+                    bc_dict[bc][0:7] = line_split[1:8]
+                    bc_dict[bc][14] = line_split[8]
+
+        with open(output[0], 'w') as out_file:
+            print(("barcode\tseqname_r\tori_r\tstart_pos_r\ttotal_mapped_r\t"
+                   "freq1_r\tfreq2_r\tseqname_f\tori_f\tstart_pos_f\t"
+                   "total_mapped_f\tfreq1_f\tfreq2_f\tseq_r\tseq_f"), file=out_file)
+            for bc in bc_dict:
+                line_list = bc_dict[bc]
+                for i in (4,11):
+                    if (line_list[i] != ''):
+                        line_list[i] = str(round(float(line_list[i])))
+                for i in (5,6,12,13):
+                    if (line_list[i] != ''):
+                        line_list[i] = str(round(float(line_list[i]), 2))
+                if not all(s=='' for s in line_list):
+                    print('%s\t%s' % (bc, '\t'.join(line_list)), file=out_file)
+
+
+
+rule split_sam:
+    input:
+        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
+        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR),
+        gen_cut=expand('{outdir}/mapping.{{name}}.genuine.cut', outdir=OUTDIR),
+        count_cut=expand('{outdir}/mapping.{{name}}.count.cut', outdir=OUTDIR)
+    output:
+        genuine='{outdir}/mapping.{name}.{num}.genuine.sam',
+        stat='{outdir}/mapping.{name}.{num}.align.stat'
+    run:
+        import gzip
+        starcode_set = set()
+        with open(input.count[0]) as cf:
+            for line in cf.readlines():
+                barcode = line.split('\t')[0]
+                if barcode not in starcode_set:
+                    starcode_set.add(barcode)
+        mutant_dict = {}
+        with open(input.gen_cut[0]) as cf:
+            for line in cf.readlines():
+                line_split = line.split('\t')
+                barcode = line_split[0]
+                genuine = line_split[2]
+                mutant_dict[barcode] = genuine
+        low_count = set()
+        with open(input.count_cut[0]) as cf:
+            for line in cf.readlines():
+                barcode = line.split('\t')[0]
+                if barcode not in low_count:
+                    low_count.add(barcode)
+        stat_dict = {}
+        print(output.genuine)
+        with open(output.genuine[0], 'w') as fout:
+            with open(input.sam[0]) as fin:
+                for line in fin.readlines():
+                    if line.startswith('@'):
+                        print(line)
+                        fout.write(line)
+                    else:
+                        line_split = line.split('\t')
+                        barcode = re.match(r'.*_([ACGTN]+)$', line_split[0]).groups(1)[0]
+                        is_mapped = line_split[2] != '*'
+                        if barcode not in low_count:
+                            if barcode not in stat_dict:
+                                stat_dict[barcode] = [0,0,0,0]
+                            if barcode in mutant_dict:
+                                if is_mapped:
+                                    stat_dict[barcode][2] += 1
+                                else:
+                                    stat_dict[barcode][3] += 1
+                            elif barcode in starcode_set:
+                                if is_mapped:
+                                    line_split[0] = barcode
+                                    fout.write('\t'.join((line_split)))
+                                    stat_dict[barcode][0] += 1
+                                else:
+                                    stat_dict[barcode][1] += 1
+                            else:
+                                print('a barcode magically disapeared!!!')
+                                print(barcode)
+        with open(output.stat[0], 'w') as fout:
+            fout.write('\t'.join(['barcode', 'genuine_mapped', 'genuine_unmapped',
+                                  'mutant_mapped', 'mutant_unmapped']))
+            fout.write('\n')
+            for barcode in stat_dict:
+                fout.write(barcode)
+                fout.write('\t')
+                fout.write('\t'.join(str(count) for count in stat_dict[barcode]))
+                fout.write('\n')
+
+
+
+
+rule parse_sam:
+    input:
+        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
+        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR)
+    output:
+        bed='{outdir}/mapping.{name}.{num}.bed',
+        table='{outdir}/mapping.{name}.{num}.table',
+        stats='{outdir}/mapping.{name}.{num}.parse_stat.table',
+        length='{outdir}/mapping.{name}.{num}.length.table',
+        remap_fq='{outdir}/mapping.{name}.{num}.remap.fastq.gz',
+        remap='{outdir}/mapping.{name}.{num}.remap.bam'
+    wildcard_constraints:
+        num="\d+"
+    params:
+        bowtie_index = config['bowtie']['index'],
+        options=config['bowtie']['options'],
+        max_dist = config['max_dist'],
+        num='{num}'
+    threads: 10
+    script:
+        'scripts/parse_sam.py'
 
 
 if 'mapping' in config['input_file']:
     rule align:
         input:
-            expand('{outdir}/mapping.{name}.{{num}}.fastq.gz', outdir=OUTDIR,
-                   name=config['input_file']['mapping'].keys())
+            '%s/mapping.{name}.{num}.fastq.gz' % OUTDIR
         output:
-            '{outdir}/mapping.{num}.bam'
+            sam='{outdir}/mapping.{name}.{num}.sam',
+            bam='{outdir}/mapping.{name}.{num}.bam'
         params:
-            config['bowtie'],
-            '{num}'
+            bowtie_index=config['bowtie']['index'],
+            options=config['bowtie']['options'],
+            num='{num}'
+        wildcard_constraints:
+            num="\d+"
         threads: 10
         log:
-            '{outdir}/mapping.align.{num}.log'
+            '{outdir}/mapping.align.{name}.{num}.log'
         run:
-            options = ' '.join(params[0]['options'][params[1]])
-            index = params[0]['index']
+            print(input)
+            print(output.sam)
             gunzip = "gunzip -c {input}"
             ## filter for read length
             awk = ("awk '{{"
@@ -194,16 +366,35 @@ if 'mapping' in config['input_file']:
                    "           for (i in a){{"
                    "               print a[i]"
                    "           }}"
-                   "           print $0"
+                   "           print $0;"
+                   "           hit+=1;"
                    "       }} else if (step!=0){{"
                    "           a[step]=$0;"
+                   "       }} else {{"
+                   "           short+=1"
                    "       }}"
+                   "}} END {{"
+                   "print \"filtering before mapping with bowtie2:\" > \"{log}\"; "
+                   "printf \"%i\\treads; of these:\\n\", hit+short > \"{log}\"; "
+                   "printf \"  %i (%2.2f%%) were long enough (> 6bp)\\n\", hit, hit/(hit+short)*100 > \"{log}\"; "
+                   "printf \"  %i (%2.2f%%) were too short (<= 6bp)\\n\\n\", short, short/(hit+short)*100 > \"{log}\"; "
+                   "print \"stats from bowtie2:\" > \"{log}\"; "
                    "}}'")
-            bowtie = 'bowtie2 -p {threads} %s -x %s -U - > {output}' % (options,
-                                                                        index)
-            flagstat = 'samtools flagstat {output} > {log}'
-            print(bowtie)
-            shell('%s | %s | %s; %s' % (gunzip, awk, bowtie, flagstat))
+            options = ' '.join(params.options[params.num])
+            bowtie = ('bowtie2 -p {threads} %s -x %s -U - '
+                      '1> {output.sam} 2>> {log}' % (options, params.bowtie_index))
+            samToBam = 'samtools view -@ {threads} -Sb {output.sam} > {output.bam}'
+            shell('%s | %s | %s; %s' % (gunzip, awk, bowtie, samToBam))
+
+
+rule split_mapping:
+    input:
+        bam=expand('{outdir}/mapping.{{num}}.bam', outdir=OUTDIR)
+    output:
+        '{outdir}/mapping.{num}.genuine.bam'
+        '{outdir}/mapping.{num}.genuine.cut.bam'
+        '{outdir}/mapping.{num}.unmapped.bam'
+
 
 ###############################################################################
 ##+++++++++++++++++++++++++++++ mean expression +++++++++++++++++++++++++++++##
@@ -277,6 +468,23 @@ else:
         shell:
             'Rscript {params}/scripts/normalize.R {input} {output}'
 
+rule normalize_polyA:
+    input:
+        lambda wildcards: config['input_file']['polyA'][wildcards.name][0],
+        expand('{outdir}/polyA.{{name}}.starcode.count', outdir=OUTDIR)
+    output:
+        '{outdir}/polyA.{name}.normalized'
+    run:
+        print(input[0])
+        print(input[1])
+        shell(("total_reads=$(($(gunzip -c {input[0]} | wc -l) / 4));"
+               "awk -v total_reads=\"$total_reads\" '{{"
+               "    norm=$2/total_reads * 1000000;"
+               "    print $0\"\t\"norm"
+               "}}' {input[1]} > {output}"))
+
+
+
 ###############################################################################
 ##++++++++++++++++++++++++ select genuine barcodes ++++++++++++++++++++++++++##
 ###############################################################################
@@ -311,6 +519,23 @@ rule starcode_gDNA:
         lev_dist= config['lev_dist'],
         use_other= False,
         count= config['min_count']['gDNA']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+
+rule starcode_polyA:
+    input:
+        expand('{outdir}/polyA.{{name}}.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/polyA.{name}.starcode.count',
+        mut='{outdir}/polyA.{name}.genuine.cut',
+        count='{outdir}/polyA.{name}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= config['min_count']['polyA']
     threads:
         3
     script:
@@ -352,11 +577,11 @@ rule starcode_spike_sample:
 
 rule starcode_map:
     input:
-        expand('{outdir}/mapping.raw.count', outdir=OUTDIR)
+        expand('{outdir}/mapping.{{name}}.raw.count', outdir=OUTDIR)
     output:
-        gen='{outdir}/mapping.starcode.count',
-        mut='{outdir}/mapping.genuine.cut',
-        count='{outdir}/mapping.count.cut'
+        gen='{outdir}/mapping.{name}.starcode.count',
+        mut='{outdir}/mapping.{name}.genuine.cut',
+        count='{outdir}/mapping.{name}.count.cut'
     params:
         lev_dist= config['lev_dist'],
         use_other= False,
@@ -366,22 +591,22 @@ rule starcode_map:
     script:
         'scripts/starcode.py'
 
-if 'mapping' in config['input_file']:
-    rule combine_starcode_map:
-        input:
-            expand('{outdir}/mapping.{map}.raw.count', outdir=OUTDIR,
-                   map=config['input_file']['mapping'].keys())
-        output:
-            '{outdir}/mapping.raw.count'
-        shell:
-            'cat {input} > {output}'
+#if 'mapping' in config['input_file']:
+#    rule combine_starcode_map:
+#        input:
+#            expand('{outdir}/mapping.{map}.raw.count', outdir=OUTDIR,
+#                   map=config['input_file']['mapping'].keys())
+#        output:
+#            '{outdir}/mapping.{name}.raw.count'
+#        shell:
+#            'cat {input} > {output}'
 
 
 rule count_barcode:
     input:
-        '%s/{file_base}.barcode.txt.gz' % OUTDIR
+        '%s/{file_base}.{name}barcode.txt.gz' % OUTDIR
     output:
-        '%s/{file_base}.raw.count' % OUTDIR
+        '%s/{file_base}.{name}raw.count' % OUTDIR
     shell:
         "gunzip -cf - < {input} | awk '{{print $3}}' | tail -n+2 | sort | uniq -c | awk '{{print $2\"\t\"$1}}'> {output}"
 
@@ -488,7 +713,6 @@ if 'spike' in config['input_file']:
 
 
 if 'mapping' in config['input_file']:
-
     rule parse_mapping:
         input:
             lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
@@ -512,5 +736,32 @@ if 'mapping' in config['input_file']:
                 structure = re.sub('index.*\n', '', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} -p {input[1]} '
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
                   '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')
+
+if 'polyA' in config['input_file']:
+    rule parse_polyA:
+        input:
+            lambda wildcards: config['input_file']['polyA'][wildcards.name][0]
+        output:
+            '%s/polyA.{name}.barcode.txt.gz' % (OUTDIR),
+            '%s/polyA.{name}.statistics.txt' % (OUTDIR),
+            structure = '%s/polyA.{name}.structure.txt' % (OUTDIR)
+        log:
+            '%s/polyA.{name}_parser.log' % (OUTDIR)
+        params:
+            structure= config['structure']['polyA'],
+            type_dict= config['input_file']['polyA'],
+            outdir = OUTDIR
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            if params.type_dict[wildcards.name][1] == 0:
+                structure = re.sub('index.*\n', '', structure)
+            ## for some reason "{{" does not work, so this is a workaround
+            structure = re.sub('\\\{', '{', structure)
+            structure = re.sub('\\\}', '}', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -a -n 10000000000 -r -l {log} '
+                  '-e 0.17 -o -b polyA.{wildcards.name} {input} '
+                  '{output.structure} {params.outdir} > /dev/null')
