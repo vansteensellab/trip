@@ -1,0 +1,2943 @@
+
+# knitr document van Steensel lab
+
+# Gene repression in LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+Generally speaking, genes inside lamina associated domains are not or very lowly expressed. These genes can either be actively repressed by their DNA context (e.g. heterochromatin, lamina association), or simply be inactive (because essential factors for expression are missing?). Yet another group of genes seem to evade gene repression in the context of lamina associated domains. In this report I would like to investigate what defines these 3 groups of genes and how they compare to genes outside of lamina associated domains.
+
+## Description of Data.
+
+gencode.sure.160617.rda: 
+    file from Joris, received 17 June 2016. Promoter positions in this file are from Gencode. Contains SuRE, gro-cap and cage expression data as well as the number of tissues in which each promoter is expressed.
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+library(gage)
+library(fgsea)
+library(CGtools)
+library(biomaRt)
+library(Matrix)
+library(grid)
+load('../raw_data/biomart.rdata')
+
+## There was one promoter that was wrongly annotated
+bm_p[bm_p$ensembl_transcript_id=='ENST00000357491','ensembl_gene_id' ] = 'ENSG00000196350'
+
+```
+
+
+# MAIN
+
+### SuRE data
+Previously, Bas defined three different groups of promoters in LADs. The "escaper", "repressed" and "inactive" group. The "escaper" group contains promoters that are expressed in their endogenous LAD environment. The "repressed" group is inactive in the endogenous setting, but they do show autonomous promoter activity in SuRE data. The 'inactive' group shows neither endogenous expression nor autonomous promoter activity in SuRE data.
+
+```{r, fig.width=10, fig.height=8}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+## remove the zinc fingers (ZNF)
+P = P[-grep('ZNF', P$name2), ]
+## to be used by CGtools as the complete set of TSS's
+peaks = data.frame(seqname=P$chr,
+                   start=P$tss,
+                   end=P$tss,
+                   strand=P$strand)
+
+
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCage<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCage
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE> 0 & P$LRS> -0.5 & P$LAD==1 & P$GROcap> -2 #not repressed
+REP<- P$SuRE> 0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"escaper"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+P$class = factor(P$class, levels=c('iLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'iLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P$class), '; n=',table(P$class))
+names(class_names) = levels(P$class)
+P$class_n_prom = P$class
+levels(P$class_n_prom) = class_names
+COL_class_n_prom = COL_class[names(class_names)]
+names(COL_class_n_prom) = class_names
+
+lad_names = c(LAD=paste0('LAD; n=', table(P$LAD)['1']),
+              iLAD=paste0('LAD; n=', table(P$LAD)['0']))
+P$lad_n_prom = factor(ifelse(P$LAD==1, lad_names['LAD'], lad_names['iLAD']))
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+
+
+RM_melt = melt(RM, measure.vars=c('GROcap.ilad', 'GROcap.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='GROcap.lad', lad_names['LAD'], lad_names['iLAD'])
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=0.5, alpha=0.2) + 
+    theme_bw() +
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad_n)
+p_classes = P[which(P$class %in% c('inactive', 'escaper', 'repressed')),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n_prom), size=0.6) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    theme(legend.title=element_blank()) +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+pdf('cl20170124_keystone_slides.pdf')
+RM_melt = melt(RM, measure.vars=c('GROcap.ilad', 'GROcap.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='GROcap.lad', lad_names['LAD'], lad_names['iLAD'])
+ggplot(P, aes(x=SuRE, y=GROcap)) +
+    geom_point(size=0.5, color='black', alpha=0.05) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    guides(fill=FALSE) +
+    theme_bw() +
+    theme(legend.title=element_blank())
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=1, alpha=0.6) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    theme(legend.title=element_blank()) +
+    guides(fill=FALSE) +
+    scale_color_manual(values=COL_lad_n)
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=1, alpha=0.6) + 
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad_n)
+
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=0.5, alpha=0.6) + 
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad_n)
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[P$class=='inactive',], aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_vline(xintercept=-0.3, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[P$class%in%c('inactive', 'repressed'),], aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_vline(xintercept=0.3, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 1), linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+p_classes = P[which(P$class %in% c('inactive', 'escaper', 'repressed')),]
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 0.5), linetype='dotdash', size=0.3) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 1), linetype='dotdash', size=0.3) +
+    geom_vline(xintercept=0, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    scale_colour_manual(values=COL_class_n_prom) 
+```
+
+**conclusion:**
+
+We now have a definition of 3 different groups. We can now look at what is different between these groups.
+
+## create GRanges
+
+```{r}
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              name=P$name),
+                                              keep.extra.columns=TRUE)
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss,
+                         gene_gr$tss)
+
+TSSR_gr = gene_gr
+P_start = P$tss - ifelse(P$strand=='+',50,300)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P$tss + ifelse(P$strand=='+',300,50)
+ranges(TSSR_gr) = IRanges(P_start, P_end)
+
+body_gr = gene_gr
+P_start = ifelse(P$strand=='+', 
+                 P$tss + 300,
+                 P$txStart - 3000)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = ifelse(P$strand=='+',
+               P$txEnd + 3000,
+               P$tss - 300)
+ranges(body_gr) = IRanges(P_start, P_end)
+
+F_window=22000
+
+window_gr = gene_gr[width(gene_gr)>F_window]
+p_match = match(window_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_window
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_window
+ranges(window_gr) = IRanges(P_start, P_end)
+
+
+p_most_active = ddply(P, .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else {
+        result = x[order(x$GROcap, decreasing=T)[1],]
+    }
+    return(result)
+  })
+
+m_active = match(p_most_active$name, P$name)
+
+
+p_most_down = ddply(P[!is.na(P$ensembl_gene_id),], .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else if (all(x$strand=='+')){
+        result = x[order(x$tss, decreasing=T)[1],]
+    } else if (all(x$strand=='-')){
+        result = x[order(x$tss)[1],]
+    } else {
+        print('huh???')
+        print(x)
+        result = x[1,]
+    } 
+    return(result)
+  })
+
+m_most_down = match(p_most_down$name, P$name)
+m_most_down_window = match(p_most_down$name, window_gr$name)
+
+
+p_most_up = ddply(P[!is.na(P$ensembl_gene_id),], .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else if (all(x$strand=='+')){
+        result = x[order(x$tss, decreasing=F)[1],]
+    } else if (all(x$strand=='-')){
+        result = x[order(x$tss)[1],]
+    } else {
+        print('huh???')
+        print(x)
+        result = x[1,]
+    } 
+    return(result)
+  })
+m_most_up = match(p_most_up$name, P$name)
+m_most_up_window = match(p_most_up$name, window_gr$name)
+
+## choose -/+ 1000 based on doi: 10.4161/epi.19565 
+F_cpg = 1000
+cpg_gr = gene_gr
+p_match = match(cpg_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_cpg
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_cpg
+ranges(cpg_gr) = IRanges(P_start, P_end)
+
+export.bed(TSSR_gr, '../raw_data/tssr.bed')
+export.bed(body_gr, '../raw_data/gene_body.bed')
+export.bed(window_gr, '../raw_data/prom_window.bed')
+export.bed(cpg_gr, '../raw_data/cpg_window.bed')
+
+window_gr_3prime = gene_gr[width(gene_gr)>F_window]
+p_match = match(window_gr_3prime$name, P$name)
+P_start = ifelse(P[p_match, 'strand'] =='+', 
+                 P[p_match, 'txEnd'] - F_window,
+                 P[p_match, 'txStart'] - F_window)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = ifelse(P[p_match, 'strand'] =='+', 
+               P[p_match, 'txEnd'] + F_window,
+               P[p_match, 'txStart'] + F_window)
+ranges(window_gr_3prime) = IRanges(P_start, P_end)
+export.bed(window_gr_3prime, '../raw_data/3prime_window.bed')
+
+
+F_cpg = 300
+cpg_gr = gene_gr
+p_match = match(cpg_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_cpg
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_cpg
+ranges(cpg_gr) = IRanges(P_start, P_end)
+export.bed(cpg_gr, '../raw_data/cpg_window_300.bed')
+
+```
+
+
+
+## # of tissues expressed
+
+We hypothesise that the "inactive" promoters are expressed in neither GROcap nor SuRE because of missing transcription factors or some other regulatory mechanism that is missing in K562. It is therefore likely that these promoters are more cell-type specific than the two classes showing SuRE autonomous expression. The "escaper" group on the other hand is likely to be expressed in a lot of cell types, since they seem more resistant to repression.
+
+So if we plot the number of tissues in which a promoter is expressed (Phantom data) against the different classes of promoters, we should see a clear division in which "inactive" are very tissue specific (low number of tissues expressed), but "escaper" promoters are housekeeping genes expressed in a lot of tissues.
+
+```{r, fig.width=10, fig.height=8}
+p_class = P[P$class!='boundary',]
+ggplot(p_class, aes(x=class_n_prom, y=tissues_expressed, color=class)) +
+    geom_violin(alpha=0.3) +
+    geom_point(data=p_class[p_class$class != 'iLAD', ],
+               position=position_jitter(width=0.4),
+               alpha=0.5) + 
+    theme_bw() +
+    theme(legend.title=element_blank()) +
+    scale_colour_manual(values=COL_class) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+**conclusion:**
+
+It is stricking how clear the differences are between the different classes. While "inactive" promoters are mainly highly tissue specifice, the "escaper" promoters show a very low specificity and are generally expressed in a lot of different cell types. The "repressed" subset has both highly tissue specific as well as widely expressed promoters.
+
+## How promoters "escape" repression
+
+It has been observed that around promoter sites sometimes there is a "dip" in the lamina association. Maybe this is a way to "escape" repression.
+
+```{r, fig.width=10, fig.height=10}
+lmnb1_count = read.table('../raw_data/rep2_pLT_LMNB1_0.counts.txt.gz')
+dam_count = read.table('../raw_data/rep2_pLT_Dam_0.counts.txt.gz')
+colnames(lmnb1_count) = colnames(dam_count) = c('seqnames', 'start', 'end', 'count')
+for (lmnb1_file in c('../raw_data/rep2_pLT_LMNB1_0_1.counts.txt.gz',
+                     '../raw_data/rep2_pLT_LMNB1_1.counts.txt.gz',
+                     '../raw_data/rep2_pT_LMNB1.counts.txt.gz')){
+    lmnb1_count[,4] = rowSums(cbind(lmnb1_count[,4], read.table(lmnb1_file)[,4]))
+    dam_file = sub('LMNB1', 'Dam', lmnb1_file)
+    dam_count[,4] = rowSums(cbind(dam_count[,4], read.table(dam_file)[,4]))
+}
+
+
+lmnb1_gr = makeGRangesFromDataFrame(lmnb1_count)
+
+lad_hmm_gr = import.bed('../../../data/tracks/hg19/cl20161019_LAD_2state_K562.bed')
+lad_overlap = findOverlaps(lad_hmm_gr[lad_hmm_gr$name=='LAD'], lmnb1_gr)
+ilad_overlap = findOverlaps(lad_hmm_gr[lad_hmm_gr$name=='interLAD'], lmnb1_gr)
+
+lad_log2 = log2(sum(lmnb1_count[to(lad_overlap),'count'])/sum(dam_count[to(lad_overlap),'count']))
+ilad_log2 = log2(sum(lmnb1_count[to(ilad_overlap),'count'])/sum(dam_count[to(ilad_overlap),'count']))
+
+h<-findOverlaps(window_gr, lmnb1_gr)
+oENST<-window_gr[from(h)]$name
+oPOS<-ifelse(strand(window_gr[from(h)])=='+',
+             (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 - start(window_gr[from(h)]) -F_window,
+             end(window_gr[from(h)]) - (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 -F_window)
+         #coordinates of all overlapping probes relative to the gene starts
+lmnb1_vec <- lmnb1_count[to(h), 'count']
+dam_vec <- dam_count[to(h), 'count']
+par(mfrow=c(1,3))
+for (i in names(COL)){
+  s<-unique(P$name[which(P$class==i) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                  runsum(Rle(subDam), k=wsize, endrule='constant'))
+  plot(subPOS, run_log2, col=COL[i], lwd=2, type='l', xlim=c(-F_window,F_window)*0.9,ylim=c(-3,3),
+       main=paste('K562', i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="log2(DAM-lamin / DAM-only)")
+  abline(h=lad_log2, lty="dotdash", col=COL_lad['LAD'], lwd=2)
+  abline(h=ilad_log2, lty="dotdash", col=COL_lad['iLAD'], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+load('../raw_data/damid_data.RData')
+dam_gr = GRanges(seqnames=damid.data$chr, IRanges(damid.data$start, damid.data$stop))
+
+h<-findOverlaps(window_gr, dam_gr)
+oENST<-window_gr[from(h)]$name
+oPOS<-ifelse(strand(window_gr[from(h)])=='+',
+             (start(dam_gr[to(h)])+end(dam_gr[to(h)]))/2 - start(window_gr[from(h)]) -F_window,
+             end(window_gr[from(h)]) - (start(dam_gr[to(h)])+end(dam_gr[to(h)]))/2 -F_window)
+         #coordinates of all overlapping probes relative to the gene starts
+damid = damid.data[to(h),]
+damid[,3:ncol(damid)] = t(t(damid[,3:ncol(damid)]) / colSums(damid[,3:ncol(damid)]))
+for (dam in c('lamina', 'nucleolus', 'centromere', 'speckles', 'pores')){
+    plot_list = list()
+    for (i in names(COL_class)){
+        par(mfrow=c(1,3))
+        s<-unique(P$name[which(P$class==i) ])
+        s<-s[!is.na(s)]
+        if (length(s) > 1000){
+            s = sample(s, 1000, replace=F)
+        }
+        w<-oENST %in% s #which rows in oENST correspond to genes in s
+        subPOS<-oPOS[w]
+        subDamFus <-damid[w, paste0('K562.',dam)]
+        subDamCtrl <-damid[w, paste0('K562.',dam, '.Dam')]
+        o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+        subPOS<-subPOS[o]
+        subDamFus<-subDamFus[o]
+        subDamCtrl<-subDamCtrl[o]
+        #determine runmed k:
+        wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+        if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+        #plot:
+        run_log2 = log2(runsum(Rle(subDamFus), k=wsize, endrule='constant')/
+                      runsum(Rle(subDamCtrl), k=wsize, endrule='constant'))
+        plot_list[[i]] = ggplot(data.frame(subPOS, run_log2), aes(x=subPOS, y=run_log2)) + 
+                             geom_line(color=COL_class[i]) +
+                             ggtitle(paste(dam, i, '\n', length(s))) +
+                             xlab("position relative to gene start (bp)") +
+                             ylab(paste0("log2(DAM-", dam, " / DAM-only)")) +
+                             ylim(-3,6)
+
+    }
+    do.call(grid.arrange, c(plot_list, nrow=1))
+}
+
+dam_gr = GRanges(seqnames=damid.data$chr, IRanges(damid.data$start, damid.data$stop))
+
+h<-findOverlaps(window_gr_3prime, dam_gr)
+oENST<-window_gr_3prime[from(h)]$name
+oPOS<-ifelse(strand(window_gr_3prime[from(h)])=='+',
+             (start(dam_gr[to(h)])+end(dam_gr[to(h)]))/2 - start(window_gr_3prime[from(h)]) -F_window,
+             end(window_gr_3prime[from(h)]) - (start(dam_gr[to(h)])+end(dam_gr[to(h)]))/2 -F_window)
+         #coordinates of all overlapping probes relative to the gene starts
+damid = damid.data[to(h),]
+damid[,3:ncol(damid)] = t(t(damid[,3:ncol(damid)]) / colSums(damid[,3:ncol(damid)]))
+for (dam in c('lamina', 'nucleolus', 'centromere', 'speckles', 'pores')){
+    plot_list = list()
+    for (i in names(COL)){
+        par(mfrow=c(1,3))
+        s<-unique(P$name[which(P$class==i) ])
+        s<-s[!is.na(s)]
+        if (length(s) > 1000){
+            s = sample(s, 1000, replace=F)
+        }
+        w<-oENST %in% s #which rows in oENST correspond to genes in s
+        subPOS<-oPOS[w]
+        subDamFus <-damid[w, paste0('K562.',dam)]
+        subDamCtrl <-damid[w, paste0('K562.',dam, '.Dam')]
+        o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+        subPOS<-subPOS[o]
+        subDamFus<-subDamFus[o]
+        subDamCtrl<-subDamCtrl[o]
+        #determine runmed k:
+        wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+        if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+        #plot:
+        run_log2 = log2(runsum(Rle(subDamFus), k=wsize, endrule='constant')/
+                      runsum(Rle(subDamCtrl), k=wsize, endrule='constant'))
+        plot_list[[i]] = ggplot(data.frame(subPOS, run_log2), aes(x=subPOS, y=run_log2)) + 
+                             geom_line(color=COL_class[i]) +
+                             ggtitle(paste(dam, i, '\n', length(s), '3-prime aligned')) +
+                             xlab("position relative to gene start (bp)") +
+                             ylab(paste0("log2(DAM-", dam, " / DAM-only)")) +
+                             ylim(-3,6) +
+                             theme_bw()
+
+    }
+    do.call(grid.arrange, c(plot_list, nrow=1))
+}
+
+```
+
+**conclusion:**
+
+Seems like promoters escape repression by lamina association mainly by locally detaching from the lamina. One worry here is that Dam-only preferentially methylates open chromatin regions so there is a very high dam-only signal at active promoters. This is a possible confounder, but since this peak in methylation is completely absent in the DAM-lamin profile and there even seems to be still a slight dip in this DAM-lamin data, there seems to be a real biological factor next to the artificial one.
+
+
+## validation of promoter activity
+
+To double check if these promoters are indeed active, we can look if this "not repressed" promoter class is linked to the active promoter classes of the chromatin state definition.
+
+```{r, fig.width=10, fig.height=10}
+chrom_gr = import.bed('../../../data/tracks/hg19/wgEncodeBroadHmmK562HMM.bed')
+COL_chromatin = unique(data.frame(chrom_gr)[,c('name', 'itemRgb')])
+COL_chrom = COL_chromatin[,2]
+
+names(COL_chrom) = COL_chromatin[,1]
+
+
+
+P$chrom_hmm = chrom_gr[nearest(tss_gr, chrom_gr)]$name
+
+chrom_levels = unique(P$chrom_hmm)
+chrom_order = order(unlist(lapply(chrom_levels, function(x){as.numeric(strsplit(x,'_')[[1]][1])})))
+P$chrom_hmm = factor(P$chrom_hmm, levels=chrom_levels[chrom_order])
+ggplot(P[P$class!='boundary',], aes(x=class_n_prom, fill=chrom_hmm)) + 
+    geom_bar(color='black', position='fill') +
+    theme_bw() +
+    scale_fill_manual(values=COL_chrom) +
+    scale_y_continuous(labels=percent, limits=c(0,1)) +
+    ylab('percent') +
+    ggtitle('chromatin state near TSS of promoter') +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.title=element_blank())
+```
+
+**conclusion:**
+
+This plot clearly shows that chromatin data supports what we saw in GRO-cap.
+
+
+## POL2A occupancy
+Even though the promoter seems to be active, there might still be a hampering of expression due to lamina association of the gene body. One measure of transcription in the gene body is POL2A occupancy. It will be interesting to see both POL2A occupancy at the transcription start site as well as the gene body for our not-repressed group of promoters and iLAD promoters with the same level of transcription in the GROcap data.
+
+
+```{r, fig.width=10, fig.height=10}
+# load('../raw_data/prom_window_pol2a.rda')
+count_file_vec = list.files('../raw_data/',pattern='POL2')
+count_file_vec = grep('prom_window', count_file_vec, value=T, invert=T)
+
+count_list = lapply(count_file_vec, function(x){
+        gr = import.bed(paste0('../raw_data/', x))
+        score(gr) = start(gr$thick) / width(gr)
+        return(gr)
+    })
+name_list = lapply(strsplit(count_file_vec, '_'), function(x){
+    if (x[1]=='gene'){
+        r = paste(x[2:4], collapse='_')
+    } else {
+        r = paste(x[1:3], collapse='_')
+    }
+    return(r)
+})
+names(count_list) = unlist(name_list)
+
+
+score_table = do.call(cbind,lapply(count_list,function(x){score(x)}))
+
+tssr_POL2A = rowMeans(score_table[,c('tssr_POL2A_rep1', 'tssr_POL2A_rep2')]) /
+             rowMeans(score_table[,c('tssr_POL2A_ctrl1', 'tssr_POL2A_ctrl2')])
+
+tssr_POL2AS2 = rowMeans(score_table[,c('tssr_POL2AphosphoS2_rep1',
+                                       'tssr_POL2AphosphoS2_rep2')]) /
+               score_table[,'tssr_POL2AphosphoS2_ctrl']
+
+tssr_POL2AS5 = rowMeans(score_table[,c('tssr_POL2AphosphoS5_rep1',
+                                       'tssr_POL2AphosphoS5_rep2')]) /
+               rowMeans(score_table[,c('tssr_POL2AphosphoS5_ctrl1',
+                                       'tssr_POL2AphosphoS5_ctrl2')])
+
+body_POL2A = rowMeans(score_table[,c('body_POL2A_rep1', 'body_POL2A_rep2')]) /
+             rowMeans(score_table[,c('body_POL2A_ctrl1', 'body_POL2A_ctrl2')])
+
+body_POL2AS2 = rowMeans(score_table[,c('body_POL2AphosphoS2_rep1',
+                                       'body_POL2AphosphoS2_rep2')]) /
+               score_table[,'body_POL2AphosphoS2_ctrl']
+
+body_POL2AS5 = rowMeans(score_table[,c('body_POL2AphosphoS5_rep1',
+                                       'body_POL2AphosphoS5_rep2')]) /
+               rowMeans(score_table[,c('body_POL2AphosphoS5_ctrl1',
+                                       'body_POL2AphosphoS5_ctrl2')])
+
+tssr_match = match(P$name, count_list[['tssr_POL2A_rep1']]$name)
+body_match = match(P$name, count_list[['body_POL2A_rep1']]$name)
+
+
+P$tssr_POL2A = tssr_POL2A[tssr_match]
+P$tssr_POL2AS2 = tssr_POL2AS2[tssr_match]
+P$tssr_POL2AS5 = tssr_POL2AS5[tssr_match]
+P$body_POL2A = body_POL2A[body_match]
+P$body_POL2AS2 = body_POL2AS2[body_match]
+P$body_POL2AS5 = body_POL2AS5[body_match]
+P$PI_POL2A = P$tssr_POL2A / P$body_POL2A
+P$PI_POL2AS2 = P$tssr_POL2AS2 / P$body_POL2AS2
+P$PI_POL2AS5 = P$tssr_POL2AS5 / P$body_POL2AS5
+P$PI_POL2AS2vs5 = P$tssr_POL2AS5 / P$body_POL2AS2
+P$body_POL2AS2vsAll = P$body_POL2AS2 / P$body_POL2A
+P$tssr_POL2AS5vsAll = P$tssr_POL2AS5 / P$tssr_POL2A
+
+this_p = P[m_most_down,]
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')),]
+s_escaper = which(p_expressed$class=='escaper')
+gro_order = order(p_expressed$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[p_expressed$class[gro_ilad] == 'iLAD']
+
+norm_grocap = c(s_escaper, s_ilad)
+
+p_expressed$col = p_expressed$class
+levels(p_expressed$col) = paste0(levels(p_expressed$class),'; n=', table(p_expressed[norm_grocap, 'class']))
+COL_class_n_pol = COL_class_n_prom
+names(COL_class_n_pol) = levels(p_expressed$col)
+
+ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2A', 'body_POL2A')), aes(x=class, y=log2(value + 0.1), color=col)) +
+    ylab('log2(POL2A / ctrl)') +
+    geom_violin(alpha=0.3) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class_n_pol) + facet_wrap(~variable)  +
+    theme_bw() +
+    theme(legend.title=element_blank())
+
+# ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2AS2', 'body_POL2AS2')) , aes(x=class, y=log2(value), color=class)) +
+#     ylab('log2(POL2AS2 / ctrl)') +
+#     geom_violin(alpha=0.3) +
+#     geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+#     scale_color_manual(values=COL_class) + facet_wrap(~variable)
+
+
+# ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2AS5', 'body_POL2AS5')) , aes(x=class, y=log2(value), color=class)) +
+#     ylab('log2(POL2AS5 / ctrl)') +
+#     geom_violin(alpha=0.3) +
+#     geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+#     scale_color_manual(values=COL_class) + facet_wrap(~variable)
+
+# ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2A', 'tssr_POL2AS2', 'tssr_POL2AS5')) , aes(x=class, y=log2(value), color=class)) +
+#     ylab('log2(POL2A* / ctrl)') +
+#     geom_violin(alpha=0.3) +
+#     geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+#     scale_color_manual(values=COL_class) + facet_wrap(~variable)
+
+
+# par(mfrow=c(1,4))
+# sample_n = table(this_p[,'class'])['escaper']
+# for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+#    {
+#     s = which(this_p[, 'class']==i)
+#     s = sample(s, sample_n, replace=F)
+#     strand = this_p[,'strand'][s]
+#     name_vec = this_p[, 'name'][s]
+#     s = match(name_vec, rownames(rep1_matrix))
+#     signal1 = rbind(rep1_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                     rep1_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     signal2 = rbind(rep2_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                     rep2_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     signal = signal1 + signal2
+
+#     control1 = rbind(ctrl1_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                      ctrl1_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     control2 = rbind(ctrl2_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                      ctrl2_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     control = control1 + control2
+#     mean_list = lapply(seq(1,43901,200), function(x){
+#                            c(x+100, sum(signal[,x:(x+200)])/sum(control[,x:(x+200)]))
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     #plot:
+#     plot(mean[,1]-F_window, mean[,2], col=COL_class[i], lwd=2, type='l', xlim=c(-F_window,F_window)*0.9,ylim=c(0,50),
+#          main=paste(i, length(s), '\nrandomly sampled'), xlab="position relative to gene start (bp)", ylab="POL2A count")
+#     abline(v=0, lty="dotted")
+# }
+
+# s_escaper = which(this_p$class=='escaper')
+# gro_order = order(this_p$GROcap)
+# gro_escaper = which(gro_order %in% s_escaper)
+
+# gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+# s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+# s_list = list(iLAD=s_ilad, escaper=s_escaper)
+# par(mfrow=c(1,2))
+# for(i in c('iLAD', 'escaper')) #for the three gene classes
+#    {s = s_list[[i]]
+#     strand = this_p$strand[s]
+#     name_vec = this_p$name[s]
+#     s = match(name_vec, rownames(rep1_matrix))
+#     signal1 = rbind(rep1_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                     rep1_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     signal2 = rbind(rep2_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                     rep2_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     signal = signal1 + signal2
+
+#     control1 = rbind(ctrl1_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                      ctrl1_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     control2 = rbind(ctrl2_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                      ctrl2_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     control = control1 + control2
+#     mean_list = lapply(seq(1,43901,200), function(x){
+#                            c(x+100, sum(signal[,x:(x+200)])/sum(control[,x:(x+200)]))
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     #plot:
+#     plot(mean[,1]-F_window, mean[,2], col=COL_class[i], lwd=2, type='l', xlim=c(-F_window,F_window)*0.9, ylim=c(0,50),
+#          main=paste(i, length(s), '\nrandomly sampled'), xlab="position relative to gene start (bp)", ylab="POL2A count")
+#     abline(v=0, lty="dotted")
+# }
+
+```
+
+**conclusion:**
+
+While at the transcription start site there seems to be an equal amount of POL2A for escaper and iLAD genes with equal amount of transcription (GROcap), there is clearly less POL2A in the gene body. This could be that this region is just less accessible for the ChIP antibody. Also there seems to be less POL2AS2 at the promoter. This could all be due to challenges in the protocol. But since they seem to add op I would think it's a real biological phenomena that we are looking at.
+
+## PROseq run-on transcription in gene-body
+
+It really looks like that although the promoters show similar activity as iLAD promoters, there is some repression mainly in the amount of POL2A that eventually transcribes in the gene-body. Another way to look at this is looking more directly at RNA transcription with some form of run-on transcription. This can be done with PROseq.
+
+```{r, fig.width=10, fig.height=10}
+count_file_vec = c('tssr_PROseq_plus.count.txt.gz',
+                   'tssr_PROseq_minus.count.txt.gz',
+                   'gene_body_PROseq_plus.count.txt.gz',
+                   'gene_body_PROseq_minus.count.txt.gz')
+
+
+count_list = lapply(count_file_vec, function(x){
+        count_table = read.table(paste0('../raw_data/', x))
+        count_table = count_table[,c(1:3, 9)]
+        colnames(count_table) = c('seqnames', 'start', 'end', 'sum')
+        count_table$strand = ifelse(length(grep('plus', x))==1, '+', '-')
+        count_table$start = count_table$start + 1
+        count_table$sum = count_table$sum * ifelse(length(grep('plus', x))==1, 1, -1)
+        gr = makeGRangesFromDataFrame(count_table,
+                                      keep.extra.columns=T)
+        score(gr) = gr$sum / width(gr)
+        return(gr)
+    })
+name_list = lapply(strsplit(count_file_vec, '[_.]'), function(x){
+    if (x[1]=='gene'){
+        r = paste(x[2:4], collapse='_')
+    } else {
+        r = paste(x[1:3], collapse='_')
+    }
+    return(r)
+})
+names(count_list) = unlist(name_list)
+
+score_table = do.call(cbind,lapply(count_list,function(x){score(x)}))
+
+this_p = P[m_most_down, ]
+this_p$tssr_proseq_sense = this_p$tssr_proseq_antisense = 
+    this_p$body_proseq_sense = this_p$body_proseq_antisense = NaN
+
+this_p$tssr_proseq_sense[this_p$strand=='+'] = score_table[this_p$strand=='+', 'tssr_PROseq_plus']
+this_p$tssr_proseq_sense[this_p$strand=='-'] = score_table[this_p$strand=='-', 'tssr_PROseq_minus']
+this_p$tssr_proseq_antisense[this_p$strand=='+'] = score_table[this_p$strand=='+', 'tssr_PROseq_minus']
+this_p$tssr_proseq_antisense[this_p$strand=='-'] = score_table[this_p$strand=='-', 'tssr_PROseq_plus']
+this_p$body_proseq_sense[this_p$strand=='+'] = score_table[this_p$strand=='+', 'body_PROseq_plus']
+this_p$body_proseq_sense[this_p$strand=='-'] = score_table[this_p$strand=='-', 'body_PROseq_minus']
+this_p$body_proseq_antisense[this_p$strand=='+'] = score_table[this_p$strand=='+', 'body_PROseq_minus']
+this_p$body_proseq_antisense[this_p$strand=='-'] = score_table[this_p$strand=='-', 'body_PROseq_plus']
+
+P$tssr_proseq_sense = P$tssr_proseq_antisense = 
+    P$body_proseq_sense = P$body_proseq_antisense = NaN
+P[rownames(this_p), c('tssr_proseq_sense', 'tssr_proseq_antisense', 'body_proseq_sense', 'body_proseq_antisense')] = this_p[, c('tssr_proseq_sense', 'tssr_proseq_antisense', 'body_proseq_sense', 'body_proseq_antisense')]
+
+ggplot(melt(this_p, measure.vars=c('tssr_proseq_sense', 'body_proseq_sense')) , aes(x=class, y=log2(value), color=class)) +
+    ylab('log2(POL2A / ctrl)') +
+    geom_violin(alpha=0.3) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class) + facet_wrap(~variable)
+
+p_expressed = which(this_p$class %in% c('escaper', 'iLAD'))
+s_escaper = which(this_p[p_expressed, 'class']=='escaper')
+gro_order = order(this_p[p_expressed,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[this_p[p_expressed,'class'][gro_ilad] == 'iLAD']
+
+norm_grocap = c(rownames(this_p[p_expressed,])[s_escaper],
+                rownames(this_p[p_expressed,])[s_ilad])
+
+ggplot(melt(this_p[norm_grocap,], measure.vars=c('tssr_proseq_sense', 'body_proseq_sense')) , aes(x=class, y=log2(value), color=class)) +
+    ylab('PROseq') +
+    geom_violin(alpha=0.3) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class) + facet_wrap(~variable)
+
+plus_matrix = read.table('../raw_data/prom_window_PROseq_plus.txt.gz', row.names=4)
+plus_matrix = plus_matrix[,6:ncol(plus_matrix)]
+minus_matrix = read.table('../raw_data/prom_window_PROseq_minus.txt.gz', row.names=4)
+minus_matrix = minus_matrix[,6:ncol(minus_matrix)]
+
+this_p = P[m_most_down, ]
+this_p = this_p[this_p$name %in% rownames(plus_matrix), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+
+plus_matrix_3prime = read.table('../raw_data/3prime_window_PROseq_plus.txt.gz', row.names=4)
+plus_matrix_3prime = plus_matrix_3prime[,6:ncol(plus_matrix_3prime)]
+minus_matrix_3prime = read.table('../raw_data/3prime_window_PROseq_minus.txt.gz', row.names=4)
+minus_matrix_3prime = minus_matrix_3prime[,6:ncol(minus_matrix_3prime)]
+
+this_p = P[m_most_down, ]
+this_p = this_p[this_p$name %in% rownames(plus_matrix_3prime)]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s), '\n 3-prime')) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s), '\n 3-prime')) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,5) +
+                        ggtitle(paste(i, '; n=', length(s), '\n 3-prime')) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+```
+**conclusion:**
+Although seems to be just a small difference between iLAD's and not-repressed LAD's in run-on transcription at the promoter, the amount of run-on transcription in the gene body shows a bigger difference.
+
+## RNA-seq
+So how does this influence the eventual mature mRNA produced...
+
+```{r, fig.width=10, fig.height=10}
+count_rep1 = read.table('../raw_data/expression/K562_rep1ReadsPerGene.out.tab')
+count_rep2 = read.table('../raw_data/expression/K562_rep2ReadsPerGene.out.tab')
+
+count_table = cbind(count_rep1[,4], rep2=count_rep2[,4])
+rownames(count_table) = count_rep1[,1]
+colnames(count_table) = c('rep1', 'rep2')
+exp = SummarizedExperiment(assays = list(counts=count_table[-(1:4), ]))
+dds = DESeqDataSet(exp, design= ~ 1)
+fpm = fpm(dds)
+fpm = log10(fpm + min(fpm[fpm!=0])/2)
+P$K562_fpm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpm))
+P$K562_fpm[!is.na(g_match)] = rowMeans(fpm[g_match[!is.na(g_match)],])
+p_most_active = P[rownames(p_most_active), ]
+p_most_active_class = p_most_active[p_most_active$class%in%c('escaper', 'repressed', 'inactive'), ]
+ggplot(p_most_active[p_most_active$class!='boundary', ], aes(x=class, y=K562_fpm, color=class)) + geom_violin(alpha=0.3) + 
+    geom_point(data=p_most_active_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('poly-A RNA expression') +
+    scale_color_manual(values=COL_class) +
+    theme_bw()
+p_expressed = which(p_most_active$class %in% c('escaper', 'iLAD'))
+s_escaper = which(p_most_active[p_expressed, 'class']=='escaper')
+gro_order = order(p_most_active[p_expressed,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[p_most_active[p_expressed,'class'][gro_ilad] == 'iLAD']
+
+norm_grocap_active = c(rownames(p_most_active[p_expressed,])[s_escaper],
+                rownames(p_most_active[p_expressed,])[s_ilad])
+
+ggplot(p_most_active[norm_grocap_active,] , aes(x=class, y=K562_fpm, color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('poly-A RNA expression') +
+    scale_color_manual(values=COL_class) +
+    theme_bw()
+
+ggplot(p_most_active[p_most_active$class!='boundary', ], aes(x=class, y=K562_fpm, color=class)) + geom_violin(alpha=0.3) + 
+    geom_point(data=p_most_active_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('poly-A RNA expression') +
+    scale_color_manual(values=COL_class)
+ggplot(p_most_active[norm_grocap_active,] , aes(x=class, y=K562_fpm, color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('poly-A RNA expression') +
+    scale_color_manual(values=COL_class)
+
+```
+**conclusion:**
+
+Although promoters seem to escape the lamina, the eventual RNA-expression is hampered. It seems to be a way of regulating gene expression in a more subtle way than complete silencing.
+
+## TODO: MAIN
+
+- plot tt-seq differences
+
+```{r, fig.width=10, fig.height=10}
+rep1_plus_matrix = read.table('../raw_data/prom_window_ttseq_rep1_plus.txt.gz', row.names=4)
+rep1_plus_matrix = rep1_plus_matrix[,6:ncol(rep1_plus_matrix)]
+rep1_minus_matrix = read.table('../raw_data/prom_window_ttseq_rep1_minus.txt.gz', row.names=4)
+rep1_minus_matrix = rep1_minus_matrix[,6:ncol(rep1_minus_matrix)]
+rep2_plus_matrix = read.table('../raw_data/prom_window_ttseq_rep2_plus.txt.gz', row.names=4)
+rep2_plus_matrix = rep2_plus_matrix[,6:ncol(rep2_plus_matrix)]
+rep2_minus_matrix = read.table('../raw_data/prom_window_ttseq_rep2_minus.txt.gz', row.names=4)
+rep2_minus_matrix = rep2_minus_matrix[,6:ncol(rep2_minus_matrix)]
+
+
+this_p = P[m_most_down, ]
+this_p = this_p[which(this_p$name%in%rownames(rep1_plus_matrix)), ]
+# this_p$bg_ttseq = ifelse(this_p$strand=='+',
+#                          rowSums(rep1_plus_matrix[this_p$name, 1:200]) + 
+#                          rowSums(rep2_plus_matrix[this_p$name, 1:200]),
+#                          rowSums(rep1_minus_matrix[this_p$name, 1:200]) + 
+#                          rowSums(rep2_minus_matrix[this_p$name, 1:200]))
+# this_p = this_p[this_p$bg_ttseq < 200, ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    title = paste0(i, ';\nn=', length(s))
+    if (length(s) > 500){
+        s = sample(s, 500, replace=F)
+        title = paste(paste(i, '; n=', length(s)), '\n(randomly sampled)')
+    }
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                       c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                   })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,50) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                           c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,35) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        geom_line(data=mean[mean[,1]>22000,], 
+                                   stat="smooth", method="lm",
+                                   color='black', lty='dotdash', lwd=1, alpha=0.5) +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+rep1_plus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep1_plus.txt.gz', row.names=4)
+rep1_plus_matrix_3prime = rep1_plus_matrix_3prime[,6:ncol(rep1_plus_matrix_3prime)]
+rep1_minus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep1_minus.txt.gz', row.names=4)
+rep1_minus_matrix_3prime = rep1_minus_matrix_3prime[,6:ncol(rep1_minus_matrix_3prime)]
+rep2_plus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep2_plus.txt.gz', row.names=4)
+rep2_plus_matrix_3prime = rep2_plus_matrix_3prime[,6:ncol(rep2_plus_matrix_3prime)]
+rep2_minus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep2_minus.txt.gz', row.names=4)
+rep2_minus_matrix_3prime = rep2_minus_matrix_3prime[,6:ncol(rep2_minus_matrix_3prime)]
+
+this_p = P[p_most_up, ]
+this_p = this_p[which(this_p$name%in%rownames(rep1_plus_matrix_3prime)), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100+100, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(paste0(i, ';\nn=', length(s))) +
+                        ylim(0,50) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 1), function(x){
+                           c(x*100+100, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,100) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+# p_matched = this_p[this_p$class%in%c('escaper', 'iLAD'), ]
+# p_matched$tss_ttseq = p_matched$body_ttseq = NaN
+
+
+
+# p_matched$tss_ttseq[p_matched$strand=='+'] = 
+#     rowSums(rep1_plus_matrix[p_matched[p_matched$strand=='+', 'name'],
+#                              F_window:(F_window + 100)]) +
+#     rowSums(rep2_plus_matrix[p_matched[p_matched$strand=='+', 'name'],
+#                              F_window:(F_window + 100)])
+# p_matched$tss_ttseq[p_matched$strand=='-'] = 
+#     rowSums(rep1_plus_matrix[p_matched[p_matched$strand=='-', 'name'],
+#                              F_window:(F_window - 100)]) +
+#     rowSums(rep2_plus_matrix[p_matched[p_matched$strand=='-', 'name'],
+#                              F_window:(F_window - 100)])
+
+# p_matched$body_ttseq[p_matched$strand=='+'] = 
+#     rowSums(rep1_plus_matrix[p_matched[p_matched$strand=='+', 'name'],
+#                              (F_window + 100):(F_window * 2 + 1)]) +
+#     rowSums(rep2_plus_matrix[p_matched[p_matched$strand=='+', 'name'],
+#                              (F_window + 100):(F_window * 2 + 1)])
+# p_matched$body_ttseq[p_matched$strand=='-'] = 
+#     rowSums(rep1_plus_matrix[p_matched[p_matched$strand=='-', 'name'],
+#                              1:(F_window - 100)]) +
+#     rowSums(rep2_plus_matrix[p_matched[p_matched$strand=='-', 'name'],
+#                              1:(F_window - 100)])
+
+# s_escaper = which(p_matched$class=='escaper')
+# tt_order = order(p_matched$tss_ttseq)
+# tt_escaper = which(tt_order %in% s_escaper)
+
+# tt_ilad = tt_order[c(tt_escaper + 1, tt_escaper - 1)]
+# s_ilad = tt_ilad[which(p_matched[tt_ilad,'class'] == 'iLAD')]
+
+# s_list = list(iLAD=s_ilad, escaper=s_escaper)
+# par(mfrow=c(1,2))
+# for(i in c('iLAD', 'escaper')) #for the three gene classes
+#    {s = s_list[[i]]
+#     strand = p_matched[s, 'strand']
+#     name_vec = p_matched$name[s]
+#     s = match(name_vec, rownames(rep1_plus_matrix))
+#     plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     plus = plus1 + plus2 / 2
+#     mean_list = lapply(seq(1,43801,400), function(x){
+#                            c(x+100, sum(plus[,x:(x+400)])/length(s)/400)
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     #plot:
+#     plot(mean[,1]-F_window, mean[,2], type='l',col=COL_class[i], lwd=2, xlim=c(-F_window,F_window)*0.9,ylim=c(0,50),
+#          main=paste(i, length(s), '\nmatched on first 100bp'), xlab="position relative to gene start (bp)", ylab="TT-seq signal")
+#     abline(v=0, lty="dotted")
+# }
+
+# s_escaper = which(p_matched$class=='escaper')
+# pol_order = order(p_matched$tssr_POL2A)
+# pol_escaper = which(pol_order %in% s_escaper)
+
+# pol_ilad = pol_order[c(pol_escaper + 1, pol_escaper - 1)]
+# s_ilad = pol_ilad[which(p_matched[pol_ilad,'class'] == 'iLAD')]
+
+# s_list = list(iLAD=s_ilad, escaper=s_escaper)
+# par(mfrow=c(1,2))
+# for(i in c('iLAD', 'escaper')) #for the three gene classes
+#    {s = s_list[[i]]
+#     strand = p_matched[s, 'strand']
+#     name_vec = p_matched$name[s]
+#     s = match(name_vec, rownames(rep1_plus_matrix))
+#     plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     plus = plus1 + plus2 / 2
+#     mean_list = lapply(seq(1,43801,400), function(x){
+#                            c(x+100, sum(plus[,x:(x+400)])/length(s)/400)
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     #plot:
+#     plot(mean[,1]-F_window, mean[,2], type='l',col=COL_class[i], lwd=2, xlim=c(-F_window,F_window)*0.9,ylim=c(0,50),
+#          main=paste(i, length(s), '\nmatched POL2A around TSS'), xlab="position relative to gene start (bp)", ylab="TT-seq signal")
+#     abline(v=0, lty="dotted")
+# }
+
+
+# par(mfrow=c(1,2))
+# for(i in c('iLAD', 'escaper')) #for the three gene classes
+#    {s = s_list[[i]]
+#     strand = p_matched[s, 'strand']
+#     name_vec = p_matched$name[s]
+#     s = match(name_vec, rownames(rep1_plus_matrix))
+#     minus1 = rbind(rep1_minus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep1_plus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     minus2 = rbind(rep2_minus_matrix[s[which(strand=='+' & !is.na(s))], ],
+#                   rep2_plus_matrix[s[which(strand=='-' & !is.na(s))], 44001:1])
+#     minus = minus1 + minus2 / 2
+#     mean_list = lapply(seq(1,43801,400), function(x){
+#                            c(x+100, sum(minus[,x:(x+400)])/length(s)/400)
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     #plot:
+#     plot(mean[,1]-F_window, mean[,2], type='l',col=COL_class[i], lwd=2, xlim=c(-F_window,F_window)*0.9,ylim=c(0,50),
+#          main=paste(i, length(s), '\nmatched POL2A around TSS'), xlab="position relative to gene start (bp)", ylab="TT-seq signal")
+#     abline(v=0, lty="dotted")
+# }
+```
+
+
+# SUPPLEMENTARRY
+
+### not housekeeping escapers
+Maybe the escapers expressed in a low number of tissues are borderline cases and actually have lower SuRE and GROcap expression than the rest of the group.
+
+```{r}
+ggplot(P[P$LAD==1,], aes(x=GROcap, y=tissues_expressed, color=factor(class))) +
+    geom_point() + 
+    scale_colour_manual(values=COL_class) +
+    geom_vline(xintercept = -1) +
+    geom_hline(yintercept = 200)
+
+cat(paste(P[P$GROcap > -1 & P$tissues_expressed < 200 & P$LAD==1,'name2'], collapse='\n'))
+
+```
+**conclusion:**
+
+In general this is indeed the case. There is however a small group of genes that form an exception. These are related to hepatocarcinoma, dna repair and are some lncRNA's. Maybe these escapers are specific for this cell line and in healthy tissue, with less messed up DNA sequence, these genes are not able to escape... This would be an interesting group to follow up on.
+
+
+### Dam-only and LMNB1 profile.
+One worry is that the dip in lamina association is mainly caused by the fact that there is a strong preference for methylation of open chromatin by Dam-only.
+
+```{r, fig.width=10, fig.height=10}
+
+par(mfrow=c(2,3))
+for (i in names(COL)){
+  s<-unique(P$name[which(P$class==i) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                  sum(subLMNB1) * 100)
+  plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-0,5),
+       main=paste('K562', i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="DamID log2(LMNB1 / sum(LMNB1) * 100)")
+  lines(subPOS, run_log2, col=COL[i], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+for (i in names(COL)){
+  s<-unique(P$name[which(P$class==i) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/
+                  sum(subDam) * 100)
+  plot(subPOS, subDam, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-0,5),
+       main=paste('K562', i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="DamID log2(Dam-only / sum(Dam-only) * 100)")
+  lines(subPOS, run_log2, col=COL[i], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+```
+
+**conclusion:**
+This is clearly a factor that plays a role, but I think it's very meaningfull that this peak in signal is completely gone in the DAM-LMNB1 fussion. In addition there seems to be the start of a dip in the profile of the not repressed class of promoters, which then seems to be counteracted by our hypothesised strong preference for open chromatin states.
+
+
+### Dam-only and LMNB1 profile for DNAse accessible regions at lamina.
+There are some DNAse accessible promoters that don't show activity in GROcap data. Maybe looking at these promoters we can see if the dip is caused by just accessibility or really is caused by local detachement of the lamina.
+
+```{r}
+
+dnase_rep1 = import.bed('../raw_data/DNase-seq/K562_rep1_ENCSR000EPC_hotspots_broadPeak.bed')
+dnase_rep2 = import.bed('../raw_data/DNase-seq/K562_rep1_ENCSR000EPC_hotspots_broadPeak.bed')
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+
+rep1_dist = distanceToNearest(tss_gr, dnase_rep1)
+rep2_dist = distanceToNearest(tss_gr, dnase_rep2)
+
+P$dnase_state = NA
+P$dnase_state[mcols(rep1_dist)$distance==0 & mcols(rep2_dist)$distance==0] = 'DNase'
+P$dnase_state[mcols(rep1_dist)$distance>1000 & mcols(rep2_dist)$distance>1000] = 'not DNase'
+
+par(mfrow=c(1,2))
+for (dnase_state in c('DNase', 'not DNase')){
+  s<-unique(P$name[which(P$dnase_state==dnase_state & P$GROcap< -2 &P$LAD==1) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                  runsum(Rle(subDam), k=wsize, endrule='constant'))
+  plot(subPOS, log2(subLMNB1/subDam), pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-3,3),
+       main=paste('K562', '\n', length(s), dnase_state, 'GROcap < -2'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+  lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+  abline(h=lad_log2, lty="dotdash", col=COL_lad['LAD'], lwd=2)
+  abline(h=ilad_log2, lty="dotdash", col=COL_lad['iLAD'], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+par(mfrow=c(1,2))
+for (dnase_state in c('DNase', 'not DNase')){
+  s<-unique(P$name[which(P$dnase_state==dnase_state & P$GROcap< -2 &P$LAD==1) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/
+                  sum(subDam) * 100)
+  plot(subPOS, subDam, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-0,5),
+       main=paste('K562', '\n', length(s), dnase_state, 'GROcap < -2'), xlab="position relative to gene start (bp)", ylab="DamID log2(Dam-only / sum(Dam-only) * 100)")
+  lines(subPOS, run_log2, col=COL[i], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+par(mfrow=c(1,2))
+for (dnase_state in c('DNase', 'not DNase')){
+  s<-unique(P$name[which(P$dnase_state==dnase_state & P$GROcap< -2 &P$LAD==1) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                  sum(subLMNB1) * 100)
+  plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-0,5),
+       main=paste('K562', '\n', length(s), dnase_state, 'GROcap < -2'), xlab="position relative to gene start (bp)", ylab="DamID log2(LMNB1 / sum(LMNB1) * 100)")
+  lines(subPOS, run_log2, col=COL[i], lwd=2)
+  abline(v=0, lty="dotted")
+}
+```
+
+**conclusion:**
+
+We have to be a bit carefull with our statements about complete detachement from the lamina of the promoter, already for DNAse accessible non-expressing promoters you get a dip. Maybe these are poised promoters and they are actually another group of promoters which detach from the lamina, but it's not clearly showing that it's detachment instead of bias in DAM-only what we see...
+
+## RNA-seq expression vs GROcap
+How good is the relation between GROcap and RNA-seq actually?
+
+```{r}
+p_classes = P[P$class%in%c('escaper', 'repressed', 'inactive'), ]
+ggplot(P, aes(x=SuRE, y=K562_fpm)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) + 
+    scale_colour_manual(values=COL_class) +
+    theme_bw()
+
+ggplot(P, aes(x=GROcap, y=K562_fpm)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) + 
+    scale_colour_manual(values=COL_class)  +
+    theme_bw()
+```
+
+**conclusion:**
+There are discrepancies, but still there seems enough agreement.
+
+
+
+```r
+load('../raw_data/ttseq.rda')
+ttseq_gr = makeGRangesFromDataFrame(location_data)
+
+i = ttseq@i + 1
+j = findInterval(seq(ttseq@x)-1, ttseq@p[-1]) + 1
+
+features = data.frame(seqnames=location_data$seqnames[i],
+                  start=as.numeric(as.vector(location_data$start[i])) - F_window + 
+                            ifelse(P[width(gene_gr)>F_window,'strand'][i]=='+',
+                                   j, as.numeric(as.vector(location_data$length[i]))-j))
+features$end = features$start
+features$score = ttseq@x
+chrom_sizes = read.table('../../../data/hg19/hg19.chrom.sizes')
+chrom_sizes = data.frame(seqname=chrom_sizes[,1],
+                         start=1,
+                         end=chrom_sizes[,2])
+aln = CGalignPeak(peaks=peaks, features=features, chromStartEnd=chrom_sizes)
+save(aln, file = '../raw_data/ttseq_cgtools.rda')
+```
+
+```r
+load('../raw_data/ttseq_cgtools.rda')
+sub_p = P[width(gene_gr)>F_window, 'class']
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(sub_p==i)
+    s = sample(s, sample_n, replace=F)
+    sub_peaks = data.frame(seqname=sub_p[s,'chr'],
+                           start = sub_p[s,'tss'],
+                           end = sub_p[s,'tss'],
+                           strand = sub_p[s, 'strand'])
+    aln.sub = CGsubAlign(aln, selection = sub_peaks)
+    CGplotAlignScores(aln.sub)
+}
+
+
+par(mfrow=c(1,4))
+sample_n = table(P[width(gene_gr)>F_window,'class'])['escaper']
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[width(gene_gr)>F_window, 'class']==i)
+    s = sample(s, sample_n, replace=F)
+    data = as.matrix(ttseq[s, ])
+    mean_list = lapply(seq(1,43901,200), function(x){
+                           c(x+100, sum(data[,x:(x+200)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = which(data!=0, arr.ind=T)[,2] - F_window
+    subVAL = data[which(data!=0)]
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(0,20),
+         main=paste(i, length(s), '\nrandomly sampled'), xlab="position relative to gene start (bp)", ylab="PROseq read-count")
+    lines(mean[,1]-F_window, log2(mean[,2]), col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+par(mfrow=c(1,4))
+sample_n = table(P[width(gene_gr)>F_window,'class'])['escaper']
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[width(gene_gr)>F_window, 'class']==i)
+    s = sample(s, sample_n, replace=F)
+    strand = P[width(gene_gr)>F_window, 'strand'][s]
+    data = ttseq[s,]
+    mean_list = lapply(seq(1,43901,200), function(x){
+                           c(x+100, sum(data[,x:(x+200)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = findInterval(seq(data@x)-1, data@p[-1]) - F_window
+    subVAL = data@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-5,20),
+         main=paste(i, length(s), sep='\nrandomly sampled'), xlab="position relative to gene start (bp)", ylab="log2(running PROseq mean)")
+    lines(mean[,1]-F_window, log2(mean[,2]), col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+s_escaper = which(P[width(gene_gr)>F_window, 'class']=='escaper')
+gro_order = order(P[width(gene_gr)>F_window,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(P[width(gene_gr)>F_window,'class'][gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = P[width(gene_gr)>F_window,'strand'][s]
+    data = ttseq[s,]
+    mean_list = lapply(seq(1,43901,200), function(x){
+                           c(x+100, sum(data[,x:(x+200)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(data)@i - F_window
+    subVAL = data@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(0,1500),
+         main=paste(i, length(s), '\nsimilar GROcap'), xlab="position relative to gene start (bp)", ylab="PROseq read-count")
+    lines(mean[,1]-F_window, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = P[width(gene_gr)>F_window,'strand'][s]
+    data = ttseq[s,]
+    mean_list = lapply(seq(1,43901,200), function(x){
+                           c(x+100, sum(data[,x:(x+200)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(data)@i - F_window
+    subVAL = data@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_window,F_window)*0.9,ylim=c(-5,20),
+         main=paste(i, length(s), '\nsimilar GROcap'), xlab="position relative to gene start (bp)", ylab="log2(running PROseq mean)")
+    lines(mean[,1]-F_window, log2(mean[,2]), col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+
+```
+
+
+## TODO SUPPLEMENTARY:
+- CpG promoters are less explanatory then tissues expressed, probably CpG is not causative
+
+
+
+## shell scripts
+
+### POL2 occupancy
+
+```shell
+samtools depth ENCFF000QDB.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000QDB.bg & 
+samtools depth ENCFF000QDM.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000QDM.bg & 
+samtools depth ENCFF000YWZ.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000YWZ.bg & 
+samtools depth ENCFF235CSW.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF235CSW.bg & 
+samtools depth ENCFF750MIM.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF750MIM.bg & 
+samtools depth ENCFF000QDE.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000QDE.bg & 
+samtools depth ENCFF000QDN.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000QDN.bg & 
+samtools depth ENCFF000YXA.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF000YXA.bg & 
+samtools depth ENCFF710NTS.bam | awk '{if ($3 != 0){print $1"\t"$2"\t"$2+1"\t"$3}}' > ENCFF710NTS.bg & 
+
+
+
+sort -k1,1 -k2,2n ENCFF000QDB.bg > ENCFF000QDB.sorted.bg &
+sort -k1,1 -k2,2n ENCFF000QDM.bg > ENCFF000QDM.sorted.bg &
+sort -k1,1 -k2,2n ENCFF000YWZ.bg > ENCFF000YWZ.sorted.bg &
+sort -k1,1 -k2,2n ENCFF235CSW.bg > ENCFF235CSW.sorted.bg &
+sort -k1,1 -k2,2n ENCFF750MIM.bg > ENCFF750MIM.sorted.bg &
+sort -k1,1 -k2,2n ENCFF000QDE.bg > ENCFF000QDE.sorted.bg &
+sort -k1,1 -k2,2n ENCFF000QDN.bg > ENCFF000QDN.sorted.bg &
+sort -k1,1 -k2,2n ENCFF000YXA.bg > ENCFF000YXA.sorted.bg &
+sort -k1,1 -k2,2n ENCFF710NTS.bg > ENCFF710NTS.sorted.bg &
+
+bedGraphToBigWig ENCFF000QDB.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000QDB.bw &
+bedGraphToBigWig ENCFF000QDM.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000QDM.bw &
+bedGraphToBigWig ENCFF000YWZ.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000YWZ.bw &
+bedGraphToBigWig ENCFF235CSW.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF235CSW.bw &
+bedGraphToBigWig ENCFF750MIM.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF750MIM.bw &
+bedGraphToBigWig ENCFF000QDE.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000QDE.bw &
+bedGraphToBigWig ENCFF000QDN.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000QDN.bw &
+bedGraphToBigWig ENCFF000YXA.sorted.bg ~/data/hg19/hg19.chrom.sizes ENCFF000YXA.bw &
+bedGraphToBigWig ENCFF710NTS.sorted.bg ~/data/hg19/hg19.chrom.sigzes ENCFF710NTS.bw &
+
+## POL2A
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDM.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2A_rep1_ENCFF000QDM.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDN.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2A_rep2_ENCFF000QDN.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDM.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2A_rep1_ENCFF000QDM.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDN.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2A_rep2_ENCFF000QDN.count.txt.gz &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2A_ctrl1_ENCFF235CSW.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2A_ctrl1_ENCFF235CSW.count.txt.gz &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2A_ctrl2_ENCFF750MIM.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2A_ctrl2_ENCFF750MIM.count.txt.gz &
+
+
+nice -19 bedtools coverage -d \
+                  -abam ~/data/tracks/hg19/ENCFF000QDM.bam \
+                  -b raw_data/prom_window.bed | \
+                  awk '{if ($8 > 0){ print $0 }}' | \
+                  awk '{
+                      if (NR==1){
+                          start=$1"\t"$2"\t"$3"\t"$4
+                          valLine = $8
+                          iLine = $7
+                      }
+                      else if (start==$1"\t"$2"\t"$3"\t"$4){
+                          valLine = valLine"\t"$8
+                          iLine = iLine"\t"$7
+                      } else {
+                          print start"\t"iLine;
+                          print start"\t"valLine;
+                          start=$1"\t"$2"\t"$3"\t"$4;
+                          valLine = $8;
+                          iLine = $7;
+                      }
+                  }END{
+                      print start"\t"iLine;
+                      print start"\t"valLine;
+                  }' | gzip -c > \
+                  raw_data/prom_window_POL2A_rep1_ENCFF000QDM.txt.gz &
+
+
+
+nice -19 bedtools coverage -d \
+                  -abam ~/data/tracks/hg19/ENCFF000QDN.bam \
+                  -b raw_data/prom_window.bed | \
+                  awk '{if ($8 > 0){ print $0 }}' | \
+                  awk '{
+                      if (NR==1){
+                          start=$1"\t"$2"\t"$3"\t"$4
+                          valLine = $8
+                          iLine = $7
+                      }
+                      else if (start==$1"\t"$2"\t"$3"\t"$4){
+                          valLine = valLine"\t"$8
+                          iLine = iLine"\t"$7
+                      } else {
+                          print start"\t"iLine;
+                          print start"\t"valLine;
+                          start=$1"\t"$2"\t"$3"\t"$4;
+                          valLine = $8;
+                          iLine = $7;
+                      }
+                  }END{
+                      print start"\t"iLine;
+                      print start"\t"valLine;
+                  }' | gzip -c > \
+                  raw_data/prom_window_POL2A_rep2_ENCFF000QDN.txt.gz &
+nice -19 bedtools coverage -d \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/prom_window.bed | \
+                  awk '{if ($8 > 0){ print $0 }}' | \
+                  awk '{
+                      if (NR==1){
+                          start=$1"\t"$2"\t"$3"\t"$4
+                          valLine = $8
+                          iLine = $7
+                      }
+                      else if (start==$1"\t"$2"\t"$3"\t"$4){
+                          valLine = valLine"\t"$8
+                          iLine = iLine"\t"$7
+                      } else {
+                          print start"\t"iLine;
+                          print start"\t"valLine;
+                          start=$1"\t"$2"\t"$3"\t"$4;
+                          valLine = $8;
+                          iLine = $7;
+                      }
+                  }END{
+                      print start"\t"iLine;
+                      print start"\t"valLine;
+                  }' | gzip -c > \
+                  raw_data/prom_window_POL2A_ctrl1_ENCFF235CSW.txt.gz &
+nice -19 bedtools coverage -d \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/prom_window.bed | \
+                  awk '{if ($8 > 0){ print $0 }}' | \
+                  awk '{
+                      if (NR==1){
+                          start=$1"\t"$2"\t"$3"\t"$4
+                          valLine = $8
+                          iLine = $7
+                      }
+                      else if (start==$1"\t"$2"\t"$3"\t"$4){
+                          valLine = valLine"\t"$8
+                          iLine = iLine"\t"$7
+                      } else {
+                          print start"\t"iLine;
+                          print start"\t"valLine;
+                          start=$1"\t"$2"\t"$3"\t"$4;
+                          valLine = $8;
+                          iLine = $7;
+                      }
+                  }END{
+                      print start"\t"iLine;
+                      print start"\t"valLine;
+                  }' | gzip -c > \
+                  raw_data/prom_window_POL2A_ctrl2_ENCFF750MIM.txt.gz &
+
+##POL2AS2
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YWZ.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS2_rep1_ENCFF000YWZ.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YXA.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS2_rep2_ENCFF000YXA.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YWZ.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS2_rep1_ENCFF000YWZ.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YXA.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS2_rep2_ENCFF000YXA.count.txt.gz &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF710NTS.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS2_ctrl_ENCFF710NTS.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF710NTS.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS2_ctrl_ENCFF710NTS.count.txt.gz &
+
+
+##POL2AS5
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDB.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS5_rep1_ENCFF000QDB.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDE.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS5_rep2_ENCFF000QDE.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDB.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS5_rep1_ENCFF000QDB.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDE.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS5_rep2_ENCFF000QDE.count.txt.gz &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS5_ctrl1_ENCFF750MIM.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS5_ctrl1_ENCFF750MIM.count.txt.gz &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/tssr.bed | \
+                  gzip -c > raw_data/tssr_POL2AphosphoS5_ctrl2_ENCFF235CSW.count.txt.gz &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/gene_body.bed | \
+                  gzip -c > raw_data/gene_body_POL2AphosphoS5_ctrl2_ENCFF235CSW.count.txt.gz &
+```
+
+
+```r
+library(Matrix)
+library(plyr)
+window_pol2a_rep1 = readLines('../raw_data/prom_window_POL2A_rep1_ENCFF000QDM.txt.gz')
+window_pol2a_rep1_split = strsplit(window_pol2a_rep1, '\t')
+
+i_list = lapply(seq(2, length(window_pol2a_rep1_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(rep(x/2, length(split[[x]][5:length(split[[x]])])))
+                    }
+                }, split=window_pol2a_rep1_split)
+
+j_list = lapply(seq(1, length(window_pol2a_rep1_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(as.numeric(split[[x]][5:length(split[[x]])]))
+                    }
+                }, split=window_pol2a_rep1_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_pol2a_rep1_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 4){
+                          return(as.numeric(split[[x]][5:length(split[[x]])]))
+                      }
+                  }, split=window_pol2a_rep1_split)
+val_vec = unlist(val_list)
+rep1_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+
+name_list = lapply(seq(1, length(window_pol2a_rep1_split), 2),
+                       function(x, split){
+                           split[[x]][4]
+                       }, split=window_pol2a_rep1_split)
+name_vec = unlist(name_list)
+
+window_pol2a_rep2 = readLines('../raw_data/prom_window_POL2A_rep2_ENCFF000QDN.txt.gz')
+window_pol2a_rep2_split = strsplit(window_pol2a_rep2, '\t')
+i_list = lapply(seq(2, length(window_pol2a_rep2_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(rep(x/2, length(split[[x]][5:length(split[[x]])])))
+                    }
+                }, split=window_pol2a_rep2_split)
+
+j_list = lapply(seq(1, length(window_pol2a_rep2_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(as.numeric(split[[x]][5:length(split[[x]])]))
+                    }
+                }, split=window_pol2a_rep2_split)
+
+
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_pol2a_rep2_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 4){
+                          return(as.numeric(split[[x]][5:length(split[[x]])]))
+                      }
+                  }, split=window_pol2a_rep2_split)
+val_vec = unlist(val_list)
+rep2_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec[!is.na(val_vec)])
+
+window_pol2a_ctrl1 = readLines('../raw_data/prom_window_POL2A_ctrl1_ENCFF235CSW.txt.gz')
+window_pol2a_ctrl1_split = strsplit(window_pol2a_ctrl1, '\t')
+i_list = lapply(seq(2, length(window_pol2a_ctrl1_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(rep(x/2, length(split[[x]][5:length(split[[x]])])))
+                    }
+                }, split=window_pol2a_ctrl1_split)
+
+j_list = lapply(seq(1, length(window_pol2a_ctrl1_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(as.numeric(split[[x]][5:length(split[[x]])]))
+                    }
+                }, split=window_pol2a_ctrl1_split)
+
+
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_pol2a_ctrl1_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 4){
+                        return(as.numeric(split[[x]][5:length(split[[x]])]))
+                      }
+                  }, split=window_pol2a_ctrl1_split)
+val_vec = unlist(val_list)
+ctrl1_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec[!is.na(val_vec)])
+
+
+window_pol2a_ctrl2 = readLines('../raw_data/prom_window_POL2A_ctrl2_ENCFF750MIM.txt.gz')
+window_pol2a_ctrl2_split = strsplit(window_pol2a_ctrl2, '\t')
+i_list = lapply(seq(2, length(window_pol2a_ctrl2_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(rep(x/2, length(split[[x]][5:length(split[[x]])])))
+                    }
+                }, split=window_pol2a_ctrl2_split)
+
+j_list = lapply(seq(1, length(window_pol2a_ctrl2_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 4){
+                        return(as.numeric(split[[x]][5:length(split[[x]])]))
+                    }
+                }, split=window_pol2a_ctrl2_split)
+
+
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_pol2a_ctrl2_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][5:length(split[[x]])])
+                  }, split=window_pol2a_ctrl2_split)
+val_vec = unlist(val_list)
+ctrl2_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec[!is.na(val_vec)])
+
+rownames(rep1_matrix) = rownames(rep1_matrix) = rownames(rep1_matrix) = rownames(rep1_matrix) = name_vec
+save(rep1_matrix, rep2_matrix, ctrl1_matrix, ctrl2_matrix, file='../raw_data/prom_window_pol2a.rda')
+```
+
+
+## PROseq
+
+```bash
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_PROseq_plus.txt.gz &
+
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_PROseq_minus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_PROseq_plus.txt.gz &
+
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_PROseq_minus.txt.gz &
+
+
+nice -19 bwtool summary -with-sum -skip-median -header -keep-bed -fill=0 \
+                  raw_data/tssr.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw \
+                  raw_data/tssr_PROseq_plus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header -keep-bed -fill=0 \
+                  raw_data/tssr.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw \
+                  raw_data/tssr_PROseq_minus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header -keep-bed -fill=0 \
+                  raw_data/gene_body.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw \
+                  raw_data/gene_body_PROseq_plus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header -keep-bed -fill=0 \
+                  raw_data/gene_body.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw \
+                  raw_data/gene_body_PROseq_minus.count.txt &
+
+gzip raw_data/tssr_PROseq_plus.count.txt
+gzip raw_data/tssr_PROseq_minus.count.txt
+gzip raw_data/gene_body_PROseq_plus.count.txt
+gzip raw_data/gene_body_PROseq_minus.count.txt
+```
+
+## TT-seq
+```
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep1_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_ttseq_rep1_plus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep1_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_ttseq_rep1_minus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep2_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_ttseq_rep2_plus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep2_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/prom_window_ttseq_rep2_minus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep1_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_ttseq_rep1_plus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep1_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_ttseq_rep1_minus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep2_plus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_ttseq_rep2_plus.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/3prime_window.bed \
+                       ../../data/tracks/hg19/GSE75792_ttseq_rep2_minus.bw /dev/stdout | \
+                       gzip -c > raw_data/3prime_window_ttseq_rep2_minus.txt.gz &
+
+
+```
+
+```r
+library(Matrix)
+library(plyr)
+
+window_ttseq_rep1_plus = readLines('../raw_data/prom_window_ttseq_rep1_plus_sparse.txt.gz')
+window_ttseq_rep1_plus_split = strsplit(window_ttseq_rep1_plus, '\t')
+i_list = lapply(seq(2, length(window_ttseq_rep1_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(rep(x/2, length(split[[x]][4:length(split[[x]])])))
+                    }
+                }, split=window_ttseq_rep1_plus_split)
+j_list = lapply(seq(1, length(window_ttseq_rep1_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep1_plus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep1_plus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                      }
+                  }, split=window_ttseq_rep1_plus_split)
+val_vec = unlist(val_list)
+rep1_plus_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+name_list = lapply(seq(1, length(window_ttseq_rep1_plus_split), 2),
+                       function(x, split){
+                           split[[x]][3]
+                       }, split=window_ttseq_rep1_plus_split)
+name_vec = unlist(name_list)
+
+window_ttseq_rep1_minus = readLines('../raw_data/prom_window_ttseq_rep1_minus_sparse.txt.gz')
+window_ttseq_rep1_minus_split = strsplit(window_ttseq_rep1_minus, '\t')
+
+i_list = lapply(seq(2, length(window_ttseq_rep1_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        rep(x/2, length(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep1_minus_split)
+
+j_list = lapply(seq(1, length(window_ttseq_rep1_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        as.numeric(split[[x]][4:length(split[[x]])])
+                    }
+                }, split=window_ttseq_rep1_minus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep1_minus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                          as.numeric(split[[x]][4:length(split[[x]])])
+                      }
+                  }, split=window_ttseq_rep1_minus_split)
+val_vec = unlist(val_list)
+rep1_minus_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+
+
+window_ttseq_rep2_plus = readLines('../raw_data/prom_window_ttseq_rep2_plus_sparse.txt.gz')
+window_ttseq_rep2_plus_split = strsplit(window_ttseq_rep2_plus, '\t')
+i_list = lapply(seq(2, length(window_ttseq_rep2_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(rep(x/2, length(split[[x]][4:length(split[[x]])])))
+                    }
+                }, split=window_ttseq_rep2_plus_split)
+j_list = lapply(seq(1, length(window_ttseq_rep2_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep2_plus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep2_plus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                      }
+                  }, split=window_ttseq_rep2_plus_split)
+val_vec = unlist(val_list)
+rep2_plus_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+name_list = lapply(seq(1, length(window_ttseq_rep2_plus_split), 2),
+                       function(x, split){
+                           split[[x]][3]
+                       }, split=window_ttseq_rep2_plus_split)
+name_vec = unlist(name_list)
+
+window_ttseq_rep2_minus = readLines('../raw_data/prom_window_ttseq_rep2_minus_sparse.txt.gz')
+window_ttseq_rep2_minus_split = strsplit(window_ttseq_rep2_minus, '\t')
+
+i_list = lapply(seq(2, length(window_ttseq_rep2_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        rep(x/2, length(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep2_minus_split)
+
+j_list = lapply(seq(1, length(window_ttseq_rep2_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        as.numeric(split[[x]][4:length(split[[x]])])
+                    }
+                }, split=window_ttseq_rep2_minus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep2_minus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                          as.numeric(split[[x]][4:length(split[[x]])])
+                      }
+                  }, split=window_ttseq_rep2_minus_split)
+val_vec = unlist(val_list)
+rep2_minus_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+rownames(rep1_minus_matrix) = rownames(rep1_plus_matrix) = rownames(rep2_minus_matrix) = rownames(rep2_plus_matrix) = name_vec[!is.na(name_vec)]
+save(rep1_minus_matrix, rep1_plus_matrix, rep2_minus_matrix, rep2_plus_matrix, file='../raw_data/prom_window_ttseq.rda')
+```
+
+
+
+```r
+library(Matrix)
+library(plyr)
+
+window_ttseq_rep1_plus = readLines('../raw_data/3prime_ttseq_rep1_plus_sparse.txt.gz')
+window_ttseq_rep1_plus_split = strsplit(window_ttseq_rep1_plus, '\t')
+i_list = lapply(seq(2, length(window_ttseq_rep1_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(rep(x/2, length(split[[x]][4:length(split[[x]])])))
+                    }
+                }, split=window_ttseq_rep1_plus_split)
+j_list = lapply(seq(1, length(window_ttseq_rep1_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep1_plus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep1_plus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                      }
+                  }, split=window_ttseq_rep1_plus_split)
+val_vec = unlist(val_list)
+rep1_plus_matrix_3prime = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+name_list = lapply(seq(1, length(window_ttseq_rep1_plus_split), 2),
+                       function(x, split){
+                           split[[x]][3]
+                       }, split=window_ttseq_rep1_plus_split)
+name_vec = unlist(name_list)
+
+window_ttseq_rep1_minus = readLines('../raw_data/3prime_ttseq_rep1_minus_sparse.txt.gz')
+window_ttseq_rep1_minus_split = strsplit(window_ttseq_rep1_minus, '\t')
+
+i_list = lapply(seq(2, length(window_ttseq_rep1_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        rep(x/2, length(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep1_minus_split)
+
+j_list = lapply(seq(1, length(window_ttseq_rep1_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        as.numeric(split[[x]][4:length(split[[x]])])
+                    }
+                }, split=window_ttseq_rep1_minus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep1_minus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                          as.numeric(split[[x]][4:length(split[[x]])])
+                      }
+                  }, split=window_ttseq_rep1_minus_split)
+val_vec = unlist(val_list)
+rep1_minus_matrix_3prime = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+
+
+window_ttseq_rep2_plus = readLines('../raw_data/3prime_ttseq_rep2_plus_sparse.txt.gz')
+window_ttseq_rep2_plus_split = strsplit(window_ttseq_rep2_plus, '\t')
+i_list = lapply(seq(2, length(window_ttseq_rep2_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(rep(x/2, length(split[[x]][4:length(split[[x]])])))
+                    }
+                }, split=window_ttseq_rep2_plus_split)
+j_list = lapply(seq(1, length(window_ttseq_rep2_plus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep2_plus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep2_plus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                      }
+                  }, split=window_ttseq_rep2_plus_split)
+val_vec = unlist(val_list)
+rep2_plus_matrix_3prime = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+name_list = lapply(seq(1, length(window_ttseq_rep2_plus_split), 2),
+                       function(x, split){
+                           split[[x]][3]
+                       }, split=window_ttseq_rep2_plus_split)
+name_vec = unlist(name_list)
+
+window_ttseq_rep2_minus = readLines('../raw_data/3prime_ttseq_rep2_minus_sparse.txt.gz')
+window_ttseq_rep2_minus_split = strsplit(window_ttseq_rep2_minus, '\t')
+
+i_list = lapply(seq(2, length(window_ttseq_rep2_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        rep(x/2, length(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_ttseq_rep2_minus_split)
+
+j_list = lapply(seq(1, length(window_ttseq_rep2_minus_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        as.numeric(split[[x]][4:length(split[[x]])])
+                    }
+                }, split=window_ttseq_rep2_minus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_ttseq_rep2_minus_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                          as.numeric(split[[x]][4:length(split[[x]])])
+                      }
+                  }, split=window_ttseq_rep1_minus_split)
+val_vec = unlist(val_list)
+rep2_minus_matrix_3prime = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+rownames(rep1_minus_matrix_3prime) = rownames(rep1_plus_matrix_3prime) = rownames(rep2_minus_matrix_3prime) = rownames(rep2_plus_matrix_3prime) = name_vec[!is.na(name_vec)]
+save(rep1_minus_matrix_3prime, rep1_plus_matrix_3prime, rep2_minus_matrix_3prime, rep2_plus_matrix_3prime, file='../raw_data/3prime_ttseq.rda')
+```
+
+
+
+```
+bwtool ex -tabs bed raw_data/prom_window.bed ../../data/tracks/hg19/K562_H3K9me3_ENCFF834YLI.bw raw_data/prom_window_H3K9me.txt
+
+awk '{
+    start=$1"\t"$2"\t"$4"\t";
+    valLine="";
+    iLine="";
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            plus = i-7;
+            if ($6=="-"){
+                plus=$7-plus+1
+            }
+            iLine=iLine plus "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_window_H3K9me.txt | gzip -c > raw_data/prom_window_H3K9me_sparse.txt.gz
+
+rm raw_data/prom_window_H3K9me.txt
+```
+
+
+```r
+library(Matrix)
+library(plyr)
+window_h3k9 = readLines('../raw_data/prom_window_H3K9me_sparse.txt.gz')
+window_h3k9_split = strsplit(window_h3k9, '\t')
+i_list = lapply(seq(2, length(window_h3k9_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(rep(x/2, length(split[[x]][4:length(split[[x]])])))
+                    }
+                }, split=window_h3k9_split)
+j_list = lapply(seq(1, length(window_h3k9_split), 2),
+                function(x, split){
+                    if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                    }
+                }, split=window_h3k9_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(window_h3k9_split), 2), 
+                  function(x, split){
+                      if (length(split[[x]]) > 3){
+                        return(as.numeric(split[[x]][4:length(split[[x]])]))
+                      }
+                  }, split=window_h3k9_split)
+val_vec = unlist(val_list)
+h3k9_matrix = sparseMatrix(i=i_vec, j=j_vec, x=val_vec)
+
+name_list = lapply(seq(1, length(window_h3k9_split), 2),
+                       function(x, split){
+                           split[[x]][3]
+                       }, split=window_h3k9_split)
+name_vec = unlist(name_list)
+rownames(h3k9_matrix) = name_vec
+save(h3k9_matrix, file='../raw_data/prom_window_h3k9.rdata')
+```
+
+
+```{r}
+# load('../raw_data/prom_window_h3k9.rdata')
+# this_p = P[which(P$name%in%rownames(h3k9_matrix)), ]
+# sample_n = table(this_p[,'class'])['escaper']
+# plot_list = list()
+# for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+#    {
+#     s = which(this_p[, 'class']==i)
+#     strand = this_p[,'strand'][s]
+#     name_vec = this_p[, 'name'][s]
+#     s = match(name_vec, rownames(h3k9_matrix))
+#     mean_list = lapply(seq(1,43901,200), function(x){
+#                            c(x+100, sum(h3k9_matrix[s,x:(x+200)])/length(s)/200)
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     colnames(mean) = c('x', 'y')
+#     #plot:
+#     plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+#                         ylim(0,5) +
+#                         ggtitle(paste(i, '; n=', length(s))) +
+#                         geom_vline(xintercept=0, lty='dotted') + 
+#                         theme_bw() +
+#                         theme(axis.title=element_blank()) +
+#                         scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+# }
+# do.call(grid.arrange, c(plot_list, nrow=1))
+# s_escaper = which(this_p$class=='escaper')
+# gro_order = order(this_p$GROcap)
+# gro_escaper = which(gro_order %in% s_escaper)
+
+# gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+# s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+# s_list = list(iLAD=s_ilad, escaper=s_escaper)
+# plot_list = list()
+# for(i in c('iLAD', 'escaper')) #for the three gene classes
+#    {s = s_list[[i]]
+#     strand = this_p$strand[s]
+#     name_vec = this_p$name[s]
+#     s = match(name_vec, rownames(plus_matrix))
+#     mean_list = lapply(seq(1,43901,200), function(x){
+#                            c(x+100, sum(h3k9_matrix[s[!is.na(s)],x:(x+200)])/length(s)/200)
+#                        })
+#     mean = do.call(rbind.data.frame, mean_list)
+#     colnames(mean) = c('x', 'y')
+#     #plot:
+#     plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+#                         ylim(0,5) +
+#                         ggtitle(paste(i, '; n=', length(s))) +
+#                         geom_vline(xintercept=0, lty='dotted') + 
+#                         theme_bw() +
+#                         theme(axis.title=element_blank()) +
+#                         scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+# }
+# do.call(grid.arrange, c(plot_list, nrow=1))
+
+```
+
+
+
+```
+bedtools nuc -C -pattern CG -fi ~/data/hg19/genome.fa -bed raw_data/cpg_window.bed | \
+awk '
+{
+    CGdinuc=$16
+    CGsum=$10 + $11
+    CGE=((CGsum/2)*(CGsum/2))/$15
+    print $1"\t"$2"\t"$3"\t"$4"\t"CGdinuc"\t"CGsum"\t"CGE"\t"CGdinuc/CGE
+}' > raw_data/cpg_density_1000.txt
+
+bedtools nuc -C -pattern CG -fi ~/data/hg19/genome.fa -bed raw_data/cpg_window_300.bed | \
+awk '
+{
+    CGdinuc=$16
+    CGsum=$10 + $11
+    CGE=((CGsum/2)*(CGsum/2))/$15
+    print $1"\t"$2"\t"$3"\t"$4"\t"CGdinuc"\t"CGsum"\t"CGE"\t"CGdinuc/CGE
+}' > raw_data/cpg_density_300.txt
+
+bedtools getfasta -name -tab -fi ~/data/hg19/genome.fa -bed raw_data/prom_window.bed -fo /dev/stdout | awk '{
+    line=tolower($2)
+    i_line=""
+    j=0
+    for (i=1;i<44000;i=i+100){
+        sub_line = substr(line, i, 100)
+        i_line=i_line"\t"gsub(/cg/, "", sub_line)
+    }
+    print $1 i_line
+}' | gzip -c > raw_data/cpg_window.txt.gz
+```
+
+
+```{r}
+cpg = read.table('../raw_data/cpg_density_300.txt', stringsAsFactors=F)
+colnames(cpg) = c('seqnames', 'start','stop','name','GC-dinuc', 'CGsum', 'CG_exp', 'CG_OE')
+cpg_match = match(P$name, cpg$name)
+P$CG_OE = NaN
+P$CG_OE = cpg[cpg_match,'CG_OE']
+
+P_class = P[P$class%in%names(COL), ]
+ggplot(P[P$class!='boundary', ], aes(x=class, y=CG_OE, color=class)) + geom_violin(alpha=0.3) + 
+    geom_point(data=P_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('CpG observed over expected') +
+    scale_color_manual(values=COL_class)
+
+p_expressed = which(P$class %in% c('escaper', 'iLAD'))
+s_escaper = which(P[p_expressed, 'class']=='escaper')
+gro_order = order(P[p_expressed,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[P[p_expressed,'class'][gro_ilad] == 'iLAD']
+
+norm_grocap_active = c(rownames(P[p_expressed,])[s_escaper],
+                rownames(P[p_expressed,])[s_ilad])
+ggplot(P[norm_grocap_active,] , aes(x=class, y=CG_OE, color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('GC frequency') +
+    scale_color_manual(values=COL_class)
+
+
+cpg = read.table('../raw_data/cpg_density_1000.txt', stringsAsFactors=F)
+colnames(cpg) = c('seqnames', 'start','stop','name','GC-dinuc', 'CGsum', 'CG_exp', 'CG_OE')
+cpg_match = match(P$name, cpg$name)
+P$CG_OE = NaN
+P$CG_OE = cpg[cpg_match,'CG_OE']
+
+P_class = P[P$class%in%names(COL), ]
+ggplot(P[P$class!='boundary', ], aes(x=class, y=CG_OE, color=class)) + geom_violin(alpha=0.3) + 
+    geom_point(data=P_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('CpG observed over expected') +
+    scale_color_manual(values=COL_class)
+
+p_expressed = which(P$class %in% c('escaper', 'iLAD'))
+s_escaper = which(P[p_expressed, 'class']=='escaper')
+gro_order = order(P[p_expressed,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[P[p_expressed,'class'][gro_ilad] == 'iLAD']
+
+norm_grocap_active = c(rownames(P[p_expressed,])[s_escaper],
+                rownames(P[p_expressed,])[s_ilad])
+ggplot(P[norm_grocap_active,] , aes(x=class, y=CG_OE, color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('GC frequency') +
+    scale_color_manual(values=COL_class)
+```
+
+```{r}
+cpg_table = read.table('../raw_data/cpg_window.txt.gz')
+cpg_table = cpg_table[match(unique(cpg_table[,1]), cpg_table[,1]),]
+rownames(cpg_table) = cpg_table[,1]
+cpg_table = cpg_table[,-1]
+this_p = P[which(P$name%in%rownames(cpg_table)), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(cpg_table))
+    mean_list = lapply(seq(1,440,4), function(x){
+                           c(x*100-50, sum(cpg_table[s,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,10) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+```
+
+```{r}
+
+cpg_table = read.table('../raw_data/cpgIslandExtUnmasked.bed.gz', sep='\t',
+                       stringsAsFactors=F)
+colnames(cpg_table) = c('seqnames', 'start', 'end', 'name', 'length', 'cpgNum', 'gcNum', 'perCpg', 'perGC', 'obsExp')
+cpg_ranges = makeGRangesFromDataFrame(cpg_table, keep.extra.columns= T)
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+tss_gr$cpg_distance = mcols(distanceToNearest(tss_gr, cpg_ranges))$distance
+
+P$cpg_class = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$name
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$name
+P$cpg_class[P$name %in% cpg_prom] = 'CpG'
+P$cpg_class[P$name %in% non_cpg_prom] = 'non_CpG'
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=cpg_class, fill=cpg_class)) + 
+                                theme_bw() +
+                                guides(fill=FALSE) +
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(class) +
+
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.title=element_blank(),
+                                      plot.title = element_text(color=COL_class[class], size=14, face="bold.italic"))
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes",gp=gpar(fontsize=20,font='bold')), nrow=1)
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes",gp=gpar(fontsize=20,font='bold')))
+
+tss_gr$cpg_distance = mcols(distanceToNearest(tss_gr, cpg_ranges[cpg_ranges$score>50]))$distance
+
+P$cpg_class_stringent = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$name
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$name
+P$cpg_class_stringent[P$name %in% cpg_prom] = 'CpG'
+P$cpg_class_stringent[P$name %in% non_cpg_prom] = 'non_CpG'
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=cpg_class_stringent, fill=cpg_class_stringent)) + 
+                                theme_bw() +
+                                guides(fill=FALSE) +
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(class) +
+
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.title=element_blank(),
+                                      plot.title = element_text(color=COL_class[class], size=14, face="bold.italic"))
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes",gp=gpar(fontsize=20,font='bold')), nrow=1)
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes",gp=gpar(fontsize=20,font='bold')))
+dev.off()
+
+
+
+```
+
+
+```bash
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562G1PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repG1.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562G2PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repG2.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562S1PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repS1.txt.gz &
+
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562S2PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repS2.txt.gz &
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562S3PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repS3.txt.gz &
+nice -19 bwtool matrix -fill=0 -tiled-averages=100 \
+                       -keep-bed 22000:22000 \
+                       raw_data/prom_window.bed \
+                       ../../data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562S4PctSignalRep1.bigWig /dev/stdout | \
+                       gzip -c > raw_data/prom_window_repS4.txt.gz &
+```
+
+```{r}
+G1_matrix = read.table('../raw_data/prom_window_repG1.txt.gz', row.names=4)
+G1_matrix = G1_matrix[,6:ncol(G1_matrix)]
+G2_matrix = read.table('../raw_data/prom_window_repG2.txt.gz', row.names=4)
+G2_matrix = G2_matrix[,6:ncol(G2_matrix)]
+S1_matrix = read.table('../raw_data/prom_window_repS1.txt.gz', row.names=4)
+S1_matrix = S1_matrix[,6:ncol(S1_matrix)]
+S2_matrix = read.table('../raw_data/prom_window_repS2.txt.gz', row.names=4)
+S2_matrix = S2_matrix[,6:ncol(S2_matrix)]
+S3_matrix = read.table('../raw_data/prom_window_repS3.txt.gz', row.names=4)
+S3_matrix = S3_matrix[,6:ncol(S3_matrix)]
+S4_matrix = read.table('../raw_data/prom_window_repS4.txt.gz', row.names=4)
+S4_matrix = S4_matrix[,6:ncol(S4_matrix)]
+
+
+this_p = P
+this_p = this_p[this_p$name %in% rownames(G1_matrix), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(G1_matrix))
+    mean_list_G1 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(G1_matrix[s,x]))
+                       })
+    mean_G1 = do.call(rbind.data.frame, mean_list_G1)
+    mean_list_G2 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(G2_matrix[s,x]))
+                       })
+    mean_G2 = do.call(rbind.data.frame, mean_list_G2)
+    mean_list_S1 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(S1_matrix[s,x]))
+                       })
+    mean_S1 = do.call(rbind.data.frame, mean_list_S1)
+    mean_list_S2 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(S2_matrix[s,x]))
+                       })
+    mean_S2 = do.call(rbind.data.frame, mean_list_S2)
+    mean_list_S3 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(S3_matrix[s,x]))
+                       })
+    mean_S3 = do.call(rbind.data.frame, mean_list_S3)
+    mean_list_S4 = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(S4_matrix[s,x]))
+                       })
+    mean_S4 = do.call(rbind.data.frame, mean_list_S4)
+    colnames(mean_G1) = colnames(mean_G2) = colnames(mean_S1) =
+        colnames(mean_S2) = colnames(mean_S3) = colnames(mean_S4) = c('x', 'color')
+    mean = rbind.data.frame(cbind(fase='G1', mean_G1), cbind(fase='G2', mean_G2),
+                            cbind(fase='S1', mean_S1), cbind(fase='S2', mean_S2),
+                            cbind(fase='S3', mean_S3), cbind(fase='S4', mean_S4))
+    mean$fase = factor(mean$fase, levels = c('G1', 'S1', 'S2', 'S3', 'S4', 'G2'))
+
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=fase, fill=color)) + 
+                        geom_tile(colour='white') + 
+                        scale_fill_gradient(low="white", high="black") +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank()) +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+```

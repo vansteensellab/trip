@@ -1,0 +1,40 @@
+# knitr document van Steensel lab
+
+# Expression variation of promoters.
+## Christ Leemans, 06-03-2017
+
+## Introduction
+We previously saw that promoters that escape lamina interaction show expression in a lot of different tissues. A promoter was considered expressed in a cell type when the CAGE was higher than 1. This was a really quick way to get to some idea of house-keeping function. However it does not say all about how the promoter is regulated across different cell types. In this report I would like to focus on measuring the variation of promoter expression across the fantom CAGE data.
+
+
+## load data
+```{r}
+library(edgeR)
+library(parallel)
+fantom_counts = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_counts.osc.txt.gz',
+                            header=T, stringsAsFactors=F, row.names=1)
+fantom_annot = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_ann.txt.gz',
+                           sep='\t', header=T)
+load("../raw_data/gencode.sure.160617.rda")
+gencode_transcript_vec = do.call(rbind, strsplit(gencode.sure.160617$name, split='[.]'))[,1]
+gencode_fantom = mclapply(gencode_transcript_vec, function(x, association, counts){
+        y = grep(x, association)
+        if (length(y) > 0){
+            return(colSums(counts[y,]))
+        }
+    }, association=fantom_annot$association_with_transcript, counts=fantom_counts[-1,], mc.cores=5)
+names(gencode_fantom) = gencode_transcript_vec
+gencode_count = do.call(rbind, gencode_fantom)
+
+
+groups = as.numeric(factor(gsub('_rep[1-9].+','',colnames(fantom_counts))))
+
+d = DGEList(counts=gencode_count, group=groups)
+design <- model.matrix(~group, data=d$samples)
+de = estimateCommonDisp(d, design)
+de = estimateTagwiseDisp(de, design)
+save(de, file='cl20170428_tagwise_dispersion.rData')
+write.table(cbind(rownames(de$counts), de$tagwise.dispersion),
+            file='cl20170428_tagwise_dispersion.txt',
+            row.names=F, col.names=F, quote=F, sep ='\t')
+```

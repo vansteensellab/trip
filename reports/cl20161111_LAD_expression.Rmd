@@ -1,0 +1,7 @@
+
+
+tss= gencode.sure.160617$tss
+promoters = data.frame(sequence=gencode.sure.160617$chr,
+                       start=tss - 1000 * as.numeric(tss=='+'), 
+                       end=tss + 1000 * as.numeric(tss=='-'),
+                       name=gencode.sure.160617$name)

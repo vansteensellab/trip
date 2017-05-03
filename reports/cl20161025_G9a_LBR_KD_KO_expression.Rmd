@@ -1,0 +1,1345 @@
+# knitr document van Steensel lab
+
+# G9a/LBR knockout/knockdown expression
+## Christ Leemans, 24-10-2016 - to date
+
+
+```
+## run STAR
+for f in $(ls raw_data/3*.fastq.gz);
+do
+    base=$(echo $f | awk -F'_' '{if ($4=="WT"||$4=="LBR"||$4=="G9a"){dir="knockout"}else {dir="knockdown"}; print dir"/"$4"_"$5}')
+    nice -19 gunzip -c $f | \
+        STAR --outFileNamePrefix $base \
+             --runThreadN 10 \
+             --genomeDir ~/data/GRCh37/GenomeDir \
+             --readFilesIn /dev/stdin
+done
+
+## run htseq-count
+for f in $(ls knock*/*.sam)
+do 
+    fo=$(echo $f | sed 's/Aligned.out.sam/.count/')
+    nice -19 htseq-count -s reverse $f ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf > $fo &
+done
+
+## run cufflinks
+for f in $(ls knockout/*.sam)
+do 
+    fo=$(echo $f | sed 's/Aligned.out.sam/.cufflinks.out/')
+    nice -19 cufflinks -o $fo -p 20 -G ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf $f
+done
+
+## run cufflinks
+for f in $(ls knockdown/*.sam)
+do 
+    fo=$(echo $f | sed 's/Aligned.out.sam/.cufflinks.out/')
+    nice -19 cufflinks -o $fo -p 20 -G ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf $f
+done
+```
+
+## preperation
+since the gff3 file is really large, but we just need a subset of rows from it which provide the gene description used by htseq-count, we might as well create a file for this and not load the complete set every single time we run this report
+```r
+library(rtracklayer)
+library(stringr)
+load("../raw_data/gencode.sure.160617.rda")
+conditions = cbind(c(rep('knockout', 6), rep('knockdown', 7)), c('WT_1', 'WT_2', 'G9a_1', 'G9a_2', 'LBR_1', 'LBR_2', '0nM_siRNA', '25nM_siRNA','40nM_siRNA','50nM_siRNA', '0uM_BIX', '1uM_BIX', '2uM_BIX'))
+count_list = apply(conditions, 1, function(x){
+    df = read.table(sprintf('../%s/%s.count', x[1], x[2]), row.names=1)
+    return(df)
+})
+count_table = do.call(cbind, count_list)
+ens_count_table = count_table[grep('ENSG', rownames(count_table)),]
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+
+gff_match = match(paste0('gene:',rownames(ens_count_table)), gff_ranges$ID)
+gff_genes = gff_ranges[gff_match]
+export.gff3(gff_genes, 'raw_data/gene_list.gff3')
+
+ENST = do.call(rbind, strsplit(gencode.sure.160617.rda$name, '[.]'))[,1]
+gff_match = match(paste0('transcript:',ENST), gff_ranges$ID)
+parent = as.vector(gff_ranges[gff_match]$Parent)
+tToG = cbind(Prom$name, str_replace_all(parent, 'gene:',''))
+write.table(tToG, file='../raw_data/ENST_to_ENSG.txt', row.names=F,col.names=F, quote=F)
+```
+
+## lamina association of genes
+let's use the laminB1-DAM data for each of the conditions.
+Í got this dataset from Ludo.
+
+```r
+load('../raw_data/OE_HAP1_DamLB1_wt_LBRko_G9Ako_LP150702.RData')
+
+OE_data_frame = data.frame(seqnames=seqnames(OE),
+                           starts=start(OE)-1,
+                           ends=end(OE),
+                           WT_OE=OE$'3467_5_Hap1-5_AACGTGAT_L004_R1_001',
+                           LBR_ko_OE=OE$'3467_6_Hap1-7_CAGATCTG_L004_R1_001',
+                           G9a_ko_OE=OE$'3467_7_Hap1-10_AGTACAAG_L004_R1_001')
+
+## let's make some data tracks while we're at it
+write.table(OE_data_frame[,c('seqnames', 'starts','ends','WT_OE')],
+            file='../raw_data/LMB1_WT.bg', col.names=F, row.names=F, quote=F, sep='\t')
+write.table(OE_data_frame[,c('seqnames', 'starts','ends','G9a_ko_OE')],
+            file='../raw_data/LMB1_LBR_ko.bg', col.names=F, row.names=F, quote=F, sep='\t')
+write.table(OE_data_frame[,c('seqnames', 'starts','ends','LBR_ko_OE')],
+            file='../raw_data/LMB1_G9a_ko.bg', col.names=F, row.names=F, quote=F, sep='\t')
+
+
+seq_order = order(OE_data_frame$seqnames,OE_data_frame$start)
+
+wt_order = seq_order[is.finite(OE_data_frame$WT_OE)]
+wt_fin = OE_data_frame[is.finite(OE_data_frame$WT_OE),c('seqnames','starts','ends','WT_OE')]
+wt_b = bridge(wt_fin)
+temp = BaumWelchT(x=wt_b$x, series.length=wt_b$series.length)
+wt_state = temp$ViterbiPath[wt_b$nonvirtuals]
+
+
+LBR_ko_order = seq_order[is.finite(OE_data_frame$LBR_ko_OE)]
+LBR_ko_fin = OE_data_frame[is.finite(OE_data_frame$LBR_ko_OE),c('seqnames','starts','ends','LBR_ko_OE')]
+LBR_ko_b = bridge(LBR_ko_fin)
+temp = BaumWelchT(x=LBR_ko_b$x, series.length=LBR_ko_b$series.length)
+LBR_ko_state = temp$ViterbiPath[LBR_ko_b$nonvirtuals]
+
+
+G9a_ko_order = seq_order[is.finite(OE_data_frame$G9a_ko_OE)]
+G9a_ko_fin = OE_data_frame[is.finite(OE_data_frame$G9a_ko_OE),c('seqnames','starts','ends','G9a_ko_OE')]
+G9a_ko_b = bridge(G9a_ko_fin)
+temp = BaumWelchT(x=G9a_ko_b$x, series.length=G9a_ko_b$series.length)
+G9a_ko_state = temp$ViterbiPath[G9a_ko_b$nonvirtuals]
+
+
+HMM_ranges = GRanges(seqnames=seqnames(OE), ranges=ranges(OE))
+HMM_ranges$WT = NA
+HMM_ranges$WT[wt_order[which(wt_state==1)]] = 'interLAD'
+HMM_ranges$WT[wt_order[which(wt_state==2)]] = 'LAD'
+HMM_ranges$LBR_ko = NA
+HMM_ranges$LBR_ko[LBR_ko_order[which(LBR_ko_state==1)]] = 'interLAD'
+HMM_ranges$LBR_ko[LBR_ko_order[which(LBR_ko_state==2)]] = 'LAD'
+HMM_ranges$G9a_ko = NA
+HMM_ranges$G9a_ko[G9a_ko_order[which(G9a_ko_state==1)]] = 'interLAD'
+HMM_ranges$G9a_ko[G9a_ko_order[which(G9a_ko_state==2)]] = 'LAD'
+
+write.table(data.frame(seqnames=seqnames(HMM_ranges),
+                       starts=start(HMM_ranges)-1,
+                       ends=end(HMM_ranges),
+                       names=HMM_ranges$WT),
+            file='../raw_data/LMB1_WT.bed', col.names=F, row.names=F, quote=F, sep='\t')
+
+write.table(data.frame(seqnames=seqnames(HMM_ranges),
+                       starts=start(HMM_ranges)-1,
+                       ends=end(HMM_ranges),
+                       names=HMM_ranges$LBR_ko),
+            file='../raw_data/LMB1_LBR_ko.bed', col.names=F, row.names=F, quote=F, sep='\t')
+write.table(data.frame(seqnames=seqnames(HMM_ranges),
+                       starts=start(HMM_ranges)-1,
+                       ends=end(HMM_ranges),
+                       names=HMM_ranges$G9a_ko),
+            file='../raw_data/LMB1_G9a_ko.bed', col.names=F, row.names=F, quote=F, sep='\t') 
+```
+
+
+```bash
+# and let's create a bigWig and continous bed while we're at it
+awk '{if ($4!="NA"){print $0}}' raw_data/LMB1_WT.bg | \
+    sort -k1,1 -k2,2n > raw_data/LMB1_WT_sorted.bg
+bedGraphToBigWig raw_data/LMB1_WT_sorted.bg ~/data/hg19/hg19.chrom.sizes raw_data/LMB1_WT.bw
+
+awk '{if ($4!="NA"){print $0}}' raw_data/LMB1_LBR_ko.bg | \
+    sort -k1,1 -k2,2n > raw_data/LMB1_LBR_ko_sorted.bg
+bedGraphToBigWig raw_data/LMB1_LBR_ko_sorted.bg ~/data/hg19/hg19.chrom.sizes raw_data/LMB1_LBR_ko.bw
+
+awk '{if ($4!="NA"){print $0}}' raw_data/LMB1_G9a_ko.bg | \
+    sort -k1,1 -k2,2n > raw_data/LMB1_G9a_ko_sorted.bg
+bedGraphToBigWig raw_data/LMB1_G9a_ko_sorted.bg ~/data/hg19/hg19.chrom.sizes raw_data/LMB1_G9a_ko.bw
+
+
+cat raw_data/LMB1_WT.bed | awk '
+{
+    if (NR==1) {
+        chr=$1; start=$2; end=$3; lad=$4
+    } else if ($4==lad&&$1==chr){
+        end=$3
+    } else if (lad!="NA") {
+        print chr"\t"start"\t"end"\t"lad
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    } else {
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    }
+} END {
+        if (lad!="NA"){
+            print chr"\t"start"\t"end"\t"lad
+        }
+}' > raw_data/LMB1_WT_continuous.bed 
+cat raw_data/LMB1_LBR_ko.bed | awk '
+{
+    if (NR==1) {
+        chr=$1; start=$2; end=$3; lad=$4
+    } else if ($4==lad&&$1==chr){
+        end=$3
+    } else if (lad!="NA") {
+        print chr"\t"start"\t"end"\t"lad
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    } else {
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    }
+} END {
+        if (lad!="NA"){
+            print chr"\t"start"\t"end"\t"lad
+        }
+}' > raw_data/LMB1_LBR_ko_continuous.bed 
+
+cat raw_data/LMB1_G9a_ko.bed | awk '
+{
+    if (NR==1) {
+        chr=$1; start=$2; end=$3; lad=$4
+    } else if ($4==lad&&$1==chr){
+        end=$3
+    } else if (lad!="NA") {
+        print chr"\t"start"\t"end"\t"lad
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    } else {
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    }
+} END {
+        if (lad!="NA"){
+            print chr"\t"start"\t"end"\t"lad
+        }
+}' > raw_data/LMB1_G9a_ko_continuous.bed 
+```
+## additional LAD data
+let's also compare average OE values in each genes and a LAD definition of dam-lamin over dam-only.
+
+```r
+load('/home/NFS/users/ca.d.graaf/projects/analyses/CdG121011humanLmnb1Atlas/CdG140714humanLmnb1wK562.rData')
+
+## let's not select the down syndrome data and the TIG3 that was done on another array
+cell_type = colnames(allHumanStateHg19)[5:16]
+cell_type = cell_type[!cell_type%in%c('DS', 'FB', 'TN')]
+
+ciLAD = length(cell_type)
+cLAD = ciLAD * 2
+allHumanStateHg19$LAD = NA
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type])==cLAD] = 'cLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type])==ciLAD] = 'ciLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type]) < cLAD &
+                      rowSums(allHumanStateHg19[,cell_type]) > ciLAD] = 'fLAD'
+
+write.table(allHumanStateHg19[,c('seqname', 'start','end','LAD')],file = 'cl20161102_LAD_3state.bed', col.names = F, quote=F,row.names=F) 
+```
+
+```
+awk '
+{
+    if (NR==1){
+        chr=$1; start=$2; end=$3; lad=$4
+    } else if ($4==lad&&$1==chr){
+        end=$3
+    } else {
+        print chr"\t"start"\t"end"\t"lad
+        chr=$1
+        start=$2
+        end=$3
+        lad=$4
+    }
+} END{
+    print chr"\t"start"\t"end"\t"lad
+}' cl20161102_LAD_3state.bed > cl20161102_LAD_continuous_3state.bed 
+
+awk '{if ($1~/^[^#]/){match($0,"ID=gene:(ENSG[0-9]+);",a);print "chr"$1"\t"$4"\t"$5"\t"a[1]}}' raw_data/gene_list.gff3 > raw_data/gene_list.bed
+
+bedtools intersect -a raw_data/gene_list.bed -b ~/data/tracks/hg19/cl20161102_LAD_continuous_3state.bed -wb | awk '{print $4"\t"$8}' > raw_data/gene_list_lad_states.txt
+
+bwtool summary -skip-median -header raw_data/gene_list.bed raw_data/LMB1_WT.bw raw_data/gene_list_LMB1_WT_signal.txt
+
+
+bwtool summary -skip-median -header raw_data/gene_list.bed raw_data/LMB1_WT.bw raw_data/gene_list_LMB1_WT_signal.txt
+```
+```r
+library(GenomicRanges)
+
+### KBM-7 lamina association
+## load OE values for lamina interactions from the 2 different clonal lines.
+## I use only haploid cell lines, since our cell line is also haploid
+ladHap14 = read.table('../raw_data/mmc2/DataS1_Clone.14.1N.OE.txt', header=TRUE, stringsAsFactors=F)
+ladHap5 = read.table('../raw_data/mmc2/DataS2_Clone.5-5.1N.OE.txt', header=TRUE, stringsAsFactors=F)
+ladHap = cbind(ladHap14[4:ncol(ladHap14)],ladHap5[4:ncol(ladHap5)])
+
+lad_KBM7 = apply(ladHap,1,function(x){
+                if (!all(is.na(x))){
+                    count_table = table(as.vector(x) > 1)
+                    if ('TRUE' %in% names(count_table)){
+                        ratio = count_table['TRUE'] / sum(count_table)
+                    } else {
+                        ratio = 0
+                    }
+                } else {
+                    ratio = NA
+                }
+                return(ratio)
+            })
+
+lad_range = GRange(seqnames=ladHap14[,1], IRanges(ladHap14[,c(2,3)]), score=lad_KBM7)
+
+KBM7ToHg19<-function(genomicRange){
+  chr9Break = 133700000
+  chr22Break = 23600000
+  breakDiff = chr9Break-chr22Break
+  chr922IVec = which(seqnames(genomicRange)=='chr9:22')
+  chr229IVec = which(seqnames(genomicRange)=='chr22:9')
+  chr9Start = start(genomicRange[chr922IVec]) < chr9Break
+  chr22End = !chr9Start
+  chr22EndIVec = chr922IVec[chr22End]
+  chr22Start = start(genomicRange[chr229IVec]) < chr22Break
+  chr9End = !chr22Start
+  chr9EndIVec = chr229IVec[chr9End]
+  chr9IVec = c(chr922IVec[chr9Start],chr9EndIVec)
+  chr22IVec = c(chr229IVec[chr22Start],chr22EndIVec)
+
+  seqlevels(genomicRange) = c(seqlevels(genomicRange),'chr9','chr22')
+  seqnames(genomicRange)[chr9IVec] = 'chr9'
+  genomicRange[chr9EndIVec] = shift(genomicRange[chr9EndIVec], breakDiff)
+  seqnames(genomicRange)[chr22IVec] = 'chr22'
+  genomicRange[chr22EndIVec] = shift(genomicRange[chr22EndIVec], -breakDiff)
+  return(genomicRange)
+}
+
+lad_table = as.data.frame(KBM7ToHg19(lad_range))
+write.table(lad_table[,c('seqnames','start','end','score')], file = '../raw_data/KBM7_interaction_freq.bg', col.names = F, quote=F,row.names=F) 
+```
+
+```
+## bedGraphToBigWig can't deal with regions extending over chromosome length
+awk '
+{if (NR==FNR) {
+    a[$1] = $2
+} else
+{
+    if ($4!="NA"){
+        if (a[$1] < $3){
+            print $1" "$2" "a[$1]" "$4
+        } else {
+            print $0
+        }
+    }
+}}' ~/data/hg19/hg19.chrom.sizes raw_data/KBM7_interaction_freq.bg | \
+    sort -k1,1 -k2,2n > raw_data/KBM7_interaction_sorted.bg
+bedGraphToBigWig raw_data/KBM7_interaction_sorted.bg ~/data/hg19/hg19.chrom.sizes raw_data/KBM7_interaction_freq.bw
+
+bwtool summary -skip-median -header raw_data/gene_list.bed raw_data/KBM7_interaction_freq.bw raw_data/gene_list_KBM7_freq.txt
+```
+
+## microarray experiment
+I found a shRNA knockdown experiment with 3 replicates, this could be used to assess the benefit of doing additional knockdown experiments.
+
+- **GSE34925**
+    * **Species:** Homo sapiens
+    * **Platform:**  [HuGene-1_0-st] Affymetrix Human Gene 1.0 ST Array [transcript (gene) version]
+    * **Summary:**  G9a is an H3K9m2 methyltransferase, which is critical in controlling gene suppression and DNA methylation. We used microarray analysis to identify the target genes that are regulated by G9a in MDA-MB231 cells, in which E-cadherin is silenced.
+    * **Citation:** Dong C, Wu Y, Yao J, Wang Y et al. G9a interacts with Snail and is critical for Snail-mediated E-cadherin repression in human breast cancer. J Clin Invest 2012 Apr;122(4):1469-86. PMID: [22406531](https://www.ncbi.nlm.nih.gov/pubmed/22406531)  
+    Dong C, Yuan T, Wu Y, Wang Y et al. Loss of FBP1 by Snail-mediated repression provides metabolic advantages in basal-like breast cancer. Cancer Cell 2013 Mar 18;23(3):316-31. PMID: [23453623](https://www.ncbi.nlm.nih.gov/pubmed/23453623)
+    * **Cell-type:** MDA-MB231 (breast adenocarcinoma cell line)
+    * **Conditions:** "wild type" vs G9a shRNA
+    * **Replicates:** 3
+    * **Normalization:** unknown
+
+For the microarray experiment (GSE34925) I need to map all probe-id's to gene id's. This is a long process and I don't want to repeat it every time I run this script.
+
+```r
+library(biomaRt)
+library(affy)
+humanMart = useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+matrix_GSE34925 = assayData(justRMA(celfile.path='../raw_data/GSE34925_RAW' ))$exprs
+bm_hugene = getBM(attributes=c('ensembl_gene_id', 'ensembl_transcript_id',
+                               'affy_hugene_1_0_st_v1', 'chromosome_name', 'transcript_length', 'percentage_gc_content',
+                               'transcription_start_site'),
+                  filters='affy_hugene_1_0_st_v1', values=rownames(matrix_GSE34925), mart=humanMart)
+save(bm_hugene, file='../raw_data/bm_hugene.rData')
+
+```
+
+
+# R analysis
+In this R analysis I would like to start out with the expression data from knockout of LBR and knockdown/knockout of G9a. After this I will work towards a comparison with the SURE data from Joris.
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r libraries}
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+library(DESeq2)
+library(rtracklayer)
+library(SummarizedExperiment)
+library(ggplot2)
+library(gridExtra)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(NOISeq)
+library(grid)
+library(scales)
+library(stringr)
+library(affy)
+library(limma)
+library(baySeq)
+
+
+plotLog2 <- function(table, title=NA, x_vec=NA, y_vec=NA, x_lab=NA, y_lab=NA, highlight=NA, pseudo=F){
+    table = data.frame(table)
+    if (all(is.na(x_vec))){
+        x_vec = colnames(table)[1]
+    }
+    if (all(is.na(y_vec))){
+        y_vec = colnames(table)[2]
+    }
+    print(x_vec)
+    print(y_vec)
+    if (length(x_vec) > 1){
+        if (pseudo){
+            x = rowMeans(log2(table[,x_vec] + min(table[table!=0])/3))
+        } else {
+            x = rowMeans(log2(table[,x_vec]))
+        }
+    } else{
+        if (pseudo){
+            x = log2(table[,x_vec]+ min(table[table!=0])/3)
+        } else {
+            x = log2(table[,x_vec])
+        }
+    }
+    if (length(y_vec) > 1){
+        if (pseudo){
+            y = rowMeans(log2(table[,y_vec] + min(table[table!=0])/3))
+        } else {
+            y = rowMeans(log2(table[,y_vec]))
+        }
+    } else{
+        if (pseudo){
+            y = log2(table[,y_vec]+ min(table[table!=0])/3)
+        } else {
+            y = log2(table[,y_vec])
+        }
+    }
+    table$x = x
+    table$y = y
+    if (is.na(title)){
+        title = paste(colnames(table), sep=' vs ')
+    }
+
+    cor_line = paste("r(p)=",signif(cor(x=x, y=y,method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=x, y=y,method = "spearman",use="pairwise.complete.obs"),digits=3))
+    p = ggplot(table, aes(x=x, y=y))+geom_point(size=0.3, alpha=0.3) + ggtitle(paste(title, cor_line, sep='\n')) + theme(aspect.ratio=1)
+    if (!is.na(x_lab)){
+        p = p + xlab(x_lab)
+    }
+    if (!is.na(y_lab)){
+        p = p + ylab(y_lab)
+    }
+    if (all(!is.na(highlight))){
+        p = p + geom_point(data=table[highlight, , drop=F], size=0.3, colour='RED')
+    }
+    return(p)
+}
+
+
+
+```
+
+
+
+```{r prep}
+
+colData <- DataFrame(Treatment=c(rep("knockout",6), rep("siRNA", 4), rep("BIX", 3)),
+                     concentration= c(rep(1,6), 0, 25, 40, 50, 0, 1000, 2000),
+                     dir=c(rep('knockout',6), rep('knockdown', 7)),
+                     file_name=c('WT_1.count', 'WT_2.count', 'G9a_1.count', 'G9a_2.count', 'LBR_1.count', 'LBR_2.count', '0nM_siRNA.count', '25nM_siRNA.count','40nM_siRNA.count','50nM_siRNA.count', '0uM_BIX.count', '1uM_BIX.count', '2uM_BIX.count'),
+                     replicate=c(rep(c(1,2), 3), rep(1, 7)),
+                     condition=c(rep(c('WT', 'G9a', 'LBR'), each=2), '0nM_siRNA', '25nM_siRNA','40nM_siRNA','50nM_siRNA', '0uM_BIX', '1uM_BIX', '2uM_BIX'),
+                     row.names=c('ko_WT_1', 'ko_WT_2', 'ko_G9a_1', 'ko_G9a_2', 'ko_LBR_1', 'ko_LBR_2', 'kd_0nM_siRNA', 'kd_25nM_siRNA','kd_40nM_siRNA','kd_50nM_siRNA', 'kd_0uM_BIX', 'kd_1uM_BIX', 'kd_2uM_BIX'))
+count_list = apply(colData, 1, function(x){
+    df = read.table(sprintf('../%s/%s', x['dir'], x['file_name']), row.names=1)
+    return(df)
+})
+count_table = do.call(cbind, count_list)
+ens_count_table = count_table[grep('ENSG', rownames(count_table)),]
+colnames(ens_count_table) = rownames(colData)
+gff_ranges = import.gff('../raw_data/gene_list.gff3')
+gff_match = match(paste0('gene:',rownames(ens_count_table)), gff_ranges$ID)
+gff_genes = gff_ranges[gff_match]
+
+
+exp = SummarizedExperiment(assays=list(counts=as.matrix(ens_count_table)), rowRanges=gff_genes, colData=colData)
+dds = DESeqDataSet(exp, design = ~ condition)
+dds = DESeq(dds)
+ens_cpm = t(t(ens_count_table) / colSums(ens_count_table) * 1000000)
+
+de_wt_G9a = data.frame(results(dds, contrast=c('condition', 'G9a', 'WT')))
+de_wt_LBR = data.frame(results(dds, contrast=c('condition', 'LBR', 'WT')))
+de_wt_G9a$signed_inv_padj = NA
+de_wt_G9a$signed_inv_padj[which(de_wt_G9a$log2FoldChange<0)] = de_wt_G9a$padj[which(de_wt_G9a$log2FoldChange<0)] - 1
+de_wt_G9a$signed_inv_padj[which(de_wt_G9a$log2FoldChange>0)] = 1 - de_wt_G9a$padj[which(de_wt_G9a$log2FoldChange>0)]
+
+de_wt_LBR$signed_inv_padj = NA
+de_wt_LBR$signed_inv_padj[which(de_wt_LBR$log2FoldChange<0)] = de_wt_LBR$padj[which(de_wt_LBR$log2FoldChange<0)] - 1
+de_wt_LBR$signed_inv_padj[which(de_wt_LBR$log2FoldChange>0)] = 1 - de_wt_LBR$padj[which(de_wt_LBR$log2FoldChange>0)]
+```
+
+### lad data
+```{r}
+
+cfci_lad = read.table('../raw_data/gene_list_lad_states.txt', stringsAsFactors=F)
+cfci_lad_match = match(rownames(ens_count_table), cfci_lad[,1])
+
+LMB1_WT_signal = read.table('../raw_data/gene_list_LMB1_WT_signal.txt')
+
+KBM7_lad_freq = read.table('../raw_data/gene_list_KBM7_freq.txt')
+
+
+lad_ranges = import.bed('../raw_data/LMB1_WT_continuous.bed')
+## convert to ensemble names
+seqlevels(lad_ranges) = seqlevels(gff_genes)[1:25]
+overlaps = findOverlaps(gff_genes, lad_ranges)
+overlaps = cbind.data.frame(gene_id=queryHits(overlaps), lad_state=lad_ranges[subjectHits(overlaps)]$name)
+gene_lads = aggregate(list(lad_state=overlaps$lad_state), overlaps[,c('gene_id'),drop=F],
+                      function(x){
+                        if (length(unique(x))>1) {
+                            return('border')
+                        } else {
+                            return(as.vector(x)[1])
+                        }})
+
+gff_genes$lad_hmm = '-'
+gff_genes$lad_hmm[gene_lads[,1]] = gene_lads[,2]
+gff_genes$lad_cfci = '-'
+gff_genes$lad_cfci[!is.na(cfci_lad_match)] = cfci_lad[cfci_lad_match[!is.na(cfci_lad_match)],2]
+gff_genes$mean_LMB1_WT = LMB1_WT_signal[,8]
+gff_genes$KBM7_lad_freq = KBM7_lad_freq[,8]
+
+## maybe if we just set some cut-offs on the OE values directly and not use the HMM
+## first let's look at the density for a nice cut-off
+load('../raw_data/OE_HAP1_DamLB1_wt_LBRko_G9Ako_LP150702.RData')
+
+WT_OE = data.frame(WT_OE=OE$'3467_5_Hap1-5_AACGTGAT_L004_R1_001')
+ggplot(WT_OE, aes(x=WT_OE)) + geom_density() + xlim(0,15) + geom_vline(xintercept=4) + geom_vline(xintercept=2)
+
+## 2 and 4 seem like nice cut-offs
+gff_genes$lad_scut = '-'
+gff_genes$lad_scut[gff_genes$mean_LMB1_WT > 4 ] = 'LAD'
+gff_genes$lad_scut[gff_genes$mean_LMB1_WT <= 2 ] = 'interLAD'
+gff_genes$lad_scut[gff_genes$mean_LMB1_WT > 2 & gff_genes$mean_LMB1_WT <= 4] = 'border'
+
+
+lad_KBM7 = import.bedGraph('../raw_data/KBM7_interaction_freq.bg')
+ggplot(data.frame(lad_KBM7), aes(x=score)) + geom_density(adjust=1/2) + geom_vline(xintercept=0.1) + geom_vline(xintercept=0.6)
+
+## 0.1 and 0.6 seem like nice cut-offs
+gff_genes$lad_kbm7 = '-'
+gff_genes$lad_kbm7[gff_genes$KBM7_lad_freq > 0.6 ] = 'cLAD'
+gff_genes$lad_kbm7[gff_genes$KBM7_lad_freq <= 0.1 ] = 'ciLAD'
+gff_genes$lad_kbm7[gff_genes$KBM7_lad_freq > 0.1 & gff_genes$mean_LMB1_WT <= 0.6] = 'fLAD'
+
+```
+
+
+
+## reproducability
+Unfortunately we don't have replicates of the knockdown experiments yet, but we could compare 0 dox with 0 sRNA
+
+```{r reproducability}
+
+plotLog2(fpm(dds)[,c('ko_WT_1', 'ko_WT_2')], title = 'WT knockout\nreplicates', x_lab='log2(rep 1)', y_lab='log2(rep 2)', highlight=which(gff_genes$Name=='EHMT2' | gff_genes$Name=='LBR'))
+plotLog2(fpm(dds)[,c('ko_G9a_1', 'ko_G9a_2')], title = 'G9a knockout\nreplicates', x_lab='log2(rep 1)', y_lab='log2(rep 2)', highlight=which(gff_genes$Name=='EHMT2'))
+plotLog2(fpm(dds)[,c('ko_LBR_1', 'ko_LBR_2')], title = 'LBR knockout\nreplicates', x_lab='log2(rep 1)', y_lab='log2(rep 2)', highlight=which(gff_genes$Name=='LBR'))
+plotLog2(fpm(dds)[,c('kd_0uM_BIX', 'kd_0nM_siRNA')], title = 'knockdown controls', x_lab='log2(0uM BIX)', y_lab='log2(0nM siRNA)', highlight=which(gff_genes$Name=='EHMT2'))
+```
+**conclusions:**
+
+Data seems fairly reprocible, best reproducability found in the WildType replicates.
+
+
+## expression range
+Let's see the general distribution of gene expression in the samples
+
+```{r, fig.width=10, fig.heigth=30}
+plot_list = list()
+fpm = data.frame(fpm(dds))
+for (name in colnames(fpm)){
+    plot_list[[name]] = ggplot(fpm, aes_string(x=paste0('log2(', name,')'))) + geom_density(adjust=1/8)
+}
+do.call(grid.arrange, c(plot_list, ncol=3))
+```
+
+## knockout
+Let's see the difference between knockout conditions.
+
+```{r}
+
+de_wt_G9a = results(dds, contrast=c('condition', 'G9a', 'WT'))
+de_wt_LBR = results(dds, contrast=c('condition', 'LBR', 'WT'))
+
+plotLog2(fpm(dds), title = 'G9a knockout vs Wildtype\nadding pseudocount', x_vec=c('ko_WT_1', 'ko_WT_2'), y_vec = c('ko_G9a_1', 'ko_G9a_2'), x_lab='log2(WT)', y_lab='log2(G9a)', highlight=which(de_wt_G9a$padj<0.05), pseudo=T)
+
+plotLog2(fpm(dds), title = 'G9a knockout vs Wildtype', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05))
+
+plotLog2(fpm(dds), title = 'LBR knockout vs Wildtype', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05))
+```
+**conclusions:**
+In both cases there is only a small proportion of the genes that has a significant expression change. Adding a pseudocount (in this case 1/3th of the least expressed gene) at this point, before avereging over log2 fold changes is not advisable.
+Although it is not necessarily visible in the spread of the points, there are more significantly upregulated genes after G9a and LBR knockout. This is to be expected since we are removing a repressive element from the equation.
+
+```{r}
+de_0_50_siRNA = results(dds, contrast=c('condition', '50nM_siRNA', '0nM_siRNA'))
+de_0_40_siRNA = results(dds, contrast=c('condition', '40nM_siRNA', '0nM_siRNA'))
+de_0_25_siRNA = results(dds, contrast=c('condition', '25nM_siRNA', '0nM_siRNA'))
+
+de_0_1_BIX = results(dds, contrast=c('condition', '1uM_BIX', '0uM_BIX'))
+de_0_2_BIX = results(dds, contrast=c('condition', '2uM_BIX', '0uM_BIX'))
+
+plotLog2(fpm(dds), title = 'G9a 25nM siRNA vs control', x_vec='kd_0nM_siRNA', y_vec = 'kd_25nM_siRNA', x_lab='log2(0nM siRNA)', y_lab='log2(25nM siRNA)', highlight=which(gff_genes$Name=='EHMT2'))
+plotLog2(fpm(dds), title = 'G9a 40nM siRNA vs control', x_vec='kd_0nM_siRNA', y_vec = 'kd_40nM_siRNA', x_lab='log2(0nM siRNA)', y_lab='log2(40nM siRNA)', highlight=which(gff_genes$Name=='EHMT2'))
+plotLog2(fpm(dds), title = 'G9a 50nM siRNA vs control', x_vec='kd_0nM_siRNA', y_vec = 'kd_50nM_siRNA', x_lab='log2(0nM siRNA)', y_lab='log2(50nM siRNA)', highlight=which(gff_genes$Name=='EHMT2'))
+
+plotLog2(fpm(dds), title = 'G9a 1uM BIX vs control', x_vec='kd_0uM_BIX', y_vec = 'kd_1uM_BIX', x_lab='log2(0uM BIX)', y_lab='log2(1uM BIX)', highlight=which(gff_genes$Name=='EHMT2'))
+plotLog2(fpm(dds), title = 'G9a 2uM BIX vs control', x_vec='kd_0uM_BIX', y_vec = 'kd_2uM_BIX', x_lab='log2(0uM BIX)', y_lab='log2(2uM BIX)', highlight=which(gff_genes$Name=='EHMT2'))
+```
+**conclusion:**
+
+It's a pitty we don't have replicatis.
+
+## LAD states and expression change
+Logically since LADs are defined by LBR and G9a, knocking out these factors should directly affect change in expression of genes in these regions, while other genes are only affected indirectly. So can we see more significant changes in lamina associated genes?
+
+Since we have some different deffinitions of lamina association we can use, let's first focus on the knockout group. and later incorporate the knockdown.
+
+```{r, fig.width=15, fig.height=15}
+##first let's see if there is general difference in expression between lad-states
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_cfci), aes(x=lad_state, y=log2((ko_WT_1+ko_WT_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_cfci), aes(x=lad_state, y=log2((ko_G9a_1+ko_G9a_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_cfci), aes(x=lad_state, y=log2((ko_LBR_1+ko_LBR_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+
+
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_cfci), title = 'G9a knockout vs Wildtype\nusing general c/f/ci LADs', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_cfci==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_cfci==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_cfci==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'LBR knockout vs Wildtype\nusing general c/f/ci LADs', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_cfci==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_cfci==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_cfci==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout using general c/f/ci LADs', gp=gpar(fontsize=38)))
+
+
+
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_hmm), aes(x=lad_state, y=log2((ko_WT_1+ko_WT_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_hmm), aes(x=lad_state, y=log2((ko_G9a_1+ko_G9a_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_hmm), aes(x=lad_state, y=log2((ko_LBR_1+ko_LBR_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+
+
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_hmm), title = 'G9a knockout vs Wildtype\nusing HMM LADs', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_hmm==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using HMM LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_hmm==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using HMM LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_hmm==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using HMM LADs', gp=gpar(fontsize=38)))
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_hmm), title = 'LBR knockout vs Wildtype\nusing HMM LADs', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_hmm==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout using HMM LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_hmm==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout using HMM LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_hmm==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout using HMM LADs', gp=gpar(fontsize=38)))
+
+
+
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_scut), aes(x=lad_state, y=log2((ko_WT_1+ko_WT_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_scut), aes(x=lad_state, y=log2((ko_G9a_1+ko_G9a_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_scut), aes(x=lad_state, y=log2((ko_LBR_1+ko_LBR_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+
+
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_scut), title = 'G9a knockout vs Wildtype\nusing simple cutoff LADs', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('interLAD','border', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_scut==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['border']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD','border', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_scut==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['border']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD','border', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_scut==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['border']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'LBR knockout vs Wildtype\nusing simple cutoff LADs', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_scut==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_scut==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('interLAD', 'LAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_scut==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['interLAD']], plot_list[['LAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout using simple cutoff LADs', gp=gpar(fontsize=38)))
+
+
+##Maybe KBM7 has the best definition
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2((ko_WT_1+ko_WT_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2((ko_G9a_1+ko_G9a_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2((ko_LBR_1+ko_LBR_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+
+
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), title = 'G9a knockout vs Wildtype\nusing KBM7 c/f/ci LADs', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_kbm7==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_kbm7==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', '-', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$lad_kbm7==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['-']], plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'LBR knockout vs Wildtype\nusing KBM7 c/f/ci LADs', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_kbm7==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_kbm7==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in c('ciLAD', 'fLAD', 'cLAD')){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$lad_kbm7==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['ciLAD']], plot_list[['fLAD']], plot_list[['cLAD']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout using KBM7 c/f/ci LADs', gp=gpar(fontsize=38)))
+
+```
+**conclusion:**
+
+Although the difference in expression are not large, there is more significantly upregulated genes in the G9a knockout associated with LADs in every kind of LAD definition, but KBM7 and the combined LAD definition (from Caroline's data) seem most profound. In the LBR knockout this effect is a lot less profound.
+
+### knockdown expression and LADS
+I think this part is less important right now
+
+```{r}
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_0nM_siRNA),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_25nM_siRNA),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_40nM_siRNA),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_50nM_siRNA),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_0uM_BIX),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_1uM_BIX),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+# ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_kbm7), aes(x=lad_state, y=log2(kd_2uM_BIX),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+# ##Knockdown
+
+# plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'G9a 1uM BIX vs control', x_vec='kd_1uM_BIX', y_vec = 'kd_0uM_BIX', x_lab='log2(1uM BIX)', y_lab='log2(0uM BIX)') + facet_wrap(~ lad_state)
+# plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'G9a 2uM BIX vs control', x_vec='kd_2uM_BIX', y_vec = 'kd_0uM_BIX', x_lab='log2(2uM BIX)', y_lab='log2(0uM BIX)') + facet_wrap(~ lad_state)
+# plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'G9a 25nM siRNA vs control', x_vec='kd_25nM_siRNA', y_vec = 'kd_0nM_siRNA', x_lab='log2(25nM siRNA)', y_lab='log2(0nM siRNA)') + facet_wrap(~ lad_state)
+# plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'G9a 40nM siRNA vs control', x_vec='kd_40nM_siRNA', y_vec = 'kd_0nM_siRNA', x_lab='log2(40nM siRNA)', y_lab='log2(0nM siRNA)') + facet_wrap(~ lad_state)
+# plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'G9a 50nM siRNA vs control', x_vec='kd_50nM_siRNA', y_vec = 'kd_0nM_siRNA', x_lab='log2(50nM siRNA)', y_lab='log2(0nM siRNA)') + facet_wrap(~ lad_state)
+```
+
+## Assesment of bias
+Although in general there does not seem to be a bias in DESeq2 towards lowly expressed genes (http://doi.org/10.1093/bib/bbt086), maybe with this data there is. So let's use NOISeq, a package that actually has a bias towards highly expressed genes and see if we can still see the same difference between LAD and iLAD genes. But it could also be that DESeq2 underscored lowly expressed genes, so let's take baySeq along as well, since that package seems to perform good as well, especially with low amount of samples.
+
+```r
+library(baySeq)
+## baySeq requires priors, this search takes forever, so let's do it only once and load the data afterwards
+colData <- data.frame(dir=c(rep('knockout',6), rep('knockdown', 7)),
+                     file_name=c('WT_1.count', 'WT_2.count', 'G9a_1.count', 'G9a_2.count', 'LBR_1.count', 'LBR_2.count', '0nM_siRNA.count', '25nM_siRNA.count','40nM_siRNA.count','50nM_siRNA.count', '0uM_BIX.count', '1uM_BIX.count', '2uM_BIX.count'),
+                     replicate=c(rep(c(1,2), 3), rep(1, 7)),
+                     condition=c(rep(c('WT', 'G9a', 'LBR'), each=2), '0nM_siRNA', '25nM_siRNA','40nM_siRNA','50nM_siRNA', '0uM_BIX', '1uM_BIX', '2uM_BIX'),
+                     row.names=c('ko_WT_1', 'ko_WT_2', 'ko_G9a_1', 'ko_G9a_2', 'ko_LBR_1', 'ko_LBR_2', 'kd_0nM_siRNA', 'kd_25nM_siRNA','kd_40nM_siRNA','kd_50nM_siRNA', 'kd_0uM_BIX', 'kd_1uM_BIX', 'kd_2uM_BIX'))
+count_list = apply(colData, 1, function(x){
+    df = read.table(sprintf('../%s/%s', x['dir'], x['file_name']), row.names=1)
+    return(df)
+})
+
+count_list = apply(colData, 1, function(x){
+    df = read.table(sprintf('../%s/%s', x['dir'], x['file_name']), row.names=1)
+    return(df)
+})
+count_table = do.call(cbind, count_list)
+ens_count_table = count_table[grep('ENSG', rownames(count_table)),]
+count_table = do.call(cbind, count_list)
+ens_count_table = count_table[grep('ENSG', rownames(count_table)),]
+colnames(ens_count_table) = rownames(colData)
+
+## now for baySeq
+groups = list(NDE=rep(1,13), DE = c(1,1,2,2,3,3,4:10))
+CD = new("countData", data=as.matrix(ens_count_table), replicates=colData$condition, groups=groups)
+#estimate library sizes for countData object
+libsizes(CD) <- getLibsizes(CD)
+# estimate prior distributions on'countData' object using negative binomial
+# method. Other methods are available - see getPriors
+CDPriors <- getPriors.NB(CD, cl = NULL)
+
+
+## now for baySeq
+groups = list(NDE=rep(1,4), DE = c(1,1,2,2))
+CD = new("countData", data=as.matrix(ens_count_table)[,1:4], 
+         replicates=colData$condition[1:4], groups=groups)
+#estimate library sizes for countData object
+libsizes(CD) <- getLibsizes(CD)
+# estimate prior distributions on'countData' object using negative binomial
+# method. Other methods are available - see getPriors
+CDPriors_G9a <- getPriors.NB(CD, cl = NULL)
+CDPost_G9a <- getLikelihoods(CDPriors_G9a, cl = NULL)
+
+
+CD = new("countData", data=as.matrix(ens_count_table)[,c(1:2,5:6)], 
+         replicates=colData$condition[c(1:2,5:6)], groups=groups)
+#estimate library sizes for countData object
+libsizes(CD) <- getLibsizes(CD)
+# estimate prior distributions on'countData' object using negative binomial
+# method. Other methods are available - see getPriors
+CDPriors_LBR <- getPriors.NB(CD, cl = NULL)
+CDPost_LBR <- getLikelihoods(CDPriors_LBR, cl = NULL)
+
+save(CDPost_G9a, CDPost_LBR, file='../results/CDPost.rData')
+```
+
+
+```{r noibayseq, cache=T}
+## get GC content
+## first convert to UCSC 
+ucsc_genes = gff_genes
+seqlevels(ucsc_genes)[1:25] = seqlevels(BSgenome.Hsapiens.UCSC.hg19)[1:25]
+ucsc_genes = ucsc_genes[seqnames(ucsc_genes)%in%seqlevels(ucsc_genes)[1:25]]
+seqlevels(ucsc_genes) = seqlevels(ucsc_genes)[1:25]
+seq_str = getSeq(BSgenome.Hsapiens.UCSC.hg19, ucsc_genes)
+
+a_freq =alphabetFrequency( seq_str ,baseOnly=TRUE )
+gc=100*(a_freq[,2]+a_freq[,3])/rowSums(a_freq[,1:4])
+names(gc) = ucsc_genes$gene_id
+
+NOIData = readData(ens_count_table[ucsc_genes$gene_id,], data.frame(colData), chromosome=data.frame(Chrom= seqnames(ucsc_genes), GeneStart= start(ucsc_genes), GeneEnd =end(ucsc_genes), row.names=ucsc_genes$gene_id), gc=gc)
+mynoiseq = noiseq(NOIData, factor='condition',conditions=c('WT', 'G9a'))
+
+
+## let's try a lenient and strict cutoff on q-value
+noiseq_de = degenes(mynoiseq, q = 0.6, M = NULL)
+noiseq_not_de = degenes(mynoiseq, q = 0, M = NULL)
+noi_not_de_match = match(rownames(noiseq_not_de), gff_genes$gene_id)
+noi_de_match = match(rownames(noiseq_de), gff_genes$gene_id)
+gff_genes$noiseq_lenient = NA
+gff_genes$noiseq_lenient[noi_not_de_match] = 'not DE'
+gff_genes$noiseq_lenient[noi_de_match] = 'DE'
+
+noiseq_de = degenes(mynoiseq, q = 0.8, M = NULL)
+noiseq_not_de = degenes(mynoiseq, q = 0, M = NULL)
+noi_not_de_match = match(rownames(noiseq_not_de), gff_genes$gene_id)
+noi_de_match = match(rownames(noiseq_de), gff_genes$gene_id)
+gff_genes$noiseq_strict = NA
+gff_genes$noiseq_strict[noi_not_de_match] = 'not DE'
+gff_genes$noiseq_strict[noi_de_match] = 'DE'
+
+
+## now for baySeq
+replicates = c('WT', 'WT', 'G9a_ko', 'G9a_ko')
+groups = list(NDE=rep(1,4), DE = c(1,1,2,2))
+CD = new("countData", data=as.matrix(ens_count_table[,1:4]), replicates=replicates, groups=groups)
+#estimate library sizes for countData object
+libsizes(CD) <- getLibsizes(CD)
+# estimate prior distributions on'countData' object using negative binomial
+# method. Other methods are available - see getPriors
+CDPriors <- getPriors.NB(CD, cl = NULL)
+# estimate posterior likelihoods for each row of data belonging to each hypothesis
+CDPost <- getLikelihoods(CDPriors, cl = NULL)
+# display the rows of data showing greatest association with the second
+# hypothesis (differential expression)
+bayResult = data.frame(topCounts(CDPost, group = "DE", number = Inf))
+bayResult$class = gff_genes[name_match]$class
+
+plotPosteriors(CDPost, group = "DE", pch=19, col=rgb(0,0,0,0.3),cex=0.4)
+CDPostRep = CDPostNRep = CDPostIn = CDPostILAD = CDPost
+CDPostRep@data = CDPost@data[gff_genes$class=='repressed',]
+CDPostNRep@data = CDPost@data[gff_genes$class=='not_repressed',]
+CDPostIn@data = CDPost@data[gff_genes$class=='inactive',]
+CDPostILAD@data = CDPost@data[gff_genes$class=='iLAD',]
+
+CDPostRep@posteriors = CDPost@posteriors[gff_genes$class=='repressed',]
+CDPostNRep@posteriors = CDPost@posteriors[gff_genes$class=='not_repressed',]
+CDPostIn@posteriors = CDPost@posteriors[gff_genes$class=='inactive',]
+CDPostILAD@posteriors = CDPost@posteriors[gff_genes$class=='iLAD',]
+
+
+plotPosteriors(CDPostRep, group = "DE", pch=19, col=rgb(0,0,0,0.3),cex=0.4)
+plotPosteriors(CDPostNRep, group = "DE", pch=19, col=rgb(0,0,0,0.3),cex=0.4)
+plotPosteriors(CDPostIn, group = "DE", pch=19, col=rgb(0,0,0,0.3),cex=0.4)
+plotPosteriors(CDPostILAD, group = "DE", pch=19, col=rgb(0,0,0,0.3),cex=0.4)
+
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(bayResult[which(bayResult$class==state),], aes(x=FDR.DE<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=FDR.DE<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(bayResult[which(bayResult$class==state & bayResult$ordering=='1>2'),], aes(x=FDR.DE<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=FDR.DE<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using defined promoter class', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(bayResult[which(bayResult$class==state & bayResult$ordering=='2>1'),], aes(x=Likelihood>0.4)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=Likelihood>0.4)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using defined promoter classes', gp=gpar(fontsize=38)))
+
+```
+
+
+
+## SURE and GRO-seq data
+
+let's first just quickly use the classification of Promoter_SuRE_in_LADs_exploration_BvS161020.html
+
+
+```{r}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:12]<-c("SuRE", "GROcap", "CAGE", "LAD")
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE<0 & P$LAD==1 #inactive
+NREP<- P$SuRE>0 & P$LRS> -0.5 & P$LAD==1 #not repressed
+REP<- P$SuRE>0 & P$LRS< -0.5 & P$LAD==1 #repressed
+Pcnts<-c(length(which(INACT)), length(which(NREP)), length(which(REP)))
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+
+#plot:
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+plot(P$SuRE, P$GROcap, xlab="log10(SuRE)", ylab="log10(GROcap)", pch=19, cex=0.1, col=COLi)
+points(P$SuRE[INACT], P$GROcap[INACT], pch=19, cex=0.6, col=COL["inactive"])
+points(P$SuRE[NREP], P$GROcap[NREP], pch=19, cex=0.6, col=COL["not_repressed"])
+points(P$SuRE[REP], P$GROcap[REP], pch=19, cex=0.6, col=COL["repressed"])
+legend("topleft", legend=c("iLAD prom", paste("LAD prom ", names(COL), " n=", Pcnts, sep="")), col=c(COLi,COL), pch=19)
+
+```
+
+## Combining the data
+```{r fig.width=20, fig.height=20}
+eToG = read.table('../raw_data/ENST_to_ENSG.txt', row.names=1)
+P$gene_id = eToG[P$name,]
+
+P_match = match(gff_genes$gene_id, P$gene_id)
+
+gff_genes$class = P[P_match,'class']
+gff_genes$SuRE = P[P_match,'SuRE']
+
+##Let's see how the expression and fold changes are seperated by the defined classes
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), aes(x=lad_state, y=log2((ko_WT_1+ko_WT_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), aes(x=lad_state, y=log2((ko_G9a_1+ko_G9a_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+ggplot(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), aes(x=lad_state, y=log2((ko_LBR_1+ko_LBR_2)/2),colour=lad_state))+ geom_violin(alpha=0.3)+geom_point(position=position_jitter(width=0.8), size=0.3,alpha=0.3)
+
+
+
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), title = 'G9a knockout vs Wildtype\nusing defined promoter classe', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$class==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$class==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gff_genes$class==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using defined promoter classes', gp=gpar(fontsize=38)))
+
+ggplot(cbind.data.frame(de_wt_G9a[!is.na(de_wt_G9a$signed_inv_padj), ], lad_state=gene_selection$class[!is.na(de_wt_G9a$signed_inv_padj)]), aes(y=signed_inv_padj, x = lad_state , colour=lad_state)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.6), alpha=0.3, size=0.3)
+
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$lad_state), title = 'LBR knockout vs Wildtype\n defined promoter classe', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$class==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$class==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gff_genes$class==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+
+## and now with two NOIseq cutoffs
+## let's focus on the plots of one sample versus controll seperated by classes defined
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), title = 'G9a knockout vs Wildtype\nusing defined promoter classe', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(gff_genes$noiseq_strict=='DE')) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(gff_genes[which(gff_genes$class==state),]), aes(x=noiseq_strict)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=noiseq_strict)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of NOISeq significant genes\nG9a knockout using defined promoter class', gp=gpar(fontsize=38)))
+
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gff_genes$class), title = 'G9a knockout vs Wildtype\nusing defined promoter classe', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(gff_genes$noiseq_strict=='DE')) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gff_genes$class))){
+    plot_list[[state]] = ggplot(data.frame(gff_genes[which(gff_genes$class==state),]), aes(x=noiseq_lenient)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=noiseq_lenient)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of NOISeq significant genes\nG9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+```
+
+**conclusions:**
+
+Even though there seems to be more significant changes in LAD genes, this might be because in the method used lowly expressed genes are more likely to be significant. The non_repressed LAD genes seem to be less affected by knockout of G9a than iLAD genes, so there might be some interesting stuff there. But there seems to be no difference between the repressed and inactive group, which was what we expected. We could try and improve our methods and get away from binary LAD and binary expression changes, but it seems like it will be difficult with this data to make a convincing story. Maybe we could look at our knockdown experiments, as well as the publicly available microarray data of G9a knockdown. It could be that the cell line with the knockout already adapted to the loss of G9a...
+
+```{r, width=20, height=20}
+matrix_GSE34925 = assayData(justRMA(celfile.path='../raw_data/GSE34925_RAW' ))$exprs
+GSE_lines = readLines('../raw_data/GSE34925_RAW/GSE34925_series_matrix.txt')
+sample_line = grep('!Sample_characteristics_ch1\t\"treatment:', GSE_lines, value=T)
+
+sample_vec = unlist(str_split(sample_line, '\t'))
+sample_vec = sample_vec[-1]
+sample_vec = str_replace_all(sample_vec, '\"', '')
+load('../raw_data/bm_hugene.rData')
+
+design_GSE34925 = model.matrix(~ 0 + factor(sample_vec))
+colnames(design_GSE34925) = c('KO', 'WT')
+contrast = makeContrasts(KO - WT, levels = design_GSE34925)
+fit_GSE34925 = lmFit(matrix_GSE34925, design_GSE34925)
+fit_GSE34925 <- contrasts.fit(fit_GSE34925, contrast)
+fit_GSE34925 = eBayes(fit_GSE34925)
+top = topTable(fit_GSE34925,number=Inf, p.value=0.05)
+mean_table = data.frame(WT=rowMeans(matrix_GSE34925[,sample_vec=="treatment: none"]),
+                        KO=rowMeans(matrix_GSE34925[,sample_vec=="treatment: G9a knockdown"]),
+                        sig=FALSE)
+mean_table[rownames(top),'sig'] = TRUE
+
+ggplot(mean_table, aes(x=WT, y=KO)) + geom_point(alpha=0.3, size=0.3) + geom_point(data=mean_table[mean_table$sig,], colour='RED', size=0.3)
+match_vec = match(rownames(mean_table), bm_hugene$affy_hugene_1_0_st_v1)
+mean_table$transcript_id = bm_hugene[match_vec,'ensembl_transcript_id']
+
+ENST = do.call(rbind, strsplit(P$name, '[.]'))[,1]
+match_vec = match(ENST, mean_table$transcript_id)
+P_GSE34925 = cbind.data.frame(P[!is.na(match_vec),], mean_table[match_vec[!is.na(match_vec)],])
+plot_list = list()
+for (state in names(table(P_GSE34925$class))){
+    plot_list[[state]] = ggplot(data.frame(P_GSE34925[which(P_GSE34925$class==state),]), aes(x=sig)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=sig)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+
+top = topTable(fit_GSE34925,number=Inf)
+mean_table = data.frame(WT=rowMeans(matrix_GSE34925[,sample_vec=="treatment: none"]),
+                        KO=rowMeans(matrix_GSE34925[,sample_vec=="treatment: G9a knockdown"]),
+                        sig=NA)
+mean_table[rownames(top),'sig'] = top$adj.P.Val
+
+ggplot(mean_table, aes(x=WT, y=KO)) + geom_point(alpha=0.3, size=0.3) + geom_point(data=mean_table[mean_table$sig,], colour='RED', size=0.3)
+match_vec = match(rownames(mean_table), bm_hugene$affy_hugene_1_0_st_v1)
+mean_table$transcript_id = bm_hugene[match_vec,'ensembl_transcript_id']
+
+ENST = do.call(rbind, strsplit(P$name, '[.]'))[,1]
+match_vec = match(ENST, mean_table$transcript_id)
+P_GSE34925 = cbind.data.frame(P[!is.na(match_vec),], mean_table[match_vec[!is.na(match_vec)],])
+plot_list = list()
+ggplot(P_GSE34925, aes(x=class, y=log2(sig), color=class)) + geom_violin(alpha=0.5) + geom_point(position=position_jitter(width=0.9), alpha=0.5, size=0.3)
+
+```
+
+**conclusion:**
+
+This seams to have been futile. 
+
+
+
+```{r}
+
+# fpm_table = fpm(dds)
+# test_table = cbind.data.frame(de_wt_G9a, WT=rowMeans(log10(fpm_table[,c(1,2)])),
+#                               G9a=rowMeans(log10(fpm_table[,c(3,4)])),
+#                               lad=gff_genes$lad_kbm7, SuRE=gff_genes$SuRE,
+#                               class=gff_genes$class)
+# ggplot(test_table , aes(x=SuRE, y=WT, color=lad)) + geom_point(alpha=0.6, size=0.5) + facet_wrap(~lad)
+# ggplot(test_table , aes(x=class, y=log2FoldChange, color=class)) + geom_violin() + geom_point(position=position_jitter(width=0.9),alpha=0.6, size=0.5)
+
+# test_table$G9a_only = is.infinite(test_table$WT)&!is.infinite(test_table$G9a)
+
+
+
+# ggplot(test_table, aes(x=WT, colour=lad)) + geom_density(adjust=1/2) + geom_vline(xintercept=-2)
+
+
+# ggplot(test_table, aes(x=G9a, colour=lad)) + geom_density(adjust=1/2) + geom_vline(xintercept=-2)
+
+
+
+``` 
+
+
+## DEseq2 with comparable expression levels
+
+```{r, fig.width=10, fig.height=10}
+all_WT_exp = cbind.data.frame(wt_fpm=rowMeans(fpm(dds)[,c('ko_WT_1','ko_WT_2')]), 
+                           LAD=NA)
+
+all_WT_exp$LAD[which(gff_genes$class=='iLAD')] = 'iLAD'
+all_WT_exp$LAD[which(gff_genes$class!='iLAD' &
+                     !is.na(gff_genes$class))] = 'LAD'
+
+exp_ordered = all_WT_exp[order(all_WT_exp$wt_fpm),]
+lad_index_vec = which(exp_ordered$LAD=='LAD')
+lad_exp_neighbour = exp_ordered[c(lad_index_vec+1, lad_index_vec-1))),]
+lad_exp_ilad_neighbour = lad_exp_neighbour[which(lad_exp_neighbour$LAD=='iLAD'),]
+
+lad_exp_norm = rbind.data.frame(exp_ordered[lad_index_vec,], lad_exp_ilad_neighbour)
+
+## before
+ggplot(all_WT_exp[!is.na(all_WT_exp$LAD),], aes(x=log10(wt_fpm), colour=LAD)) + geom_density()
+
+## after
+ggplot(lad_exp_norm, aes(x=log10(wt_fpm), colour=LAD)) + geom_density()
+```
+
+**conclusion:**
+The filtered data-set is not completely normalized on expression level, but it's better.
+
+
+```
+
+```{r}
+selection = which(rownames(ens_count_table) %in% rownames(lad_exp_norm))
+gene_selection = gff_genes[selection]
+exp = SummarizedExperiment(assays=list(counts=as.matrix(ens_count_table[selection, ])), rowRanges=gene_selection, colData=colData)
+dds = DESeqDataSet(exp, design = ~ condition)
+dds = DESeq(dds)
+
+de_wt_G9a = data.frame(results(dds, contrast=c('condition', 'G9a', 'WT')))
+de_wt_LBR = data.frame(results(dds, contrast=c('condition', 'LBR', 'WT')))
+de_wt_G9a$signed_inv_padj = NA
+de_wt_G9a$signed_inv_padj[which(de_wt_G9a$log2FoldChange<0)] = de_wt_G9a$padj[which(de_wt_G9a$log2FoldChange<0)] - 1
+de_wt_G9a$signed_inv_padj[which(de_wt_G9a$log2FoldChange>0)] = 1 - de_wt_G9a$padj[which(de_wt_G9a$log2FoldChange>0)]
+
+de_wt_LBR$signed_inv_padj = NA
+de_wt_LBR$signed_inv_padj[which(de_wt_LBR$log2FoldChange<0)] = de_wt_LBR$padj[which(de_wt_LBR$log2FoldChange<0)] - 1
+de_wt_LBR$signed_inv_padj[which(de_wt_LBR$log2FoldChange>0)] = 1 - de_wt_LBR$padj[which(de_wt_LBR$log2FoldChange>0)]
+## and now let's look at the plots of one sample versus controll seperated by LAD
+## G9a
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gene_selection$class), title = 'G9a knockout vs Wildtype\nusing defined promoter classe', x_vec=c('ko_G9a_1', 'ko_G9a_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(G9a)', y_lab='log2(WT)', highlight=which(de_wt_G9a$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gene_selection$class==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nG9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gene_selection$class==state & de_wt_G9a$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly downregulated\nin G9a knockout using defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_G9a[which(gene_selection$class==state & de_wt_G9a$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly upregulated\nin G9a knockout using defined promoter classes', gp=gpar(fontsize=38)))
+
+ggplot(cbind.data.frame(de_wt_G9a[!is.na(de_wt_G9a$padj), ], lad_state=gene_selection$class[!is.na(de_wt_G9a$padj)]), aes(y=log10(baseMean), x = padj < 0.05 , colour=padj<0.05)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.6), alpha=0.3, size=0.3) + facet_wrap(~lad_state)
+
+ggplot(cbind.data.frame(de_wt_G9a[!is.na(de_wt_G9a$padj), ], lad_state=gene_selection$class[!is.na(de_wt_G9a$padj)]), aes(y=log2FoldChange, x = lad_state , colour=lad_state)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.6), alpha=0.3, size=0.3)
+
+
+ggplot(cbind.data.frame(de_wt_G9a[!is.na(de_wt_G9a$signed_inv_padj), ], lad_state=gene_selection$class[!is.na(de_wt_G9a$signed_inv_padj)]), aes(y=signed_inv_padj, x = lad_state , colour=lad_state)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.6), alpha=0.3, size=0.3)
+
+##LBR
+plotLog2(cbind.data.frame(fpm(dds), lad_state=gene_selection$lad_state), title = 'LBR knockout vs Wildtype\n defined promoter classe', x_vec=c('ko_LBR_1', 'ko_LBR_2'), y_vec = c('ko_WT_1', 'ko_WT_2'), x_lab='log2(LBR)', y_lab='log2(WT)', highlight=which(de_wt_LBR$padj<0.05)) + facet_wrap(~ lad_state)
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gene_selection$class==state),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significant genes\nLBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gene_selection$class==state & de_wt_LBR$log2FoldChange<0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly downregulated\nin LBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+plot_list = list()
+for (state in names(table(gene_selection$class))){
+    plot_list[[state]] = ggplot(data.frame(de_wt_LBR[which(gene_selection$class==state & de_wt_LBR$log2FoldChange>0),]), aes(x=padj<0.05)) + geom_bar(aes(y = (..count..)/sum(..count..), fill=padj<0.05)) + scale_y_continuous(labels=percent, limits=c(0,1)) +ggtitle(state) + geom_text(aes(y = ((..count..)/sum(..count..)), label = paste0('n=',..count..)), stat = "count", vjust = -0.25)
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['inactive']], plot_list[['not_repressed']], plot_list[['repressed']], nrow=1, top=textGrob('proportion of significantly upregulated\nin LBR knockout defined promoter classe', gp=gpar(fontsize=38)))
+
+
+ggplot(cbind.data.frame(de_wt_G9a[!is.na(de_wt_G9a$padj), ], lad_state=gene_selection$class[!is.na(de_wt_G9a$padj)]), aes(y=log10(baseMean), x = padj < 0.05 , colour=padj<0.05)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.6), alpha=0.3, size=0.3) + facet_wrap(~lad_state)
+
+```
+
+## save results
+
+```{r}
+fpm_table = fpm(dds)
+save(gff_genes, fpm_table, de_wt_G9a, de_wt_LBR, P, file='../results/cl20161025_G9a_LBR_KD_KO_expression.rData')
+
+```

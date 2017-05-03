@@ -1,0 +1,316 @@
+# knitr document van Steensel lab
+
+# Promoters looping out of LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+For the presentation Bas has to give in Paris I wanted to prepare some nice plots of the correlation between SuRE, GROcap and numbers of genes expressed.
+
+This is a continuation of 'cl20161104_SuRE_in_differential_LADs.Rmd'
+
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=15}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+load('../raw_data/biomart.rdata')
+
+```
+
+
+### SuRE data
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+#(arbitrary) cutoffs to define three groups of promoters:
+# LRS > 0 vs LRS < -1
+ggplot(P[P$LAD==1,],aes(x=LRS)) + geom_density() + geom_vline(xintercept=c(0, -1)) + ggtitle('density distribution of lamina repression score for LAD promoters')
+
+# SuRE > 0.3 vs SuRE < -0.3 vs SuRE > 0
+ggplot(P[P$LAD==1,],aes(x=SuRE)) + geom_density() + geom_vline(xintercept=c(0, -0.3, 0.3)) + ggtitle('density distribution of SuRE signal for LAD promoters')
+ggplot(P[P$GROcap < -3,],aes(x=SuRE)) + geom_density() + geom_vline(xintercept=c(0, -0.3, 0.3)) + ggtitle('density distribution of SuRE signal score\nfor LAD promoters which are not expressed (GROcap < -3)')
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "not_repressed", "inactive", 'boundary', 'iLAD')
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed', 'boundary'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) + scale_color_manual(values=COL_class)
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) + scale_color_manual(values=COL_class)
+
+```
+**conclusion:**
+
+I think the seperation between the not-repressed group and the other 2 groups is well defined. But I am doubtfull about the seperation between the seperation between inactive and repressed. But SuRE signal for promoters with GROcap < -2 or -3 can be used as continuous values seperating between inactive and repressed.
+
+## LAD promoter types and # of tissues expressed
+
+By far the clearest observation previously made, was the fact that not-repressed promoters were mainly expressed in a wide range of tissues ("housekeeping genes"), while inactive promoters were mainly tissue specific genes.
+
+```{r, fig.width=10, fig.height=10}
+
+ggplot(P, aes(x=SuRE, y=GROcap)) +
+    geom_point(size=0.1,color=COLi) +
+    geom_point(data=P[P$LAD ==1, ], aes(color=tissues_expressed), alpha=0.5, size=0.8) + scale_colour_gradient(low='blue',high='red')
+
+p_class = P[P$class != 'boundary',]
+ggplot(p_class, aes(x=class, y=tissues_expressed, color=class)) + geom_violin(alpha=0.3) + geom_point(data=p_class[p_class$class != 'iLAD', ], position=position_jitter(width=0.9), alpha=0.3) + scale_colour_manual(values=COL_class) 
+
+
+ggplot(P, aes(x=tissues_expressed, color=ifelse(P$LAD==1, 'LAD', 'iLAD'))) + geom_density() + ggtitle('# of tissues expressed for each promoter') + scale_colour_manual(values=COL_lad)
+
+P$tissue_exp_group = NA
+P$tissue_exp_group[P$tissues_expressed > 750 ] = '# tissues > 750'
+P$tissue_exp_group[P$tissues_expressed > 500 &
+                   P$tissues_expressed <= 750] = '500 < # tissues <= 750'
+P$tissue_exp_group[P$tissues_expressed > 250 &
+                   P$tissues_expressed <= 500] = '250 < # tissues <= 500'
+P$tissue_exp_group[P$tissues_expressed <= 250] = '# tissues <= 250'
+
+P$tissue_exp_group = factor(P$tissue_exp_group, levels=c('# tissues <= 250',
+                                                         '250 < # tissues <= 500',
+                                                         '500 < # tissues <= 750',
+                                                         '# tissues > 750'))
+
+ggplot(P[P$LAD ==1, ], aes(x=SuRE, y=tissues_expressed, color=class)) + geom_point() + scale_colour_manual(values=COL_class)
+
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], color='tomato', size=0.6) + 
+    geom_point(data=P[P$LAD ==1 & P$GROcap < -3, ], color='tomato4', size=0.6) 
+
+## just showing the cut-off I am using later on for promoters lowly expressed in GROcap 
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed', 'boundary'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), alpha=0.3, size=0.5) +
+    geom_point(data=P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(color=class), size=1) +
+    scale_color_manual(values=COL_class) + 
+    ggtitle('low expression cut-off subset (GRO-cap < -2)')
+## just showing the cut-off I am using later on for promoters not expressed in GROcap 
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed', 'boundary'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), alpha=0.3, size=0.5) +
+    geom_point(data=P[P$LAD ==1 & P$GROcap < -3, ], aes(color=class), size=1) +
+    scale_color_manual(values=COL_class) + 
+    ggtitle('no expression subset (GRO-cap < -3)')
+
+
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3, ], aes(x=SuRE, y=tissues_expressed, color=class)) + geom_point() + scale_colour_manual(values=COL_class) + ggtitle('LAD promoters not expressed in K562 (GROcap < -3)\nSuRE expression vs tissue specificity') + xlab('log10(SuRE)') + ylab('# of tissues expressed (CAGE database)') + geom_smooth(aes(color=NULL), method='lm') + ylim(0,850)
+
+ggplot(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(x=SuRE, y=tissues_expressed, color=class)) + geom_point() + scale_colour_manual(values=COL_class) + ggtitle('LAD promoters lowly expressed in K562 (GROcap < -2)\nSuRE expression vs tissue specificity') + xlab('log10(SuRE)') + ylab('# of tissues expressed (CAGE database)') + geom_smooth(aes(color=NULL), method='lm') + ylim(0,850)
+
+
+
+ggplot(P[P$LAD ==1, ], aes(x=SuRE, color=tissue_exp_group)) +
+    geom_density() +
+    ggtitle('overal density of SuRE signal for different groups of tissue specificity')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3, ], aes(x=SuRE, color=tissue_exp_group)) +
+    geom_density() +
+    ggtitle('density of SuRE signal for different groups of tissue specificity\nLAD promoters not expressed in K562( GROcap < -3)')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(x=SuRE, color=tissue_exp_group)) +
+    geom_density() +
+    ggtitle('density of SuRE signal for different groups of tissue specificity\nLAD promoters lowly expressed in K562( GROcap < -2)')
+
+P$SuRE_group = factor(ceiling(P$SuRE * 2)/2)
+sure_levels = levels(P$SuRE_group)
+r = 2:(length(sure_levels)-1)
+levels(P$SuRE_group)[r] = paste(sure_levels[r-1], '< SuRE <=', sure_levels[r])
+levels(P$SuRE_group)[1] = paste('SuRE <=', sure_levels[1])
+levels(P$SuRE_group)[length(sure_levels)] = paste('SuRE >',
+                                                  sure_levels[length(sure_levels)])
+
+
+ggplot(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(x=SuRE_group, fill=tissue_exp_group, width=0.9)) + geom_bar(position='dodge') + geom_vline(xintercept=3.5) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle('histogram of SuRE signal for different groups of tissue specificity\nLAD promoters lowly expressed in K562( GROcap < -2)')
+
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3, ], aes(x=SuRE_group, fill=tissue_exp_group, width=0.9)) + geom_bar(position='dodge') + geom_vline(xintercept=7.5) + theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    ggtitle('histogram of SuRE signal for different groups of tissue specificity\nLAD promoters not expressed in K562( GROcap < -3)')
+
+
+
+
+cor(P[P$LAD ==1 & P$GROcap < -3, 'SuRE'], P[P$LAD ==1 & P$GROcap < -3, 'tissues_expressed'], method='pearson')
+
+p_low = P[P$LAD==1 & P$GROcap < -3,c('SuRE', 'tissues_expressed')]
+summary(lm(SuRE ~ tissues_expressed, p_low))
+
+
+cor(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, 'SuRE'], P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, 'tissues_expressed'], method='pearson')
+
+p_low = P[P$LAD==1 & P$GROcap < -2 & P$GROcap > -3,c('SuRE', 'tissues_expressed')]
+summary(lm(SuRE ~ tissues_expressed, p_low))
+
+```
+
+**conclusion:**
+
+There is a clear correlation between tissue specificity and promoter classification. But just based on the first plots there could be arguments that the repressed group is just a combination of outliers in the not-repressed and inactive group. However looking at the promoters with litle or no GROcap signal, it is clear that SuRE signal for these promoters also strongly correlates with the tissue specificity (P < 2*10^-16).
+
+```{r}
+cpg_ranges = import.bed('../raw_data/cpgIslandExtUnmasked_140601.bed')
+p_gr = makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                           start=P$txStart,
+                                           end=P$txEnd,
+                                           strand=P$strand,
+                                           row.names=rownames(P))) 
+P$cpg_distance = mcols(distanceToNearest(p_gr, cpg_ranges))$distance
+P$cpg_class = NA
+P$cpg_class[P$cpg_distance < 1000] = 'CpG'
+P$cpg_class[P$cpg_distance > 1000] = 'not CpG'
+P$cpg_class = factor(P$cpg_class, levels=c('not CpG', 'CpG'))
+
+g_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    p = ggplot(subset, aes(x=cpg_class, fill=cpg_class)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between cpg and\nnon-cpg promoter classes\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) 
+    if(class == 'inactive'){
+        legend = g_legend(p)
+    }
+
+    plot_list[[class]] = p + theme(legend.position="none", 
+                                   axis.title.y=element_blank(),
+                                   axis.title.x=element_blank())
+}
+plot_list[['legend']] = legend
+grid.arrange(plot_list[[1]],
+             plot_list[[2]],
+             plot_list[[3]],
+             plot_list[[4]],
+             plot_list[[5]],
+             nrow=1, widths=c(rep(2,4), 1))
+
+
+
+
+ggplot(P[P$LAD ==1, ], aes(x=SuRE, color=cpg_class)) +
+    geom_density() +
+    ggtitle('overal density of SuRE signal for promoters with CpG vs without CpG island')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3, ], aes(x=SuRE, color=cpg_class)) +
+    geom_density() +
+    ggtitle('density of SuRE signal for promoters with CpG vs without CpG\nLAD promoters not expressed in K562( GROcap < -3)')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(x=SuRE, color=cpg_class)) +
+    geom_density() +
+    ggtitle('density of SuRE signal for promoters with CpG vs without CpG\nLAD promoters lowly expressed in K562( GROcap < -2)')
+
+
+ggplot(P[P$LAD ==1 & P$GROcap < -2 & P$GROcap > -3, ], aes(x=cpg_class, y=SuRE, color=cpg_class)) + geom_violin(alpha=0.4) + geom_point(position=position_jitter(width=0.9), alpha=0.3) +
+    ggtitle('violin plot of SuRE signal promoters with CpG vs without CpG\nLAD promoters lowly expressed in K562( GROcap < -2)')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3, ], aes(x=cpg_class, y=SuRE, color=cpg_class)) + geom_violin(alpha=0.4) + geom_point(position=position_jitter(width=0.9), alpha=0.3) +
+    ggtitle('violin plot of SuRE signal promoters with CpG vs without CpG\nLAD promoters lowly expressed in K562( GROcap < -3)')
+
+ggplot(P[P$LAD ==1 & P$GROcap < -3 & P$tissues_expressed < 300, ], aes(x=cpg_class, y=SuRE, color=cpg_class)) + geom_violin(alpha=0.4) + geom_point(position=position_jitter(width=0.9), alpha=0.3) +
+    ggtitle('violin plot of SuRE signal promoters with CpG vs without CpG\nLAD promoters lowly expressed in K562( GROcap < -3)')
+
+
+p_low = P[P$LAD==1 & P$GROcap < -3,]
+summary(lm(SuRE ~ cpg_class, p_low))
+
+
+
+p_low = P[P$LAD==1 & P$GROcap < -2 & P$GROcap > -3,]
+summary(lm(SuRE ~ cpg_class, p_low))
+
+
+p_low = P[P$LAD==1 & P$GROcap < -3,]
+summary(lm(SuRE ~ tissues_expressed + cpg_class, p_low))
+
+
+
+p_low = P[P$LAD==1 & P$GROcap < -2 & P$GROcap > -3,]
+summary(lm(SuRE ~ tissues_expressed + cpg_class, p_low))
+
+```
+
+**conclusion:**
+
+Seems like the correlation between our classes and CpG islands is because of the relation between CpG and tissue specificities. If you create a simple linear model with # of tissues expressed and cpg class together, CpG association points even more towards a negative correlation in promoters with GROcap < -3 (not at all significant though).

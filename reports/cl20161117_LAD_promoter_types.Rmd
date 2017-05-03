@@ -1,0 +1,792 @@
+# knitr document van Steensel lab
+
+# Promoters looping out of LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+We would like to explore the effect of LADs on gene expression. When comparing Joris' SuRE data which explorers promoter activity outside of the dna-context (like lamina assosiation) and GroCAP data which explorers promoter activity in the context, one can define 3 groups of promoter in LADs: repressed, inactive and non repressed. The inactive promoters show no activity in both groCAP and SuRE data, the repressed show activity only in SuRE data, the non repressed group show activity in groCAP data as well as SuRE data. 
+We would like to see what defines these three groups.
+
+This is a continuation of 'cl20161104_SuRE_in_differential_LADs.Rmd'
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+load('../raw_data/biomart.rdata')
+
+```
+
+### gene expression
+
+```{r, fig.width=10, fig.height=10}
+file_list = list.files('../raw_data/expression', pattern='ReadsPerGene', full.names=T)
+
+sample_id_list = lapply(file_list, function(x){
+                        file = strsplit(x,'/')[[1]][4]
+                        return(gsub('ReadsPerGene.out.tab', '', file))
+                        })
+count_list = lapply(file_list, function(x){
+                count_table = read.table(x, stringsAsFactors=F)
+                colnames(count_table) = c('name', 'unstranded', 'sense', 'antisense')
+                return(count_table)
+            })
+names(count_list) = unlist(sample_id_list)
+
+
+## since there are different machines, they might have different GC biases
+## for GC bias we have to use hg19 genome
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+## let's focus on genes located on actual chromosomes
+gff_ranges = gff_ranges[seqnames(gff_ranges) %in% seqlevels(gff_ranges)[1:25]]
+seqlevels(gff_ranges) = seqlevels(gff_ranges)[1:25]
+
+ens_gene_ranges = gff_ranges[gff_ranges$gene_id %in% count_list[[1]][,1]]
+
+
+
+colData = DataFrame(cell_type=c(rep('ESC', 2), rep('RPE',3), rep("HT1080", 3),
+                                rep("Jurkat", 2), rep('K562', 2), rep('SupT1', 3)),
+                    row.names=c('H7_hESC_rep1', 'H7_hESC_rep2',
+                                'hfRPESeq012611_GSM898967', 'hfRPESeq090910_GSM898966', 
+                                'hfRPESeq072611_GSM1099813',
+                                'HT1080_ctrl_rep1_GSM1483942',
+                                'HT1080_ctrl_rep2_GSM1483943',
+                                'HT1080_ctrl_rep3_GSM1483944', 'J4_ctrl_rep1',
+                                'J4_ctrl_rep2', 'K562_rep1', 'K562_rep2',
+                                'SupT1_Mock_12hr_rep1', 'SupT1_Mock_12hr_rep2',
+                                'SupT1_Mock_12hr_rep3'))
+
+unstranded_list = lapply(count_list,function(x){
+        count = x[5:nrow(x),2]
+        names(count) = x[5:nrow(x), 1]
+        return(count)
+    })
+count_table = do.call(cbind, unstranded_list)
+colnames(count_table) = names(count_list)
+count_table = count_table[,-grep('KBM7', names(count_list))]
+
+## without quantile normalization
+exp = SummarizedExperiment(assays=list(counts=count_table[, rownames(colData)]), rowRanges=ens_gene_ranges, colData=colData)
+dds_direct = DESeqDataSet(exp, design = ~ cell_type)
+dds_direct = DESeq(dds_direct)
+fpm_direct = fpm(dds_direct)
+fpm_direct = fpm_direct + min(fpm_direct[fpm_direct!=0])/2
+ggplot(melt(fpm_direct), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values')
+
+
+```
+
+
+### SuRE data
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = cbind.data.frame(P, color=COL[P$class])
+p_classes = p_classes[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6)
+
+```
+
+
+### LAD-data
+
+```{r, fig.width=10, fig.height=10}
+#DamID data:
+load("../raw_data/CdG140714humanLmnb1wK562.rData") #Lamin B1 DamID data compiled by Carolyn de Graaf
+## make column names more descriptive of sample
+colnames(allHumanAvHg19)[5:16] = 
+    colnames(allHumanStateHg19)[5:16] = c('Tig3', 'ESC', 'HT1080', 'Jurkat', 'SupT1',
+                                          'T2N', 'T1DS', 'LS174T', 'RPE', 'Tig3Guelen',
+                                          'KBM7', 'K562')
+
+## remove T1DS and T2N (fibroblasts of down syndrom twin) and Tig3Guelen.
+## because T1DS and T2N have weird correlation with gene expression and Tig3Guelen
+## is from a different platform
+cell_selection = !colnames(allHumanAvHg19) %in% c('T2N', 'T1DS', 'Tig3Guelen')
+
+lad_avg_probe = allHumanAvHg19[, cell_selection]
+lad_hmm = allHumanStateHg19[, cell_selection]
+
+```
+
+### CpG island data
+
+I previously downloaded CpG island data from UCSC:
+
+orriginal file: cpgIslandExtUnmasked.txt.gz
+
+source:
+  http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/cpgIslandExtUnmasked.txt.gz
+
+command:
+  wget --timestamping http://hgdownload.soe.ucsc.edu/goldenPath/hg19/database/cpgIslandExtUnmasked.txt.gz   
+  gunzip -c cpgIslandExtUnmasked.txt.gz │| awk '{print $2"\t"$3"\t"$4"\t"$5$6}' > cpgIslandExtUnmasked_140601.bed
+
+last modified: 01-06-14
+
+doi:10.1016/0022-2836(87)90689-9
+
+
+
+```{r, fig.width=10, fig.height=10}
+cpg_ranges = import.bed('../raw_data/cpgIslandExtUnmasked_140601.bed')
+
+```
+
+### genomic ranges and links between data types.
+
+```{r, fig.width=10, fig.height=10}
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #number of unique promoters
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+table(P$ensembl_gene_id %in% row.names(fpm_direct))
+table(row.names(fpm_direct) %in% P$ensembl_gene_id)
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              ensembl_gene_id=P$ensembl_gene_id,
+                                              ensembl_transcript_id=P$ensembl_transcript_id),
+                                              keep.extra.columns=TRUE) 
+
+lad_gr <- makeGRangesFromDataFrame(data.frame(seqnames = lad_hmm$seqname,
+                                              start = lad_hmm$start,
+                                              end = lad_hmm$end,
+                                              row.names=rownames(lad_hmm)))
+
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+distance = distanceToNearest(tss_gr, cpg_ranges)
+tss_gr$cpg_distance = mcols(distance)$distance
+
+
+P$cpg_class = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$ensembl_transcript_id
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$ensembl_transcript_id
+
+P$cpg_class[P$ensembl_transcript_id %in% cpg_prom] = 'CpG'
+P$cpg_class[P$ensembl_transcript_id %in% non_cpg_prom] = 'non_CpG'
+
+P$cpg_subset = NA
+P$cpg_subset[P$cpg_class=='non_CpG'] = 'non_CpG'
+P$cpg_subset[P$cpg_class=='CpG'] = 'low_CpG'
+
+cpg_name = cpg_ranges$name
+cpg_score = as.numeric(sub('CpG:','', cpg_name))
+
+
+middle_cpg_gr = cpg_ranges[cpg_score > 30]
+d_middle = distanceToNearest(tss_gr, middle_cpg_gr)
+
+P$cpg_subset[from(d_middle)][mcols(d_middle)$distance < 1000] = 'middle_CpG'
+
+high_cpg_gr = cpg_ranges[cpg_score > 100]
+d_high = distanceToNearest(tss_gr, high_cpg_gr)
+
+P$cpg_subset[from(d_high)][mcols(d_high)$distance < 1000] = 'high_CpG'
+
+lad_overlap = findOverlaps(gene_gr, lad_gr)
+
+gene_avg_lad = aggregate(subjectHits(lad_overlap), 
+                         list(queryHits(lad_overlap)), function(x){
+                            mean(lad_avg_probe[x,'K562'])
+                         })
+P$avg_lad = NaN
+P[gene_avg_lad[,1], 'avg_lad'] = gene_avg_lad[,2]
+
+## full region around TSS
+F_full = 22000
+full_region_gr = gene_gr
+full_start = full_region_gr$tss - F_full
+full_start = ifelse(full_start<1,1,full_start)
+full_end = full_region_gr$tss + F_full
+ranges(full_region_gr) = IRanges(full_start, full_end)
+
+```
+
+
+## CpG island promoters
+```{r, fig.width=10, fig.height=10}
+
+plot_list = list()
+
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=cpg_class, fill=cpg_class)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between cpg and\nnon-cpg promoter classes\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25)
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+
+plot_list = list()
+p_lad = P[P$LAD == 1,]
+for (cpg_class in c('CpG', 'non_CpG')){
+    subset_P = P[P$cpg_class == cpg_class, ]
+    subset = p_lad[p_lad$cpg_class == cpg_class, ]
+    n = paste('n =', nrow(subset))
+    plot_list[[cpg_class]] = ggplot(subset_P, aes(x=SuRE, y=GROcap)) + 
+                                geom_point(size=0.1,color=COLi) + 
+                                geom_point(data=subset, aes(color=cpg_class), size=0.6) +
+                                ggtitle(paste('SuRE vs GRO-cap signal',
+                                               title_list[[cpg_class]],
+                                               n, sep='\n'))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+ggplot(p_lad, aes(x=cpg_class, y=GROcap, color=cpg_class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), size=0.3, alpha=0.3) + ggtitle('GROcap signal LADs\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+ggplot(p_lad, aes(x=GROcap, color=cpg_class)) + geom_density() + ggtitle('GROcap signal LADs with SuRE signal > 0.3\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+
+ggplot(p_lad[p_lad$SuRE>0.3, ], aes(x=cpg_class, y=GROcap, color=cpg_class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), size=0.3, alpha=0.3) + ggtitle('GROcap signal LADs with SuRE signal > 0.3\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+ggplot(p_lad[p_lad$SuRE>0.3, ], aes(x=GROcap, color=cpg_class)) + geom_density() + ggtitle('GROcap signal LADs with SuRE signal > 0.3\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+
+ggplot(p_lad[p_lad$SuRE>0.75, ], aes(x=cpg_class, y=GROcap, color=cpg_class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), size=0.3, alpha=0.3) + ggtitle('GROcap signal LADs with SuRE signal > 0.75\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+ggplot(p_lad[p_lad$SuRE>0.75, ], aes(x=GROcap, color=cpg_class)) + geom_density() + ggtitle('GROcap signal LADs with SuRE signal > 0.75\nCpG promoters (cpg-island < 1000bp) vs non-CpG promoters')
+
+ggplot(p_lad, aes(x=cpg_class, y=SuRE, color=cpg_class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), size=0.3, alpha=0.3)
+plot_list = list()
+for (cpg_class in c('CpG', 'non_CpG')){
+    subset_P = P[P$cpg_class == cpg_class, ]
+    subset = p_lad[p_lad$cpg_class == cpg_class, ]
+    n = paste('n =', nrow(subset))
+    plot_list[[cpg_class]] = ggplot(subset_P, aes(x=SuRE, y=GROcap)) + 
+                                geom_point(size=0.1,color=COLi) + 
+                                geom_point(data=subset, aes(color=cpg_class), size=0.6) +
+                                ggtitle(paste('SuRE vs GRO-cap signal',
+                                               title_list[[cpg_class]],
+                                               n, sep='\n'))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+```
+
+**conclusion:**
+CpG island promoters in LADs tend to have a higher GRO-seq signal and are less effected by their LAD-state than non-CpG promoters. Offcourse one of the reasons for this is the fact that non-CpG promoters tend to be more cell-type specific and therefore the right factors to activate the promoter might be missing. But using our SuRE data, we can filter out these inactive promoters. After filtering, still CpG island promoters tend to be more active.
+
+
+## Nr. of Tissues expressed
+
+So we mainly got CpG island promoters, maybe there is even an higher correlation with the number of tissues in which a gene is expressed
+
+```{r, fig.width=10, fig.height=10}
+ggplot(P, aes(x=SuRE, y=GROcap)) +
+    geom_point(size=0.1,color=COLi) +
+    geom_point(data=p_lad, aes(color=tissues_expressed), alpha=0.5, size=0.8) + scale_colour_gradient(low='blue',high='red')
+
+
+p_class = P[P$class %in% c('repressed','not_repressed','inactive'),]
+alpha_vec = rep(0.1, nrow(p_class))
+laura_vec = p_class$name %in% c('ENST00000327470.3', 'ENST00000370894.5',
+                                'ENST00000467578.2', 'ENST00000524915.1',
+                                'ENST00000534056.1', 'ENST00000284984.3',
+                                'ENST00000370526.2', 'ENST00000396533.1',
+                                'ENST00000569736.1')
+p_class$jitter_class = jitter(as.numeric(factor(p_class$class)))
+ggplot(p_class, aes(x=class, y=tissues_expressed, color=class)) + geom_violin(alpha=0.3) + geom_point(aes(x=jitter_class), alpha=0.1) + geom_point(data=p_class[laura_vec,], aes(x=jitter_class), alpha=1) + scale_colour_manual(values=COL) + geom_text(data=p_class[laura_vec&p_class$class=='repressed',], aes(y=tissues_expressed+12, x=jitter_class, label=name2))
+
+```
+
+**conclusion:**
+
+As expected, the inactive genes are correlated with genes expressed in some tissues only. These genes are more likely to require specific factors for their transcription. The non-repressed genes clearly show the exact opposite correlation and are generally expressed in a lot of different tissues.
+
+## more stringent lamina association
+
+Since the hidden markov model might assign LAD-state to genes that are actually on a really small inter-LAD to the LAD-state, maybe we should be more stringent in what we call LAD. A good measure would be to have the mean probe signal over the complete gene above a threshold (let's say 0.5).
+
+```{r, fig.width=10, fig.height=10}
+subset_P = P[width(gene_gr) > 10000 & P$avg_lad > 0.5, ]
+ggplot(P, aes(x=SuRE, y=GROcap)) +
+    geom_point(size=0.1,color=COLi) +
+    geom_point(data=subset_P, aes(color=tissues_expressed), alpha=0.5, size=0.8) + scale_colour_gradient(low='blue',high='red')
+
+ggplot(subset_P[subset_P$class %in% c('repressed','not_repressed','inactive'),], aes(x=class, y=tissues_expressed, color=class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), alpha=0.4)
+
+
+subset_P = P[width(gene_gr) > 10000 & P$avg_lad > 0.75, ]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=subset_P, aes(color=tissues_expressed), alpha=0.5, size=0.8) + scale_colour_gradient(low='blue',high='red')
+
+ggplot(subset_P[subset_P$class %in% c('repressed','not_repressed','inactive'),], aes(x=class, y=tissues_expressed, color=class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.9), alpha=0.4)
+```
+
+**conclusion:**
+
+Even when the average lamina association is high in the gene-body, in general, genes expressed in lot's of different tissues can escape this suppression. This is probably linked to the fact that the promoter can be outside of the lamina.
+
+
+
+## Are LAD-dips linked to CpG or expression?
+
+In previous analysis we saw that promoters showed a dip in lamina interaction. This could be because these genes are active, but also because it's a feature of CpG island promoters. Since as we saw, CpG island promoters tend to avade suppresion by LADs more often.
+
+```{r, fig.width=10, fig.height=10}
+F=22000
+
+Egr.p = gene_gr[width(gene_gr)>F]
+p_match = match(Egr.p$ensembl_gene_id, P$ensembl_gene_id)
+P_start = P[p_match, 'tss'] - F
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F
+ranges(Egr.p) = IRanges(P_start, P_end)
+
+h<-findOverlaps(Egr.p, lad_gr)
+oENSG<-Egr.p[from(h)]$ensembl_gene_id
+oPOS<-ifelse(strand(Egr.p[from(h)])=='+',
+             (start(lad_gr[to(h)])+end(lad_gr[to(h)]))/2 - start(Egr.p[from(h)]) -F,
+             end(Egr.p[from(h)]) - (start(lad_gr[to(h)])+end(lad_gr[to(h)]))/2 -F)
+
+         #coordinates of all overlapping probes relative to the gene starts
+oVAL<- lad_probe_qnorm[names(lad_gr[to(h)]),]
+
+pdf('lad_dips_class_cpg_qnorm.pdf', width=15, height=10)
+#plot:
+par(mfrow=c(1,6))
+for(celltype in unique(colData$cell_type))
+ {for(i in names(COL)) #for the three gene classes
+   {for (cpg_class in c('CpG', 'non_CpG')){
+        s<-unique(P$ensembl_gene_id[which(P$class==i & P$cpg_class==cpg_class)])
+        s<-s[!is.na(s)]
+        w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+        subPOS<-oPOS[w]
+        subVAL<-oVAL[w, celltype]
+        o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+        subPOS<-subPOS[o]
+        subVAL<-subVAL[o]
+        #determine runmed k:
+        wsize<-floor(length(subPOS)/25) #4% of all datapoints in the set
+        if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+        #plot:
+        plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9, ylim=c(-1,2),
+             main=paste(celltype, i, length(s), cpg_class), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+        lines(subPOS, runmed(subVAL, k=wsize), col=COL[i], lwd=2)
+        abline(v=0, lty="dotted")
+     }
+    
+   }
+ }
+dev.off()
+```
+
+**conclusion:**
+Either CpG island promoters are better annotated, or the escaping the lamina interaction is a specific feature of CpG island promoters. Unfortunately there are not enough data points in some groups.
+
+## DamID signal split by CpG and GROcap
+Maybe in our previous analysis even though genes were clasified in repressed or inactive subsets they still showed some activity in GROcap signal, but just more, or none in SuRE.
+
+```{r, fig.width=10, fig.height=10}
+ggplot(P, aes(x=GROcap)) + geom_density() + geom_vline(xintercept=-3) + geom_vline(xintercept=-1)
+
+
+par(mfrow=c(1,4))
+for(celltype in unique(colData$cell_type))
+ {for(active in c(TRUE, FALSE)) 
+   {for (cpg_class in c('CpG', 'non_CpG')){
+        if (active){
+            selection = which(P$LAD==1 & P$GROcap > -1 & P$cpg_class==cpg_class)
+        } else {
+            selection = which(P$LAD==1 & P$GROcap < -3 & P$cpg_class==cpg_class)
+        }
+        s<-unique(P$ensembl_gene_id[selection])
+        s<-s[!is.na(s)]
+        w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+        subPOS<-oPOS[w]
+        subVAL<-oVAL[w, celltype]
+        o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+        subPOS<-subPOS[o]
+        subVAL<-subVAL[o]
+        #determine runmed k:
+        wsize<-floor(length(subPOS)/25) #4% of all datapoints in the set
+        if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+        title = ifelse(active, paste(celltype, 'GROcap > -1\n', length(s), cpg_class, '\nLAD in K562'),
+                       paste(celltype, 'GROcap < -3\n', length(s), cpg_class, '\nLAD in K562'))
+        #plot:
+        plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9, ylim=c(-0.5,1),
+             main=title, xlab="position relative to gene start (bp)", ylab="DamID logratio")
+        lines(subPOS, runmed(subVAL, k=wsize), col=COL[i], lwd=2)
+        abline(v=0, lty="dotted")
+     }
+    
+   }
+ }
+
+pdf('not_expressed_cpg_promoters.pdf')
+ggplot(P, aes(x=GROcap)) + geom_density() + geom_vline(xintercept=-3) 
+par(mfrow=c(1,2))
+for(celltype in unique(colData$cell_type))
+ {for(active in c(FALSE)) 
+   {for (cpg_class in c('CpG', 'non_CpG')){
+        if (active){
+            selection = which(P$LAD==1 & P$GROcap > -1 & P$cpg_class==cpg_class)
+        } else {
+            selection = which(P$LAD==1 & P$GROcap < -3 & P$cpg_class==cpg_class)
+        }
+        s<-unique(P$ensembl_gene_id[selection])
+        s<-s[!is.na(s)]
+        w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+        subPOS<-oPOS[w]
+        subVAL<-oVAL[w, celltype]
+        o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+        subPOS<-subPOS[o]
+        subVAL<-subVAL[o]
+        #determine runmed k:
+        wsize<-floor(length(subPOS)/25) #4% of all datapoints in the set
+        if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+        title = ifelse(active, paste(celltype, 'GROcap > -1\n', length(s), cpg_class, '\nLAD in K562'),
+                       paste(celltype, 'GROcap < -3\n', length(s), cpg_class, '\nLAD in K562'))
+        #plot:
+        plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9, ylim=c(-0.5,1),
+             main=title, xlab="position relative to gene start (bp)", ylab="DamID logratio")
+        lines(subPOS, runmed(subVAL, k=wsize), col=COL[i], lwd=2)
+        abline(v=0, lty="dotted")
+     }
+    
+   }
+ }
+dev.off()
+
+```
+
+**conclusion:**
+
+It really seems like CpG island promoters escape lamina interaction, even if they are not active. But also in non-CpG promoters there seems to be a tendency of the promoter to escape the Lamina environment.
+
+```{r, fig.width=10, fig.height=10}
+pdf('subsets_CpG')
+for (lmnb1_file in c('../raw_data/rep2_pLT_LMNB1_0.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_0_1.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_1.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_10.counts.txt',
+                     '../raw_data/rep2_pT_LMNB1.counts.txt')){
+  lmnb1_count = read.table(lmnb1_file)
+  dam_file = sub('LMNB1', 'Dam', lmnb1_file)
+  dam_count = read.table(dam_file)
+  colnames(lmnb1_count) = colnames(dam_count) = c('seqnames', 'start', 'end', 'count')
+  lmnb1_gr = makeGRangesFromDataFrame(lmnb1_count)
+
+  name = strsplit(lmnb1_file,'[/.]')[[1]][5]
+  h<-findOverlaps(Egr.p, lmnb1_gr)
+  oENSG<-Egr.p[from(h)]$ensembl_gene_id
+  oPOS<-ifelse(strand(Egr.p[from(h)])=='+',
+               (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 - start(Egr.p[from(h)]) -F,
+               end(Egr.p[from(h)]) - (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 -F)
+
+           #coordinates of all overlapping probes relative to the gene starts
+  lmnb1_vec <- lmnb1_count[to(h), 'count']
+  dam_vec <- dam_count[to(h), 'count']
+
+
+  #plot:
+
+  par(mfrow=c(1,3))
+  for (i in names(COL)){
+    s<-unique(P$ensembl_gene_id[which(P$class==i) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,6))
+  for(i in names(COL)) #for the three gene classes
+     {for (cpg_class in c('CpG', 'non_CpG')){
+          s<-unique(P$ensembl_gene_id[which(P$class==i & P$cpg_class==cpg_class)])
+          s<-s[!is.na(s)]
+          w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+          subPOS<-oPOS[w]
+          subLMNB1 <-lmnb1_vec[w]
+          subDam <-dam_vec[w]
+          o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+          subPOS<-subPOS[o]
+          subLMNB1<-subLMNB1[o]
+          subDam<-subDam[o]
+          #determine runmed k:
+          wsize<-floor(length(subPOS)/10) #2% of all datapoints in the set
+          if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+          #plot:
+          run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                          runsum(Rle(subDam), k=wsize, endrule='constant'))
+          plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+               main=paste('K562', name, '\n', i, length(s), cpg_class), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+          lines(subPOS, run_log2, col=COL[i], lwd=2)
+          abline(v=0, lty="dotted")
+       }
+      
+  }
+  par(mfrow=c(1,2))
+  for (cpg_class in c('CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_class==cpg_class & P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_class), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(cpg_class=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (cpg_class in c('CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_class==cpg_class & P$GROcap< -3 &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_class, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(cpg_class=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+
+  par(mfrow=c(1,2))
+  for (cpg_class in c('CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_class==cpg_class & P$GROcap> -1 &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_class, 'GROcap > -1)', xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data"))
+    lines(subPOS, run_log2, col=ifelse(cpg_class=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(2,6))
+  for(i in names(COL)) #for the three gene classes
+     {for (cpg_subset in c('high_CpG', 'middle_CpG', 'low_CpG', 'non_CpG')){
+          s<-unique(P$ensembl_gene_id[which(P$class==i & P$cpg_subset==cpg_subset)])
+          s<-s[!is.na(s)]
+          w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+          subPOS<-oPOS[w]
+          subLMNB1 <-lmnb1_vec[w]
+          subDam <-dam_vec[w]
+          o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+          subPOS<-subPOS[o]
+          subLMNB1<-subLMNB1[o]
+          subDam<-subDam[o]
+          #determine runmed k:
+          wsize<-floor(length(subPOS)/10) #2% of all datapoints in the set
+          if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+          #plot:
+          run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                          runsum(Rle(subDam), k=wsize, endrule='constant'))
+          plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+               main=paste('K562', name, '\n', i, length(s), cpg_subset), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+          lines(subPOS, run_log2, col=COL[i], lwd=2)
+          abline(v=0, lty="dotted")
+       }
+      
+  }
+  par(mfrow=c(1,4))
+  for (cpg_subset in c('high_CpG', 'middle_CpG', 'low_CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_subset==cpg_subset & P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_subset), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(cpg_subset=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,4))
+  for (cpg_subset in c('high_CpG', 'middle_CpG', 'low_CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_subset==cpg_subset & P$GROcap< -3 &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_subset, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(cpg_subset=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+
+  par(mfrow=c(1,4))
+  for (cpg_subset in c('high_CpG', 'middle_CpG', 'low_CpG', 'non_CpG')){
+    s<-unique(P$ensembl_gene_id[which(P$cpg_subset==cpg_subset & P$GROcap> -1 &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), cpg_subset, 'GROcap > -1)', xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data"))
+    lines(subPOS, run_log2, col=ifelse(cpg_subset=='CpG', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+}
+dev.off()
+
+```
+ 
+
+**conclusion:**
+
+Looking at the log2(dam-lamin / dam-only) signal of Tom's data it appears that there is a high correlation between promoter expression and dipping out of the lamina. While in the profiles from microarray data it appeared that this was mainly because CpG island promoters showec this behavior (even when inactive), from Tom's data it appears that activity is more highly correlating than "CpG-ness".

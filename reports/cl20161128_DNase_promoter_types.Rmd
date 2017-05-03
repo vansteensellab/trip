@@ -1,0 +1,480 @@
+# knitr document van Steensel lab
+
+# Promoters looping out of LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+We would like to explore the effect of LADs on gene expression. When comparing Joris' SuRE data which explorers promoter activity outside of the dna-context (like lamina assosiation) and GroCAP data which explorers promoter activity in the context, one can define 3 groups of promoter in LADs: repressed, inactive and non repressed. The inactive promoters show no activity in both groCAP and SuRE data, the repressed show activity only in SuRE data, the non repressed group show activity in groCAP data as well as SuRE data. 
+We would like to see what defines these three groups.
+
+This is a continuation of 'cl20161104_SuRE_in_differential_LADs.Rmd'
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+load('../raw_data/biomart.rdata')
+
+```
+
+### SuRE data
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+# LRS > 0 vs LRS < -1
+ggplot(P[P$LAD==1,],aes(x=LRS)) + geom_density() + geom_vline(xintercept=c(0, -1))
+
+# SuRE > 0.3 vs SuRE < -0.3 vs SuRE > 0
+ggplot(P[P$LAD==1,],aes(x=SuRE)) + geom_density() + geom_vline(xintercept=c(0, -0.3, 0.3))
+
+
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = cbind.data.frame(P, color=COL[P$class])
+p_classes = p_classes[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6)
+
+```
+
+### genomic ranges and links between data types.
+
+```{r, fig.width=10, fig.height=10}
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #number of unique promoters
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+table(P$ensembl_gene_id %in% row.names(fpm_direct))
+table(row.names(fpm_direct) %in% P$ensembl_gene_id)
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              ensembl_gene_id=P$ensembl_gene_id,
+                                              ensembl_transcript_id=P$ensembl_transcript_id),
+                                              keep.extra.columns=TRUE) 
+
+dnase_rep1 = import.bed('../raw_data/DNase-seq/K562_rep1_ENCSR000EPC_hotspots_broadPeak.bed')
+dnase_rep2 = import.bed('../raw_data/DNase-seq/K562_rep1_ENCSR000EPC_hotspots_broadPeak.bed')
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+
+rep1_dist = distanceToNearest(tss_gr, dnase_rep1)
+rep2_dist = distanceToNearest(tss_gr, dnase_rep2)
+
+P$dnase_state = NA
+P$dnase_state[mcols(rep1_dist)$distance==0 & mcols(rep2_dist)$distance==0] = 'DNase'
+P$dnase_state[mcols(rep1_dist)$distance>1000 & mcols(rep2_dist)$distance>1000] = 'not DNase'
+
+
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=dnase_state, fill=dnase_state)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between dnase states\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) + 
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+```
+
+
+```{r, fig.width=10, fig.height=10}
+pdf('dnase_prom.pdf')
+F=22000
+
+Egr.p = gene_gr[width(gene_gr)>F]
+p_match = match(Egr.p$ensembl_gene_id, P$ensembl_gene_id)
+P_start = P[p_match, 'tss'] - F
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F
+ranges(Egr.p) = IRanges(P_start, P_end)
+
+for (lmnb1_file in c('../raw_data/rep2_pLT_LMNB1_0.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_0_1.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_1.counts.txt',
+                     '../raw_data/rep2_pLT_LMNB1_10.counts.txt',
+                     '../raw_data/rep2_pT_LMNB1.counts.txt')){
+  lmnb1_count = read.table(lmnb1_file)
+  dam_file = sub('LMNB1', 'Dam', lmnb1_file)
+  dam_count = read.table(dam_file)
+  colnames(lmnb1_count) = colnames(dam_count) = c('seqnames', 'start', 'end', 'count')
+  lmnb1_gr = makeGRangesFromDataFrame(lmnb1_count)
+
+  name = strsplit(lmnb1_file,'[/.]')[[1]][5]
+  h<-findOverlaps(Egr.p, lmnb1_gr)
+  oENSG<-Egr.p[from(h)]$ensembl_gene_id
+  oPOS<-ifelse(strand(Egr.p[from(h)])=='+',
+               (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 - start(Egr.p[from(h)]) -F,
+               end(Egr.p[from(h)]) - (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 -F)
+
+           #coordinates of all overlapping probes relative to the gene starts
+  lmnb1_vec <- lmnb1_count[to(h), 'count']
+  dam_vec <- dam_count[to(h), 'count']
+
+
+  #plot:
+
+  par(mfrow=c(1,3))
+  for (i in names(COL)){
+    s<-unique(P$ensembl_gene_id[which(P$class==i) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,6))
+  for(i in names(COL)) #for the three gene classes
+     {for (dnase_state in c('DNase', 'not DNase')){
+          s<-unique(P$ensembl_gene_id[which(P$class==i & P$dnase_state==dnase_state)])
+          s<-s[!is.na(s)]
+          w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+          subPOS<-oPOS[w]
+          subLMNB1 <-lmnb1_vec[w]
+          subDam <-dam_vec[w]
+          o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+          subPOS<-subPOS[o]
+          subLMNB1<-subLMNB1[o]
+          subDam<-subDam[o]
+          #determine runmed k:
+          wsize<-floor(length(subPOS)/10) #2% of all datapoints in the set
+          if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+          #plot:
+          run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                          runsum(Rle(subDam), k=wsize, endrule='constant'))
+          plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+               main=paste('K562', name, '\n', i, length(s), dnase_state), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+          lines(subPOS, run_log2, col=COL[i], lwd=2)
+          abline(v=0, lty="dotted")
+       }
+      
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state & P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), dnase_state), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state & P$GROcap< -3 &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, '\n', length(s), dnase_state, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state & P$GROcap< -3 &P$LAD!=1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                    runsum(Rle(subDam), k=wsize, endrule='constant'))
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+         main=paste('K562', name, '\n', length(s), dnase_state, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,3))
+  for (i in names(COL)){
+    s<-unique(P$ensembl_gene_id[which(P$class==i) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/sum(subDam)*100)
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="log10(DAM-only) Tom's data")
+    lines(subPOS, run_log2, col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+  }
+    par(mfrow=c(1,3))
+  for (i in names(COL)){
+    s<-unique(P$ensembl_gene_id[which(P$class==i) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/sum(subLMNB1)*100)
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-2,5),
+         main=paste('K562', name, i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="log10(DAM-only) Tom's data")
+    lines(subPOS, run_log2, col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/sum(subDam)*100)
+    plot(subPOS, subDam, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+         main=paste('K562', name, '\n', length(s), dnase_state, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state &P$LAD==1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/sum(subLMNB1)*100)
+    plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+         main=paste('K562', name, '\n', length(s), dnase_state, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(1,2))
+  for (dnase_state in c('DNase', 'not DNase')){
+    s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state &P$LAD!=1) ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subLMNB1 <-lmnb1_vec[w]
+    subDam <-dam_vec[w]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subLMNB1<-subLMNB1[o]
+    subDam<-subDam[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/sum(subDam)*100)
+    plot(subPOS, subDam, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+         main=paste('K562', name, '\n', length(s), dnase_state, 'GROcap < -3'), xlab="position relative to gene start (bp)", ylab="DamID logratio Tom's data")
+    lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  par(mfrow=c(2,4))
+  for (dnase_state in c('DNase', 'not DNase')){
+    for (l in c(1,0)){
+      s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state &P$LAD!=l) ])
+      s<-s[!is.na(s)]
+      w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+      subPOS<-oPOS[w]
+      subLMNB1 <-lmnb1_vec[w]
+      subDam <-dam_vec[w]
+      o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+      subPOS<-subPOS[o]
+      subLMNB1<-subLMNB1[o]
+      subDam<-subDam[o]
+      #determine runmed k:
+      wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+      if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+      #plot:
+      run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/sum(subLMNB1)*100)
+      plot(subPOS, subLMNB1, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+           main=paste('K562', name, ifelse(l==1, 'LAD', 'iLAD'), '\n', length(s), dnase_state), xlab="position relative to gene start (bp)", ylab="log2(LMNB1) Tom's data")
+      lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+      abline(v=0, lty="dotted")
+
+    }
+  }
+  for (dnase_state in c('DNase', 'not DNase')){
+    for (l in c(1,0)){
+      s<-unique(P$ensembl_gene_id[which(P$dnase_state==dnase_state &P$LAD!=l) ])
+      s<-s[!is.na(s)]
+      w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+      subPOS<-oPOS[w]
+      subLMNB1 <-lmnb1_vec[w]
+      subDam <-dam_vec[w]
+      o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+      subPOS<-subPOS[o]
+      subLMNB1<-subLMNB1[o]
+      subDam<-subDam[o]
+      #determine runmed k:
+      wsize<-floor(length(subPOS)/25) #2% of all datapoints in the set
+      if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+      #plot:
+      run_log2 = log2(runsum(Rle(subDam), k=wsize, endrule='constant')/sum(subDam)*100)
+      plot(subPOS, subDam, pch=".", col="#00000033", xlim=c(-F,F)*0.9,ylim=c(-4,5),
+           main=paste('K562', name, ifelse(l==1, 'LAD', 'iLAD'), '\n', length(s), dnase_state), xlab="position relative to gene start (bp)", ylab="log2(Dam) Tom's data")
+      lines(subPOS, run_log2, col=ifelse(dnase_state=='DNase', 'red', 'blue'), lwd=2)
+      abline(v=0, lty="dotted")
+
+    }
+  }
+}
+dev.off()
+```

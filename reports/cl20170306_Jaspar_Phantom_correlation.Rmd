@@ -1,0 +1,287 @@
+# knitr document van Steensel lab
+
+# Gene expression correlation between transcription factors and potential target genes
+## Christ Leemans, 06-03-2017
+
+## Introduction
+In our SURE vs endogenous expression analysis in LADs we identified 3 groups of promoters (escaper, inactive and repressed). We are now looking for a transcription factor that is able to instigate the escaper mechanism in which a promoter locally detaches from the lamina and shows activity. One line of evidence would be that the particular transcription factor correlates with the expression of our escaping promoters. We can use that to filter out TF's of interest from the JASPAR database. So the question for this report is, can we create a matrix of correlation between the expression of our JASPAR TFs and potential target genes in the fantom5 database.
+
+
+
+
+## biomaRt on cluster is messed up, so I do couple jaspar to entrez-gene id first and save it
+
+```r
+tf_table = read.table('../raw_data/tf_table.txt', sep='\t', row.names=1, stringsAsFactors=F)
+colnames(tf_table) = c('name', 'species', 'class', 'family')
+
+tf_translation = ddply(tf_table[,c('species','name')], .(name),
+                       function(x){
+                         symbol = gsub('[(]var.[0-9][)]','', x[,2])
+                         cbind(x,symbol=unlist(strsplit(symbol, '::')))
+                       })
+
+
+humanMart = useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm_eg = getBM(attributes=c('entrezgene','hgnc_symbol'),
+              filters='hgnc_symbol', values=tf_translation$symbol, mart=humanMart)
+tf_translation$gene_id = bm_eg[match(tf_translation$symbol, bm_eg$hgnc_symbol), 'entrezgene']
+
+species = list(c('Mus musculus', 'mmusculus', 'mgi_symbol'),
+               c('Rattus norvegicus', 'rnorvegicus', ''),
+               c('Oryctolagus cuniculus', 'ocuniculus'), 
+               c('Meleagris gallopavo', 'mgallopavo'), c('Gallus gallus', 'ggallus'))
+
+translate <- function(species, dataset, symbol_name, translation_table, humanMart){
+  mart = useMart(biomart='ensembl', dataset=dataset)
+  symbol_vec = translation_table$symbol[translation_table$species==species]
+  bm_eg = getBM(attributes=c('ensembl_gene_id', symbol_name),
+                filters=symbol_name, values=symbol_vec, mart=mart)
+  bm_h = getBM(attributes=c('ensembl_gene_id', 'hsapiens_homolog_ensembl_gene',
+                             'hsapiens_homolog_orthology_type', 'hsapiens_homolog_subtype',
+                             'hsapiens_homolog_perc_id'),
+                filters='ensembl_gene_id', values=bm_eg$ensembl_gene_id, mart=mart)
+  bm_h = bm_h[bm_h$hsapiens_homolog_ensembl_gene!='', ]
+  bm = ddply(bm_h, .(ensembl_gene_id), function(x, bm_eg){
+    i = which(x$hsapiens_homolog_perc_id==max(x$hsapiens_homolog_perc_id))
+    result = bm_eg[which(bm_eg$ensembl_gene_id==x$ensembl_gene_id[1]), ]
+    result = c(result, hsapiens_gene_id=x[i,'hsapiens_homolog_ensembl_gene'])
+    return(unlist(result))
+  }, bm_eg=bm_eg)
+  bm_hg = getBM(attributes=c('entrezgene','hgnc_symbol', 'ensembl_gene_id'),
+                filters='ensembl_gene_id', values=bm$hsapiens_gene_id, mart=humanMart)
+  bm_match = match(bm_hg$ensembl_gene_id, bm$hsapiens_gene_id)
+  bm = data.frame(entrezgene=bm_hg$entrezgene, symbol=bm[bm_match, symbol_name])
+  return(bm)
+}
+
+bm = translate('Mus musculus', 'mmusculus_gene_ensembl', 'mgi_symbol', tf_translation, humanMart)
+tf_match = match(bm$symbol, tf_translation$symbol)
+tf_translation[tf_match[!is.na(tf_match)], 'gene_id'] = bm$entrezgene[!is.na(tf_match)]
+
+bm = translate('Rattus norvegicus', 'rnorvegicus_gene_ensembl', 'rgd_symbol', tf_translation, humanMart)
+tf_match = match(bm$symbol, tf_translation$symbol)
+tf_translation[tf_match[!is.na(tf_match)], 'gene_id'] = bm$entrezgene[!is.na(tf_match)]
+
+bm = translate('Oryctolagus cuniculus', 'ocuniculus_gene_ensembl', 'hgnc_symbol', tf_translation, humanMart)
+tf_match = match(bm$symbol, tf_translation$symbol)
+tf_translation[tf_match[!is.na(tf_match)], 'gene_id'] = bm$entrezgene[!is.na(tf_match)]
+
+bm = translate('Meleagris gallopavo', 'mgallopavo_gene_ensembl', 'hgnc_symbol', tf_translation, humanMart)
+tf_match = match(bm$symbol, tf_translation$symbol)
+tf_translation[tf_match[!is.na(tf_match)], 'gene_id'] = bm$entrezgene[!is.na(tf_match)]
+
+bm = translate('Gallus gallus', 'ggallus_gene_ensembl', 'hgnc_symbol', tf_translation, humanMart)
+tf_match = match(bm$symbol, tf_translation$symbol)
+tf_translation[tf_match[!is.na(tf_match)], 'gene_id'] = bm$entrezgene[!is.na(tf_match)]
+
+write.table(tf_translation, file='../raw_data/cl20160306_tf_translation_entrez.txt', sep='\t')
+```
+
+## libraries
+```{r}
+library(data.table)
+library(multicore)
+setDTthreads(10)
+```
+
+
+## jaspar-fantom correlation
+```{r}
+fantom_counts = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_counts.osc.txt.gz',
+                            header=T, stringsAsFactors=F, row.names=1)
+fantom_annot = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_ann.txt.gz',
+                           sep='\t', header=T)
+load("../raw_data/gencode.sure.160617.rda")
+total_vec = fantom_counts[1,]
+gencode_transcript_vec = do.call(rbind, strsplit(gencode.sure.160617$name, split='[.]'))[,1]
+
+gencode_fantom = mclapply(gencode_transcript_vec, function(x, association, counts){
+        y = grep(x, association)
+        if (length(y) > 0){
+            return(colSums(counts[y,]))
+        }
+    }, association=fantom_annot$association_with_transcript, counts=fantom_counts[-1,], mc.cores=5)
+names(gencode_fantom) = gencode_transcript_vec
+gencode_count = do.call(rbind, gencode_fantom)
+gencode_table = as.data.table(gencode_count)
+norm_matrix  = sweep(gencode_table, 2, as.numeric(total_vec), '/')
+norm_table = as.data.table(t(norm_matrix))
+cor_table = norm_table[,lapply(.SD,function(x,dt){cor(dt,x)}, dt=norm_table)]
+colnames(cor_table) = rownames(gencode_count)
+save(cor_table, file='cl20170426_transcript_correlations.RData')
+cor_df = as.data.frame(cor_table)
+dimnames(cor_df) = list(rownames(gencode_count), rownames(gencode_count))
+save(cor_df, file='cl20170426_transcript_correlations_df.RData')
+write.table(cor_df, 'cl20170426_transcript_correlations.txt', quote=F, sep='\t', row.names=T, col.names=T)
+
+
+enst_table = fantom_table[!is.na(enst_vec), lapply(.SD, sum, na.rm=T), by=enst_vec[!is.na(enst_vec)]] 
+
+tf_table = read.table('../raw_data/cl20160306_tf_translation_entrez.txt', sep='\t', stringsAsFactors=F)
+
+
+enst_vec = gsub('.*(ENST[0-9]+).*', '\\1', fantom_annot$association_with_transcript)
+enst_vec[-grep('ENST', enst_vec)] = NA
+
+fantom_table = data.table(fantom_counts[-1,])
+enst_table = fantom_table[!is.na(enst_vec), lapply(.SD, sum, na.rm=T), by=enst_vec[!is.na(enst_vec)]] 
+norm_matrix  = sweep(enst_table[,-1], 2, as.numeric(total_vec), '/')
+norm_table = as.data.table(t(norm_matrix))
+cor_table = norm_table[,lapply(.SD,function(x,dt){cor(dt,x)}, dt=norm_table)]
+
+
+
+selection = !is.na(enst_vec) | !is.na(entrez_vec)
+fantom_counts = fantom_counts[selection, ]
+entrez_vec = entrez_vec[selection]
+enst_vec = enst_vec[selection]
+
+
+
+enst_table = data.frame(enst=enst_vec[!is.na(enst_vec)],
+                        name=rownames(fantom_counts)[!is.na(enst_vec)],
+                        stringsAsFactors=F)
+
+fantom_table = data.table(fantom_counts[-1,])
+enst_table = fantom_table[!is.na(enst_vec), lapply(.SD, sum, na.rm=T), by=enst_vec[!is.na(enst_vec)]] 
+
+norm_matrix  = sweep(enst_table[,-1], 2, as.numeric(total_vec), '/')
+
+norm_table = as.data.table(t(norm_matrix))
+cor_table = norm_table[,lapply(.SD,function(x,dt){cor(dt,x)}, dt=norm_table)]
+rownames(cor_table) = enst_table$enst_vec
+colnames(cor_table) = enst_table$enst_vec
+save(cor_table, file='cl20170424_transcript_correlations.RData')
+cor_df = as.data.frame(cor_table)
+dimnames(cor_df) = list(enst_table$enst_table, enst_table$enst_table)
+save(cor_df, file='cl20170424_transcript_correlations_df.RData')
+write.table(cor_df, 'cl20170424_transcript_correlations.txt', quote=F, sep='\t', row.names=T, col.names=T)
+
+
+
+cor_gencode = cor_df[gencode_transcript_vec, gencode_transcript_vec]
+
+transcript_id = do.call(rbind, strsplit(gencode.sure.160617$name, spl
+
+test_table = norm_table[,1:10]
+start.time <- Sys.time()
+test_cor = test_table[,lapply(.SD, function(x,dt){cor(dt,x)}, dt=norm_table)]
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+
+
+
+enst_matrix = ddply(enst_table, .(enst), function(x, fantom_counts){
+    colSums(fantom_counts[x$name, ,drop=F])
+    }, fantom_counts=fantom_counts, .parallel=T)
+
+
+
+
+norm_matrix = apply(fantom_counts, 2, function(x){
+        x / sum(x)
+    })
+rm(fantom_counts)
+tf_in_fantom = tf_table[which(tf_table$gene_id %in% fantom_counts[,1]), ]
+
+
+cor_table = ddply(tf_in_fantom, .(name), function(x, norm_matrix, entrez_vec){
+        id_vec = x$gene_id
+        if (length(id_vec) > 1){
+            cor_list = list()
+            for (i in 1:length(id_vec)){
+                match = which(entrez_vec==id_vec[i])
+                if (length(match) > 1){
+                    cor_list[[i]] = cor(colSums(norm_matrix[match, ]), norm_matrix, method="spearman")
+                } else {
+                    cor_list[[i]] = cor(norm_matrix[match, ], norm_matrix, method="spearman")
+                }
+            }
+            p_list = do.call(pmin, cor_list)
+            return(p_list[1,])
+        }
+        else {
+            match = which(entrez_vec==id_vec)
+            if (length(match) > 1){
+                return(cor(colSums(norm_matrix[match, ]), norm_matrix, method="spearman"))
+            } else {
+                return(cor(norm_matrix[match, ], norm_matrix, method="spearman"))
+            }
+        }
+    }, norm_matrix, entrez_vec=entrez_vec, .parallel=T)
+rownames(cor_table) = cor_table[,1]
+cor_table = cor_table[,-1]
+
+save(cor_table, entrez_vec, file='cl20170404_CAGE_correlations_jaspar_norm.rda')
+
+
+
+
+id = tf_table[tf_table$name=='SPI1', 'gene_id']
+match = which(entrez_vec==id)
+cor_SPI1 = cor(rowSums(norm_matrix[,match]), norm_matrix[,-match])
+SPI1_table = data.frame(cor=cor_SPI1[1,], entrez_gene=fantom_counts[colnames(cor_SPI1),1])
+match_vec = match(SPI1_table$entrez_gene, P$entrezgene)
+SPI1_table$class = NA
+SPI1_table$class[!is.na(match_vec)] = as.character(P[match_vec[!is.na(match_vec)], 'class'])
+
+ggplot(SPI1_table[!is.na(SPI1_table$class), ], aes(x=class, y=cor, color=class)) + 
+    geom_violin(alpha=0.3) +
+    scale_colour_manual(values=COL_class) +
+    geom_point(data=SPI1_table[!is.na(SPI1_table$class)&SPI1_table$class!='iLAD',],
+               position=position_jitter(width=0.5), alpha=0.3, size=0.3)
+
+
+id = tf_table[tf_table$name=='RFX5', 'gene_id']
+match = which(entrez_vec==id)
+cor_RFX5 = cor(rowSums(count_matrix[,match]), count_matrix[,-match])
+RFX5_table = data.frame(cor=cor_RFX5[1,], entrez_gene=fantom_counts[colnames(cor_RFX5),1])
+match_vec = match(RFX5_table$entrez_gene, P$entrezgene)
+RFX5_table$class = NA
+RFX5_table$class[!is.na(match_vec)] = as.character(P[match_vec[!is.na(match_vec)], 'class'])
+
+ggplot(RFX5_table[!is.na(RFX5_table$class), ], aes(x=class, y=cor, color=class)) + 
+    geom_violin(alpha=0.3) +
+    scale_colour_manual(values=COL_class) +
+    geom_point(data=RFX5_table[!is.na(RFX5_table$class)&RFX5_table$class!='iLAD',],
+               position=position_jitter(width=0.5), alpha=0.3, size=0.3)
+
+
+id = tf_table[tf_table$name=='POU2F1', 'gene_id']
+match = which(entrez_vec==id)
+cor_POU2F1 = cor(rowSums(count_matrix[,match]), count_matrix[,-match])
+POU2F1_table = data.frame(cor=cor_POU2F1[1,], entrez_gene=fantom_counts[colnames(cor_POU2F1),1])
+match_vec = match(POU2F1_table$entrez_gene, P$entrezgene)
+POU2F1_table$class = NA
+POU2F1_table$class[!is.na(match_vec)] = as.character(P[match_vec[!is.na(match_vec)], 'class'])
+
+ggplot(POU2F1_table[!is.na(POU2F1_table$class), ], aes(x=class, y=cor, color=class)) + 
+    geom_violin(alpha=0.3) +
+    scale_colour_manual(values=COL_class) +
+    geom_point(data=POU2F1_table[!is.na(POU2F1_table$class)&POU2F1_table$class!='iLAD',],
+               position=position_jitter(width=0.5), alpha=0.3, size=0.3)
+
+```
+
+
+## fantom-fantom correlation
+```{r}
+
+cor_table = ddply(enst_table, .(enst), function(x, norm_matrix, enst_table){
+        x_vec = colSums(norm_matrix[x$name, ,drop=F])
+        cor = ddply(enst_table, .(enst), function(y, norm_matrix, x_vec){
+                    y_vec = colSums(norm_matrix[y$name, ,drop=F])
+                    cor(x_vec, y_vec, method='pearson')
+                }, norm_matrix=norm_matrix, x_vec=x_vec)
+        cor_vec = cor[,2]
+        names(cor_vec) = cor$enst
+        return(cor_vec)
+    }, norm_matrix=norm_matrix[!is.na(enst_vec), ], enst_table=enst_table, .parallel=T)
+
+
+
+enst_matrix = ddply(enst_table, .(enst), function(x, norm_matrix){
+    colSums(norm_matrix[x$name, ,drop=F])
+    }, norm_matrix=norm_matrix, .parallel=T)
+```

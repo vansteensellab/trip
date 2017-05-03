@@ -1,0 +1,630 @@
+
+
+```
+
+gunzip -c ~/data/tracks/hg19/human_permissive_enhancers_phase_1_and_2_20150212.bed.gz | 
+    awk '
+    {
+        mid=($2 + $3) / 2
+        printf "%s\t%.0f\t%0.f\t%s\n", $1, mid-500, mid+500, $4
+    }' > raw_data/enhancer_regions.bed
+
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/enhancer_regions.bed \
+               ~/data/tracks/hg19/sure23.plasmid.norm.combined.45.55.plus.160504.bw \
+               /dev/stdout | gzip -c > raw_data/enhancer_regions_sure_plus.txt.gz &
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/enhancer_regions.bed \
+               ~/data/tracks/hg19/sure23.plasmid.norm.combined.45.55.minus.160504.bw \
+               /dev/stdout | gzip -c > raw_data/enhancer_regions_sure_minus.txt.gz &
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/enhancer_regions.bed \
+               ~/data/tracks/hg19/GSM1480321_K562_GROcap_wTAP_plus.bigWig \
+               /dev/stdout | gzip -c > raw_data/enhancer_regions_grocap_plus.txt.gz &
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/enhancer_regions.bed \
+               ~/data/tracks/hg19/GSM1480321_K562_GROcap_wTAP_minus.bigWig \
+               /dev/stdout | gzip -c > raw_data/enhancer_regions_grocap_minus.txt.gz &
+```
+
+
+```{r, fig.width=15, fig.height=15}
+library(rtracklayer)
+library(reshape2)
+library(ggplot2)
+library(gridExtra)
+library(scales)
+library(ggdendro)
+library(plyr)
+
+
+## get a table with matching sets
+## table = complete table to take matching sets from
+## class_col = column name of class of interest
+## class = name of class to match the set on
+## order_on = column name to order on
+matchSet <- function(table, class_col, class, order_on){
+  o_vec = order(table[,order_on])
+  o_table = table[o_vec, ]
+  setA = which(o_table[,class_col]==class)
+  setB = c(setA + 1, setA -1)
+  ## can also return o_table[unique(c(setA, setB)), ]
+  ## but this way order is perserved.
+  i_vec = o_vec[unique(c(setA, setB))]
+  return(table[i_vec[order(i_vec)], ])
+}
+
+```
+
+```{r, fig.width=10, fig.height=10}
+sure_plus = read.table('../raw_data/enhancer_regions_sure_plus.txt.gz', row.names=4,
+                       stringsAsFactors=F)
+sure_minus = read.table('../raw_data/enhancer_regions_sure_minus.txt.gz', row.names=4,
+                        stringsAsFactors=F)
+grocap_plus = read.table('../raw_data/enhancer_regions_grocap_plus.txt.gz', row.names=4,
+                         stringsAsFactors=F)
+grocap_minus = read.table('../raw_data/enhancer_regions_grocap_minus.txt.gz', row.names=4,
+                          stringsAsFactors=F)
+colnames(sure_plus) = 
+    colnames(sure_minus) = 
+    colnames(grocap_plus) = 
+    colnames(grocap_minus) = c('chrom', 'start', 'end', 'size', 'num_data',
+                               'min', 'max', 'mean', 'sum')
+
+sure_plus$mean = sure_plus$sum / sure_plus$num_data
+sure_minus$mean = sure_minus$sum / sure_minus$num_data
+grocap_plus$mean = grocap_plus$sum / grocap_plus$num_data
+grocap_minus$mean = grocap_minus$sum / grocap_minus$num_data
+
+P_enh = data.frame(SuRE=rowMeans(cbind(sure_plus$mean, sure_minus$mean)),
+               GROcap=rowMeans(cbind(grocap_plus$mean, abs(grocap_minus$mean))),
+               row.names=rownames(sure_plus))
+Pseud_enh<-min(P_enh$SuRE[P_enh$SuRE>0], na.rm=TRUE)/2
+P_enh$SuRE = log10(P_enh$SuRE + Pseud_enh)
+P_enh$GROcap = log10(P_enh$GROcap + min(P_enh$GROcap[P_enh$GROcap!=0])/2)
+
+lad_gr = import.bed('../../../data/tracks/hg19/cl20161019_LAD_continuous_2state_K562.bed')
+enhancer_gr = import.bed('../../../data/tracks/hg19/human_permissive_enhancers_phase_1_and_2_20150212.bed.gz')
+
+o_ilad = findOverlaps(enhancer_gr, lad_gr[lad_gr$name=='interLAD'])
+o_lad = findOverlaps(enhancer_gr, lad_gr[lad_gr$name=='LAD'])
+P_enh$LAD = NA
+P_enh$LAD[queryHits(o_ilad)] = 'iLAD'
+P_enh$LAD[queryHits(o_lad)] = 'LAD'
+P_enh$LAD = factor(P_enh$LAD)
+## no enhancers overlapping with both iLAD and LAD calls
+length(which(queryHits(o_ilad)%in%queryHits(o_lad)))
+#then calculate running mean for iLAD promoters:
+enhancer_gr = enhancer_gr[order(P_enh$SuRE,sample(c(1:nrow(P_enh))))]
+P_enh<-P_enh[order(P_enh$SuRE,sample(c(1:nrow(P_enh)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P_enh)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P_enh$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P_enh$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P_enh$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P_enh[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD=='LAD'], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD=='iLAD'], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud_enh),3), mean(P_enh$GROcap[P_enh$SuRE==log10(Pseud_enh) & P_enh$LAD==1]), mean(P_enh$GROcap[P_enh$SuRE==log10(Pseud_enh) & P_enh$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P_enh$LRS<- P_enh$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P_enh$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P_enh$SuRE< -0.3 & P_enh$LAD=='LAD' & P_enh$GROcap< -2 #inactive
+NREP<- P_enh$SuRE> 0 & P_enh$LRS> -0.5 & P_enh$LAD=='LAD' & P_enh$GROcap> -2 #not repressed
+REP<- P_enh$SuRE> 0.3 & P_enh$LRS< -1 & P_enh$LAD=='LAD'  & P_enh$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P_enh$LAD=='LAD' & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P_enh$class<-NA
+P_enh$class[P_enh$LAD=='iLAD']<-"iLAD"
+P_enh$class[INACT]<-"inactive"
+P_enh$class[NREP]<-"escaper"
+P_enh$class[REP]<-"repressed"
+P_enh$class[BND] <- "boundary"
+P_enh$class = factor(P_enh$class, levels=c('iLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'iLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P_enh$class), '; n=',table(P_enh$class))
+names(class_names) = levels(P_enh$class)
+P_enh$class_n_enh = P_enh$class
+levels(P_enh$class_n_enh) = class_names
+COL_class_n_enh = COL_class[names(class_names)]
+names(COL_class_n_enh) = class_names
+
+lad_names = c(LAD=paste0('LAD; n=', table(P_enh$LAD)['LAD']),
+              iLAD=paste0('iLAD; n=', table(P_enh$LAD)['iLAD']))
+P_enh$lad_n_enh = factor(lad_names[as.character(P_enh$LAD)])
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+
+
+RM_melt = melt(RM, measure.vars=c('GROcap.ilad', 'GROcap.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='GROcap.lad', lad_names['LAD'], lad_names['iLAD'])
+
+
+ggplot(P_enh, aes(x=SuRE,y=GROcap, color=LAD)) +
+    geom_point(data=P_enh[P_enh$LAD=='iLAD', ], size=0.5, alpha=0.05) + 
+    geom_point(data=P_enh[P_enh$LAD=='LAD', ], size=0.5, alpha=0.2) + 
+    theme_bw() +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad)
+
+
+ggplot(P_enh, aes(x=SuRE, y=GROcap, color=lad_n_enh)) +
+    geom_point(data=P_enh[P_enh$LAD=='iLAD', ], size=0.5, alpha=0.05) + 
+    geom_point(data=P_enh[P_enh$LAD=='LAD', ], size=0.5, alpha=0.2) + 
+    theme_bw() +
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad_n)
+
+p_classes = P_enh[which(P_enh$class %in% c('inactive', 'escaper', 'repressed')),]
+ggplot(P_enh, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n_enh), size=0.6) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.lad), color=COL_lad['LAD']) +
+    theme(legend.title=element_blank()) +
+    scale_colour_manual(values=COL_class_n_enh) 
+```
+
+
+
+```{r, fig.width=15, fig.height=15}
+chrom_gr = import.bed('../../../data/tracks/hg19/wgEncodeBroadHmmK562HMM.bed')
+COL_chromatin = unique(data.frame(chrom_gr)[,c('name', 'itemRgb')])
+COL_chrom = COL_chromatin[,2]
+
+names(COL_chrom) = COL_chromatin[,1]
+
+near_chrom = nearest(enhancer_gr, chrom_gr)
+P_enh$chrom_hmm = NA
+P_enh$chrom_hmm[!is.na(near_chrom)] = chrom_gr[near_chrom[!is.na(near_chrom)]]$name
+
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P_enh[which(P_enh$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=chrom_hmm, fill=chrom_hmm)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between chromatin states\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) + 
+                                scale_fill_manual(values=COL_chrom) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+```
+
+bedtools getfasta -name \
+                  -bed raw_data/enhancer_regions.bed \
+                  -fi ~/data/hg19/genome.fa \
+                  -fo raw_data/enhancer_regions.fa
+
+AffinityProfile -sequence=raw_data/enhancer_regions.fa \
+                -psam_list=$REDUCE_SUITE/data/PSAMs/Jaspar_2016.list \
+                -output=raw_data/jaspar_enhancers
+
+
+```{r, fig.width=15,fig.height=15}
+wilcox_affinity <- function(x_affinity, y_affinity, groups, tf_table, id_vec=NULL){
+  if (is.null(id_vec)){
+    id_vec = colnames(x_affinity)
+  }  
+  fit = mclapply(id_vec, function(id){
+    x = x_affinity[,id]
+    y = y_affinity[,id]
+    r = rank(c(x,y))
+    r_x = r[1:length(x)]
+    r_y = r[-(1:length(x))]
+    mean_r = c(mean(r_x), mean(r_y))
+    direction = groups[which(mean_r==max(mean_r))]
+    if (length(direction) == 2){
+      direction = 'unchanged'
+    }
+    median_fc = median(x) / median(y)
+    mean_fc = mean(x) / mean(y)
+    rank_fc = mean_r[1] / mean_r[2]
+    if (length(which(x==0))/length(x)>0.3 &
+        length(which(y==0))/length(y)>0.3){
+      w = chisq.test(rbind(table(x==0), table(y==0)))
+    } else {
+      w = wilcox.test(x, y)
+    }
+    return(list(w,direction, median_fc, mean_fc, rank_fc))
+  })
+  p_vec = unlist(lapply(fit, function(x){ x[[1]]$p.value}))
+  p_adjust = p.adjust(p_vec, method='fdr')
+  direction = lapply(fit, function(x){ x[[2]]})
+  median_fc =  lapply(fit, function(x){ x[[3]]})
+  mean_fc =  lapply(fit, function(x){ x[[4]]})
+  rank_fc =  lapply(fit, function(x){ x[[5]]})
+  result_table = cbind(id=id_vec, 
+                       tf_table[id_vec, ],
+                       direction=unlist(direction),
+                       p_adjust = p_adjust,
+                       median_fc = unlist(median_fc),
+                       mean_fc = unlist(mean_fc), 
+                       rank_fc = unlist(rank_fc), stringsAsFactors=F)
+  return(result_table)
+}
+
+aff_table_jaspar = read.table('../raw_data/jaspar_enhancers/seq_psam.dat', stringsAsFactors=F)
+id_vec = colnames(aff_table_jaspar) = gsub('.xml','', colnames(aff_table_jaspar))
+
+tf_table_jaspar = read.table('../raw_data/tf_table.txt', sep='\t', row.names=1, stringsAsFactors=F)
+colnames(tf_table_jaspar) = c('name', 'species', 'class', 'family')
+tf_translation = read.table('../raw_data/tf_translation.txt', stringsAsFactors=F)
+matched_evsr = matchSet(P_enh[P_enh$class%in%c('repressed', 'escaper'), ], 'class', 'escaper', 'SuRE')
+escaper_affinity_m = aff_table_jaspar[rownames(matched_evsr)[which(matched_evsr$class=='escaper')],]
+repressed_affinity_m = aff_table_jaspar[rownames(matched_evsr)[which(matched_evsr$class=='repressed')],]
+evsr_jaspar_m = wilcox_affinity(escaper_affinity_m, repressed_affinity_m, c('escaper', 'repressed'), tf_table_jaspar, id_vec)
+write.table(evsr_jaspar_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_all_matched_enhancers.txt')
+
+
+evsr_jaspar_sig_m = evsr_jaspar_m[which(evsr_jaspar_m$p_adjust < 0.05 &
+                                        ifelse(evsr_jaspar_m$direction=='repressed', 
+                                               evsr_jaspar_m$mean_fc < 1,
+                                               evsr_jaspar_m$mean_fc > 1)), ]
+write.table(evsr_jaspar_sig_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_sig_matched_enhancers.txt')
+cor_matrix = read.table('cl20170223_jaspar_2016_psam_correlations.txt', sep='\t', stringsAsFactors=F)
+
+dd = as.dendrogram(hclust(as.dist(1-cor_matrix[evsr_jaspar_sig_m$id, evsr_jaspar_sig_m$id])))
+ddata_x = dendro_data(dd)
+labs = label(ddata_x)
+lab_vec = as.character(labs$label)
+labs$name = evsr_jaspar_sig_m[lab_vec, 'name']
+labs$class = evsr_jaspar_sig_m[lab_vec, 'class']
+
+seg = segment(ddata_x)
+seg$color=rep('gray', length(seg$x))
+seg$color[which(seg$yend==0)] = as.character(evsr_jaspar_sig_m[lab_vec, 'direction'])
+seg$size = rep(0, length(seg$x))
+seg$size[which(seg$yend==0)] = 1
+COL_seg = c(COL, gray='gray')
+
+COL_text = rainbow(length(unique(labs$class)))
+names(COL_text) = unique(labs$class)
+
+pdf('evsr_motif_dendrogram_matched_enhancers.pdf', width=15)
+ggplot(seg) +
+  theme_bw() +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend, size=seg$size, color=color)) +
+  scale_color_manual(values=c(COL_seg, COL_text)) +
+  scale_size(range=c(1,1.5)) +
+  ylim(-0.1,1) +
+  geom_text(data=labs, aes(label=name, x=x, y=0, angle=60,hjust='right', colour=class)) 
+dev.off()
+
+
+pdf('evsr_violin_matched_enhancers.pdf')
+for (id in evsr_jaspar_sig_m$id){
+  df = data.frame(class=P_enh[P_enh$class%in%c('repressed', 'escaper'), 'class'],
+                  affinity=aff_table_jaspar[rownames(P_enh)[P_enh$class%in%c('repressed', 'escaper')], id])
+  if (!(all(df[df$class=='repressed','affinity']==0) |
+       all(df[df$class=='escaper','affinity']==0))){
+    print(ggplot(df, aes(x=class, y=log10(affinity), color=class)) + 
+            geom_violin() +
+            ggtitle(paste0(id, '; ', evsr_jaspar_m[id, 'name'], '\n', evsr_jaspar_m[id, 'direction'], '; ', evsr_jaspar_m[id, 'mean_fc'])) +
+            geom_point(position=position_jitter(0.5), alpha=0.3, size=0.3) +
+            scale_color_manual(values=COL))
+  }
+}
+dev.off()
+
+
+inactive_affinity = aff_table_jaspar[rownames(P_enh)[which(P_enh$class=='inactive')],]
+repressed_affinity = aff_table_jaspar[rownames(P_enh)[which(P_enh$class=='repressed')],]
+rvsi_jaspar = wilcox_affinity(repressed_affinity, inactive_affinity, c('repressed', 'inactive'), tf_table_jaspar, id_vec)
+write.table(rvsi_jaspar_m, sep='\t',row.names=F, file='repressed_vs_inactive_aff_jaspar_all_enhancers.txt')
+
+
+rvsi_jaspar_sig = rvsi_jaspar[which(rvsi_jaspar$p_adjust < 0.05 &
+                                        ifelse(rvsi_jaspar$direction=='repressed', 
+                                               rvsi_jaspar$mean_fc > 1,
+                                               rvsi_jaspar$mean_fc < 1)), ]
+write.table(rvsi_jaspar_sig, sep='\t',row.names=F, file='repressed_vs_inactive_aff_jaspar_sig_enhancers.txt')
+
+
+dd = as.dendrogram(hclust(as.dist(1-cor_matrix[rvsi_jaspar_sig$id, rvsi_jaspar_sig$id])))
+ddata_x = dendro_data(dd)
+labs = label(ddata_x)
+lab_vec = as.character(labs$label)
+labs$name = rvsi_jaspar_sig[lab_vec, 'name']
+labs$class = rvsi_jaspar_sig[lab_vec, 'class']
+
+seg = segment(ddata_x)
+seg$color=rep('gray', length(seg$x))
+seg$color[which(seg$yend==0)] = as.character(rvsi_jaspar_sig[lab_vec, 'direction'])
+seg$size = rep(0, length(seg$x))
+seg$size[which(seg$yend==0)] = 1
+COL_seg = c(COL, gray='gray')
+
+COL_text = rainbow(length(unique(labs$class)))
+names(COL_text) = unique(labs$class)
+
+pdf('rvsi_motif_dendrogram_enhancers.pdf', width=15)
+ggplot(seg) +
+  theme_bw() +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend, size=seg$size, color=color)) +
+  scale_color_manual(values=c(COL_seg, COL_text)) +
+  scale_size(range=c(1,1.5)) +
+  ylim(-0.1,1) +
+  geom_text(data=labs, aes(label=name, x=x, y=0, angle=60,hjust='right', colour=class)) 
+dev.off()
+
+
+pdf('rvsi_violin_enhancers.pdf')
+for (id in rvsi_jaspar_sig$id){
+  df = data.frame(class=P_enh[P_enh$class%in%c('repressed', 'escaper'), 'class'],
+                  affinity=aff_table_jaspar[rownames(P_enh)[P_enh$class%in%c('repressed', 'escaper')], id])
+  if (!(all(df[df$class=='repressed','affinity']==0) |
+       all(df[df$class=='escaper','affinity']==0))){
+    print(ggplot(df, aes(x=class, y=log10(affinity), color=class)) + 
+            geom_violin() +
+            ggtitle(paste0(id, '; ', rvsi_jaspar[id, 'name'], '\n', rvsi_jaspar[id, 'direction'], '; ', rvsi_jaspar[id, 'mean_fc'])) +
+            geom_point(position=position_jitter(0.5), alpha=0.3, size=0.3) +
+            scale_color_manual(values=COL))
+  }
+}
+dev.off()
+```
+
+
+
+
+
+```{r, fig.width=15, fig.height=15}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCage<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCage
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE> 0 & P$LRS> -0.5 & P$LAD==1 & P$GROcap> -2 #not repressed
+REP<- P$SuRE> 0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"escaper"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+P$class = factor(P$class, levels=c('iLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'iLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P$class), '; n=',table(P$class))
+names(class_names) = levels(P$class)
+P$class_n_prom = P$class
+levels(P$class_n_prom) = class_names
+COL_class_n_prom = COL_class[names(class_names)]
+names(COL_class_n_prom) = class_names
+
+lad_names = c(LAD=paste0('LAD; n=', table(P$LAD)['1']),
+              iLAD=paste0('LAD; n=', table(P$LAD)['0']))
+P$lad_n_prom = factor(ifelse(P$LAD==1, lad_names['LAD'], lad_names['iLAD']))
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+
+
+RM_melt = melt(RM, measure.vars=c('GROcap.ilad', 'GROcap.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='GROcap.lad', lad_names['LAD'], lad_names['iLAD'])
+
+p_classes = P[which(P$class %in% c('inactive', 'escaper', 'repressed')),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 0.5), linetype='dotdash', size=0.3) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 1), linetype='dotdash', size=0.3) +
+    geom_vline(xintercept=0, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+```
+
+```{r, fig.width=15, fig.height=15}
+link_table = read.table('../../../data/tracks/hg19/slidebase_enhancer_tss_associations.bed',
+                        stringsAsFactors=F)
+enh_gene = do.call(rbind.data.frame, strsplit(link_table$V4, split=';'))
+enh_gene = data.frame(enhancer=as.character(enh_gene[,1]),
+                      promoter=as.character(enh_gene[,3]))
+p_match = match(enh_gene$promoter, P$name2)
+enh_gene$prom_class = NA
+enh_gene$prom_class[!is.na(p_match)] = as.character(P$class[p_match[!is.na(p_match)]])
+
+enh_match = match(enh_gene$enhancer, rownames(P_enh))
+enh_gene$enh_class = NA
+enh_gene$enh_class[!is.na(enh_match)] = as.character(P_enh$class[enh_match[!is.na(enh_match)]])
+
+
+prom_enh_table = data.frame(table(enh_gene[,c('prom_class', 'enh_class')]))
+prom_table = table(enh_gene$prom_class)
+enh_table = table(enh_gene$enh_class)
+prom_enh_table$norm = prom_enh_table$Freq / (as.numeric(prom_table[prom_enh_table$prom_class]) * 
+                                             as.numeric(enh_table[prom_enh_table$enh_class]))
+prom_enh_table$x=paste(prom_enh_table$enh_class, prom_enh_table$prom_class, sep=';')
+ggplot(prom_enh_table[which(prom_enh_table$prom_class!='boundary' &
+                            prom_enh_table$enh_class!='boundary'), ], aes(x=x, y=norm, fill=enh_class, color=prom_class)) +
+    geom_bar(stat='identity', size=3, width=0.7) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=COL_class) +
+    scale_color_manual(values=COL_class) +
+    labs(x='enhancer;promoter',
+         fill='enhancer',
+         color='promoter',
+         y='Freq(enh;prom) / (Freq(enh) * Freq(prom))')
+
+ggplot(prom_enh_table, aes(x=factor(x, levels=x[order(prom_class)]), 
+                                y=norm, fill=enh_class, color=prom_class)) +
+    geom_bar(stat='identity', size=3, width=0.7) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=COL_class) +
+    scale_color_manual(values=COL_class) +
+    labs(x='enhancer;promoter',
+         fill='enhancer',
+         color='promoter',
+         y='Freq(enh;prom) / (Freq(enh) * Freq(prom))')
+
+
+ggplot(enh_gene[enh_gene$enh_class%in%c('escaper','repressed','inactive'),],
+       aes(x=prom_enh_class, fill=prom_enh_class)) +
+    geom_bar() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x='enhancer;promoter', fill='enhancer;promoter' )
+
+
+ggplot(enh_gene[which(enh_gene$prom_class=='inactive'),],
+       aes(x=prom_enh_class, fill=prom_enh_class)) +
+    geom_bar() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+enh_gene$enh_class = factor(enh_gene$enh_class)
+prom_enh_count = ddply(enh_gene, .(promoter), function(x){
+        c(table(x$enh_class), prom_class=x$prom_class[1])
+    })
+
+prom_melt = melt(prom_enh_count, id.vars=c('promoter','prom_class'))
+ggplot(prom_melt[prom_melt$prom_class%in%c('repressed', 'escaper', 'inactive'), ], aes(x=as.numeric(value), fill=variable)) + geom_bar()
+
+
+plot_list = list()
+for (class in c('escaper', 'repressed', 'inactive')){
+    plot_list[[class]] = ggplot(prom_melt[which(prom_melt$prom_class==class), ], aes(x=as.numeric(value), fill=variable)) + geom_bar(position='dodge') + ggtitle(class)
+}
+
+do.call(grid.arrange, plot_list)
+```
+
+**conclusion:**
+
+Can visualize this in better ways, but doesn't seem to be too much striking differences in type of enhancers for each promoter.

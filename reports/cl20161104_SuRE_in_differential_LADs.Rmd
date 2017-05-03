@@ -1,0 +1,1707 @@
+
+# knitr document van Steensel lab
+
+# Differential LAD gene expression and SuRE
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+We would like to explore the effect of LADs on gene expression. When comparing Joris' SuRE data which explorers promoter activity outside of the dna-context (like lamina assosiation) and GroCAP data which explorers promoter activity in the context, one can define 3 groups of promoter in LADs: repressed, inactive and non repressed. The inactive promoters show no activity in both groCAP and SuRE data, the repressed show activity only in SuRE data, the non repressed group show activity in groCAP data as well as SuRE data. By comparing gene expression in different cell types with different lamina organisation, we should be able to show that indeed, the expression of the repressed group is most heavily influenced by lamina interaction, while the non-repressed group is not affected.
+
+
+## Data
+For now let's use data from public sources. If this shows prommising results we need to obtain gene expression data ourselves.
+
+**HT1080**
+Jop Kind also has data on this, but I could not find a complete control sample (m6ATracer-GFP-/DamLaminB1-, Doxycycline -/ Shield -)
+
+GEO-ID: GSE60630
+
+Description:
+    G quadruplex motifs are frequently located near TSS and in the first introns of transcribed genes. We investigated the role that G4 structures play in transcription by stabilizing G4 DNA with the selective G4 ligand PhenDC3 in the HT-1080 human fibrosarcoma cell line. After treatment of triplicate samples with PhenDC3 or a negative control (DMSO carrier only), we performed RNA-Seq after poly-dT selection to assess changes in gene and isoform expression, as well as changes to splicing patterns.
+
+Design:
+    6 samples total; 2 gene expression conditions (treated and untreated) in triplicate; 4 raw sequencing files per sample
+
+lab:
+    Tasic, Allen Institute for Brain Science
+
+```
+
+zcat HT1080_ctrl_rep1_GSM1483942_SRR1555752.fastq HT1080_ctrl_rep1_GSM1483942_SRR1555753.fastq | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "HT1080_ctrl_rep1_GSM1483942_1.fastq"
+        print substr($0,half+1) > "HT1080_ctrl_rep1_GSM1483942_2.fastq"
+    } else {
+        print $0 > "HT1080_ctrl_rep1_GSM1483942_1.fastq"
+        print $0 > "HT1080_ctrl_rep1_GSM1483942_2.fastq"
+    }}'
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _GSM1483942_STARtmp \
+              --outFileNamePrefix HT1080_ctrl_rep1_GSM1483942 \
+              --runThreadN 5 \
+              --alignEndsProtrude 0 DiscordantPaiR --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn HT1080_ctrl_rep1_GSM1483942_1.fastq HT1080_ctrl_rep1_GSM1483942_2.fastq
+rm HT1080_ctrl_rep1_GSM1483942_1.fastq HT1080_ctrl_rep1_GSM1483942_2.fastq
+
+zcat HT1080_ctrl_rep2_GSM1483943_SRR1555754.fastq.gz HT1080_ctrl_rep2_GSM1483943_SRR1555755.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "HT1080_ctrl_rep2_GSM1483943_1.fastq"
+        print substr($0,half+1) > "HT1080_ctrl_rep2_GSM1483943_2.fastq"
+    } else {
+        print $0 > "HT1080_ctrl_rep2_GSM1483943_1.fastq"
+        print $0 > "HT1080_ctrl_rep2_GSM1483943_2.fastq"
+    }}'
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _GSM1483943_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --outFileNamePrefix HT1080_ctrl_rep2_GSM1483943  \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn HT1080_ctrl_rep2_GSM1483943_1.fastq HT1080_ctrl_rep2_GSM1483943_2.fastq
+rm HT1080_ctrl_rep2_GSM1483943_1.fastq HT1080_ctrl_rep2_GSM1483943_2.fastq
+
+zcat HT1080_ctrl_rep3_GSM1483944_SRR1555756.fastq.gz HT1080_ctrl_rep3_GSM1483944_SRR1555757.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "HT1080_ctrl_rep3_GSM1483944_1.fastq"
+        print substr($0,half+1) > "HT1080_ctrl_rep3_GSM1483944_2.fastq"
+    } else {
+        print $0 > "HT1080_ctrl_rep3_GSM1483944_1.fastq"
+        print $0 > "HT1080_ctrl_rep3_GSM1483944_2.fastq"
+    }}'
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _GSM1483944_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --outFileNamePrefix HT1080_ctrl_rep3_GSM1483944  \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn HT1080_ctrl_rep3_GSM1483944_1.fastq HT1080_ctrl_rep3_GSM1483944_2.fastq
+rm HT1080_ctrl_rep3_GSM1483944_1.fastq HT1080_ctrl_rep3_GSM1483944_2.fastq
+
+```
+
+**K562**
+
+This is the same data as Caroline used. The hESC data is from the same lab, so we have to keep in mind this effect.
+
+GEO-ID: GSE86660
+
+ENCODE-ID: ENCSR000CPH
+
+Description:
+    The libraries contained in this experiment come from the whole cell fraction of independent growths of cell line K562. They are stranded PE76 Illumina GAIIx RNA-Seq libraries from rRNA-depleted Poly-A+ RNA > 200 nucleotides in size.
+
+Lab:
+    Thomas Gingeras, CSHL
+
+
+``` 
+
+gunzip K562_rep1_ENCFF000HFF.fastq.gz K562_rep1_ENCFF000HFG.fastq.gz
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _K562_rep1_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --outFileNamePrefix K562_rep1 \
+              --readFilesIn K562_rep1_ENCFF000HFF.fastq K562_rep1_ENCFF000HFG.fastq
+gzip K562_rep1_ENCFF000HFF.fastq K562_rep1_ENCFF000HFG.fastq
+
+
+gunzip K562_rep2_ENCFF000HFH.fastq.gz K562_rep2_ENCFF000HFY.fastq.gz
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _K562_rep2_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --outFileNamePrefix K562_rep2 \
+              --readFilesIn K562_rep2_ENCFF000HFH.fastq K562_rep2_ENCFF000HFY.fastq
+gzip K562_rep2_ENCFF000HFH.fastq K562_rep2_ENCFF000HFY.fastq
+
+```
+
+**hESC**
+
+This is the same data as Caroline used. The K562 data is from the same lab, so we have to keep in mind this effect. Another thing to keep in mind is that this is a different cell line from the one in which we did Dam-ID. This was done in SHEF-2 ES-cells. Unfortunately I can't find any data on that cell-type.
+
+GEO-ID: GSE78651
+
+ENCODE-ID: ENCSR490SQH
+
+Description:
+    The libraries contained in this experiment come from independent growths of uninduced embryonic stem cell line H7-hESC. They are stranded PE101 Illumina Hi-Seq RNA-Seq libraries from rRNA-depleted Total RNA > 200 nucleotides in size.
+
+Lab:
+    Thomas Gingeras, CSHL
+```
+
+gunzip H7_hESC_rep1_ENCFF002DMP.fastq.gz H7_hESC_rep1_ENCFF002DMQ.fastq.gz
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H7_hESC_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --outFileNamePrefix H7_hESC_rep1 \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H7_hESC_rep1_ENCFF002DMP.fastq H7_hESC_rep1_ENCFF002DMQ.fastq
+gzip H7_hESC_rep1_ENCFF002DMP.fastq H7_hESC_rep1_ENCFF002DMQ.fastq
+
+gunzip H7_hESC_rep2_ENCFF002DMJ.fastq.gz H7_hESC_rep2_ENCFF002DMK.fastq.gz
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H7_hESC_rep2_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --outFileNamePrefix H7_hESC_rep2 \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H7_hESC_rep2_ENCFF002DMJ.fastq H7_hESC_rep2_ENCFF002DMK.fastq
+gzip H7_hESC_rep2_ENCFF002DMJ.fastq H7_hESC_rep2_ENCFF002DMK.fastq
+
+
+```
+
+**Jurkat**
+
+GEO-ID: GSE72300
+
+Description:
+    treatment: Vehicle (DMSO)
+    Treatment protocol  Vehicle (DMSO) added to medium for 72h
+    Growth protocol     RPMI 1640 supplemented with 10% FBS and 100 U/ml penicillin and 100 mg/ml streptomycin
+
+Lab:
+    Cellular and Molecular Medicine, Bioinformatics, OGIC
+``` 
+zcat J4_ctrl_rep1_GSM1859767_SRR2180201.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "J4_ctrl_rep1_GSM1859767_1.fastq"
+        print substr($0,half+1) > "J4_ctrl_rep1_GSM1859767_2.fastq"
+    } else {
+        print $0 > "J4_ctrl_rep1_GSM1859767_1.fastq"
+        print $0 > "J4_ctrl_rep1_GSM1859767_2.fastq"
+    }}'
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _J4_rep1_STARtmp \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --outFileNamePrefix J4_ctrl_rep1 \
+              --readFilesIn J4_ctrl_rep1_GSM1859767_1.fastq J4_ctrl_rep1_GSM1859767_2.fastq
+rm J4_ctrl_rep1_GSM1859767_1.fastq J4_ctrl_rep1_GSM1859767_2.fastq
+
+zcat J4_ctrl_rep2_GSM1859768_SRR2180202.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "J4_ctrl_rep2_GSM1859768_1.fastq"
+        print substr($0,half+1) > "J4_ctrl_rep2_GSM1859768_2.fastq"
+    } else {
+        print $0 > "J4_ctrl_rep2_GSM1859768_1.fastq"
+        print $0 > "J4_ctrl_rep2_GSM1859768_2.fastq"
+    }}'
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _J4_ctrl_rep2_GSM1859768 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --outFileNamePrefix J4_ctrl_rep2 \
+              --readFilesIn J4_ctrl_rep2_GSM1859768_1.fastq J4_ctrl_rep2_GSM1859768_2.fastq
+rm J4_ctrl_rep2_GSM1859768_1.fastq J4_ctrl_rep2_GSM1859768_2.fastq
+
+```
+
+**SupT1**
+
+GEO-ID:GSE38006
+
+Summary:
+    We sequenced the total mRNA from infected cells and detected differences in the expression of both host mRNA. We detected a small but significant suppression of T cell activation-related genes at 12 hpi. This suppression persisted and expanded by 24 hpi providing new possible markers of virus-induced T cell cytopathology. By 24 hpi the expression of over 50% of detectable host loci was also altered indicating widespread alteration of host processes including RNA processing, splicing, and transport to an extent not previously reported. In addition next-generation sequencing provided insights into the expression of non-coding RNAs including microRNA host genes.
+
+Overal Design:
+    We isolated polyadenylated RNA from SUPT1 cells infected with HIV-1 strain LAI at 12 and 24 hours post-infection (3 replicates for each time point). As controls we isolated polyadenylated RNA from mock-infected cells at 12 and 24 hours post-infection (2 replicates at 12 hours post-infection, 3 replicates at 24 hours post-infection).
+
+Lab:
+    Katze, University of Washington
+
+```
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _SupT1_Mock_12hr_rep1 \
+              --outFileNamePrefix SupT1_Mock_12hr_rep1 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesCommand zcat \
+              --readFilesIn SupT1_Mock_12hr_rep1_GSM931771_SRR497705.fastq.gz 
+
+ 
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _SupT1_Mock_12hr_rep2 \
+              --outFileNamePrefix SupT1_Mock_12hr_rep2 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesCommand zcat \
+              --readFilesIn SupT1_Mock_12hr_rep2_GSM931772_SRR497706.fastq.gz 
+
+ 
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _SupT1_Mock_12hr_rep3 \
+              --outFileNamePrefix SupT1_Mock_12hr_rep3 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesCommand zcat \
+              --readFilesIn SupT1_Mock_12hr_rep3_GSM931773_SRR497707.fastq.gz
+
+ 
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _SupT1_Mock_24hr_rep1_SRR497709 \
+              --outFileNamePrefix SupT1_Mock_24hr_rep1_SRR497709 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn SupT1_Mock_24hr_rep1_SRR497709.fastq.gz
+
+
+```
+
+
+**RPE**
+GEO-ID: GSE36695
+
+Design:
+    RNA sequencing of hfRPE from three fetuses (reference sample) and three independent isolates of RPE derived from the H1, and three from the H9, human embryonic stem cell (hESC) lines. The cultures were maintained in a serum-free medium, SFM-1. Comparisons were also made to cultures maintained in the medium used to differentiate the cells, KSR.
+lab:
+    Genomics Core, Stem Cell Center, Yale University
+
+```
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H1RPE.sfm.022311_GSM898968 \
+              --outFileNamePrefix H1RPE.sfm.022311_GSM898968 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H1RPE.sfm.022311_GSM898968_SRR447139.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H1RPE.sfm.042011_GSM898969 \
+              --outFileNamePrefix H1RPE.sfm.042011_GSM898969 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H1RPE.sfm.042011_GSM898969_SRR447140.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H1RPE.sfm.051311_GSM898970 \
+              --outFileNamePrefix H1RPE.sfm.051311_GSM898970 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H1RPE.sfm.051311_GSM898970_SRR447141.fastq.gz
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H9RPE.sfm.041511_GSM898971 \
+              --outFileNamePrefix H9RPE.sfm.041511_GSM898971 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H9RPE.sfm.041511_GSM898971_SRR447142.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H9RPE.sfm.042011_GSM898972 \
+              --outFileNamePrefix H9RPE.sfm.042011_GSM898972 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H9RPE.sfm.042011_GSM898972_SRR447143.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _H9RPE.sfm.060311_GSM898973 \
+              --outFileNamePrefix H9RPE.sfm.060311_GSM898973 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn H9RPE.sfm.060311_GSM898973_SRR447144.fastq.gz
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _hfRPESeq012611_GSM898967 \
+              --outFileNamePrefix hfRPESeq012611_GSM898967 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn hfRPESeq012611_GSM898967_SRR447138.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _hfRPESeq072611_GSM1099813 \
+              --outFileNamePrefix hfRPESeq072611_GSM1099813 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn hfRPESeq072611_GSM1099813_SRR786439.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _hfRPESeq090910_GSM898966 \
+              --outFileNamePrefix hfRPESeq090910_GSM898966 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn hfRPESeq090910_GSM898966_SRR447137.fastq.gz
+
+```
+
+**T1-DS / T2-DS**
+
+GEO-ID: GSE55504
+
+Overall design:
+    mRNA-Seq profiling in Down syndrome: fibroblasts derived from a pair of monozygotic twins discordant for trisomy 21 (4 replicates), iPS cells from the same pair of discordant twins, fibroblasts from a pair of normal monozygotic twins, fibroblasts from 16 unrelated individuals (8 trisomic and 8 euploid controls), fibroblasts from the Ts65Dn mouse model of Down syndrome (1 trisomic mouse and 1 control wt).
+
+Lab:
+    Antonarakis, Genetic Medicine and Development, University of Geneva Medical School
+
+```
+
+zcat T1DS_rep0_GSM1338311_SRR1182244.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T1DS_rep0_GSM1338311_1.fastq"
+        print substr($0,half+1) > "T1DS_rep0_GSM1338311_2.fastq"
+    } else {
+        print $0 > "T1DS_rep0_GSM1338311_1.fastq"
+        print $0 > "T1DS_rep0_GSM1338311_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T1DS_rep0_GSM1338311 \
+              --outFileNamePrefix T1DS_rep0_GSM1338311 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T1DS_rep0_GSM1338311_1.fastq T1DS_rep0_GSM1338311_2.fastq
+rm T1DS_rep0_GSM1338311_1.fastq T1DS_rep0_GSM1338311_2.fastq
+
+
+zcat T1DS_rep1_GSM1338313_SRR1182246.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T1DS_rep1_GSM1338313_1.fastq"
+        print substr($0,half+1) > "T1DS_rep1_GSM1338313_2.fastq"
+    } else {
+        print $0 > "T1DS_rep1_GSM1338313_1.fastq"
+        print $0 > "T1DS_rep1_GSM1338313_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T1DS_rep1_GSM1338313 \
+              --outFileNamePrefix T1DS_rep1_GSM1338313 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T1DS_rep1_GSM1338313_1.fastq T1DS_rep1_GSM1338313_2.fastq
+rm T1DS_rep1_GSM1338313_1.fastq T1DS_rep1_GSM1338313_2.fastq
+
+
+zcat T1DS_rep2_GSM1338315_SRR1182248.fastq T1DS_rep2_GSM1338315_SRR1182249.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T1DS_rep2_GSM1338315_1.fastq"
+        print substr($0,half+1) > "T1DS_rep2_GSM1338315_2.fastq"
+    } else {
+        print $0 > "T1DS_rep2_GSM1338315_1.fastq"
+        print $0 > "T1DS_rep2_GSM1338315_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T1DS_rep2_GSM1338315 \
+              --outFileNamePrefix T1DS_rep2_GSM1338315 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T1DS_rep2_GSM1338315_1.fastq T1DS_rep2_GSM1338315_2.fastq
+rm T1DS_rep2_GSM1338315_1.fastq T1DS_rep2_GSM1338315_2.fastq
+
+
+zcat T1DS_rep3_GSM1338317_SRR1182252.fastq T1DS_rep3_GSM1338317_SRR1182253.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T1DS_rep3_GSM1338317_1.fastq"
+        print substr($0,half+1) > "T1DS_rep3_GSM1338317_2.fastq"
+    } else {
+        print $0 > "T1DS_rep3_GSM1338317_1.fastq"
+        print $0 > "T1DS_rep3_GSM1338317_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T1DS_rep3_GSM1338317 \
+              --outFileNamePrefix T1DS_rep3_GSM1338317 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T1DS_rep3_GSM1338317_1.fastq T1DS_rep3_GSM1338317_2.fastq
+rm T1DS_rep3_GSM1338317_1.fastq T1DS_rep3_GSM1338317_2.fastq
+
+
+zcat T2DS_rep0_GSM1338312_SRR1182245.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T2DS_rep0_GSM1338312_1.fastq"
+        print substr($0,half+1) > "T2DS_rep0_GSM1338312_2.fastq"
+    } else {
+        print $0 > "T2DS_rep0_GSM1338312_1.fastq"
+        print $0 > "T2DS_rep0_GSM1338312_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T2DS_rep0_GSM1338312 \
+              --outFileNamePrefix T2DS_rep0_GSM1338312 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T2DS_rep0_GSM1338312_1.fastq T2DS_rep0_GSM1338312_2.fastq
+rm T2DS_rep0_GSM1338312_1.fastq T2DS_rep0_GSM1338312_2.fastq
+
+
+zcat T2DS_rep1_GSM1338314_SRR1182247.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T2DS_rep1_GSM1338314_1.fastq"
+        print substr($0,half+1) > "T2DS_rep1_GSM1338314_2.fastq"
+    } else {
+        print $0 > "T2DS_rep1_GSM1338314_1.fastq"
+        print $0 > "T2DS_rep1_GSM1338314_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T2DS_rep1_GSM1338314 \
+              --outFileNamePrefix T2DS_rep1_GSM1338314 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T2DS_rep1_GSM1338314_1.fastq T2DS_rep1_GSM1338314_2.fastq
+rm T2DS_rep1_GSM1338314_1.fastq T2DS_rep1_GSM1338314_2.fastq
+
+
+zcat T2DS_rep2_GSM1338316_SRR1182250.fastq T2DS_rep2_GSM1338316_SRR1182251.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T2DS_rep2_GSM1338316_1.fastq"
+        print substr($0,half+1) > "T2DS_rep2_GSM1338316_2.fastq"
+    } else {
+        print $0 > "T2DS_rep2_GSM1338316_1.fastq"
+        print $0 > "T2DS_rep2_GSM1338316_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T2DS_rep2_GSM1338316 \
+              --outFileNamePrefix T2DS_rep2_GSM1338316 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T2DS_rep2_GSM1338316_1.fastq T2DS_rep2_GSM1338316_2.fastq
+rm T2DS_rep2_GSM1338316_1.fastq T2DS_rep2_GSM1338316_2.fastq
+
+
+zcat T2DS_rep3_GSM1338318_SRR1182254.fastq T2DS_rep3_GSM1338318_SRR1182255.fastq.gz | \
+awk '{
+    if (NR%4==2 || NR%4==0){
+        half=length($0)/2
+        print substr($0,0,half) > "T2DS_rep3_GSM1338318_1.fastq"
+        print substr($0,half+1) > "T2DS_rep3_GSM1338318_2.fastq"
+    } else {
+        print $0 > "T2DS_rep3_GSM1338318_1.fastq"
+        print $0 > "T2DS_rep3_GSM1338318_2.fastq"
+    }}'
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _T2DS_rep3_GSM1338318 \
+              --outFileNamePrefix T2DS_rep3_GSM1338318 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn T2DS_rep3_GSM1338318_1.fastq T2DS_rep3_GSM1338318_2.fastq
+rm T2DS_rep3_GSM1338318_1.fastq T2DS_rep3_GSM1338318_2.fastq
+
+
+```
+**KBM7**
+GEO-ID: GSE47428
+
+Overall design:
+    Strand specific RNA-Seq of ribosomal RNA depleted total cellular RNA to measure transcript abundance and to detect fusion transcripts in KBM7 cells at standard culture conditions.
+
+lab:
+    Barlow, CeMM
+
+```
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _KBM7_bio_rep1_tech_rep1 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --outFileNamePrefix KBM7_bio_rep1_tech_rep1 \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn KBM7_bio_rep1_tech_rep1_GSM1149312_SRR867811.fastq.gz
+
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _KBM7_bio_rep1_tech_rep2 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --outFileNamePrefix KBM7_bio_rep1_tech_rep2 \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn KBM7_bio_rep1_tech_rep2_GSM1149313_SRR867812.fastq.gz
+
+nice -19 STAR --runMode alignReads \
+              --sjdbGTFfile ~/data/GRCh37/Homo_sapiens.GRCh37.85.gtf \
+              --quantMode GeneCounts \
+              --outFilterIntronMotifs RemoveNoncanonical \
+              --outTmpDir _KBM7_bio_rep2_tech_rep1 \
+              --runThreadN 5 \
+              --outSAMtype BAM Unsorted \
+              --readFilesCommand zcat \
+              --outFileNamePrefix KBM7_bio_rep2_tech_rep1 \
+              --genomeDir ~/data/GRCh37/GenomeDir/ \
+              --readFilesIn KBM7_bio_rep2_tech_rep1_GSM1149314_SRR867813.fastq.gz
+
+
+```
+
+
+## prepare biomaRt tables
+```r
+library(biomaRt)
+
+file_list = list.files('../raw_data/expression', pattern='ReadsPerGene', full.names=T)
+
+count_table = read.table(file_list[1], stringsAsFactors=F, row.names=1)
+colnames(count_table) = c('unstranded', 'sense', 'antisense')
+
+ENSG = grep('ENSG', rownames(count_table), value=T)
+humanMart = useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm_ens_gene = getBM(attributes=c('ensembl_gene_id', 'ensembl_transcript_id', 
+                                 'transcript_length', 'percentage_gc_content', 'transcription_start_site'),
+                    filters='ensembl_gene_id', values=ENSG, mart=humanMart)
+
+load('../raw_data/gencode.sure.160617.rda')
+
+ensembl_transcript_id = do.call(rbind, strsplit(gencode.sure.160617$name, split='[.]'))[,1]
+
+
+bm_p<-getBM(attributes = c("ensembl_gene_id", "ensembl_transcript_id", "chromosome_name", "start_position", "end_position", "strand", 'transcription_start_site'),
+           filters = "ensembl_transcript_id", values = ensembl_transcript_id, mart = humanMart)
+
+save(bm_ens_gene, bm_p, file='../raw_data/biomart.rdata')
+```
+
+
+## library, parameters and stuff
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(biomaRt)
+library(plyr)
+library(preprocessCore)
+library(aroma.light)
+load('../raw_data/biomart.rdata')
+
+file_list = list.files('../raw_data/expression', pattern='ReadsPerGene', full.names=T)
+
+sample_id_list = lapply(file_list, function(x){
+                        file = strsplit(x,'/')[[1]][4]
+                        return(gsub('ReadsPerGene.out.tab', '', file))
+                        })
+count_list = lapply(file_list, function(x){
+                count_table = read.table(x, stringsAsFactors=F)
+                colnames(count_table) = c('name', 'unstranded', 'sense', 'antisense')
+                return(count_table)
+            })
+names(count_list) = unlist(sample_id_list)
+
+
+## since there are different machines, they might have different GC biases
+## for GC bias we have to use hg19 genome
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+## let's focus on genes located on actual chromosomes
+gff_ranges = gff_ranges[seqnames(gff_ranges) %in% seqlevels(gff_ranges)[1:25]]
+seqlevels(gff_ranges) = paste0('chr',seqlevels(gff_ranges)[1:25])
+seqlevels(gff_ranges)[25] = 'chrM'
+
+ens_gene_ranges = gff_ranges[gff_ranges$gene_id %in% count_list[[1]][,1]]
+
+
+
+
+```
+##stats
+
+```{r, fig.width=10, fig.height=50}
+stat_list = lapply(names(count_list), function(x){
+        count = count_list[[x]]
+        N_mapped = colSums(count[5:nrow(count), 2:4])
+        numbers = rbind(count[1:4,2:4], N_mapped)
+        ratios = t(t(numbers)/colSums(numbers))
+        stat = cbind.data.frame(name=c(count[1:4,1], 'N_mapped'), ratios, sample_id=x)
+        return(melt(stat, id.vars=c('name', 'sample_id')))
+    })
+stat = do.call(rbind.data.frame, stat_list)
+ggplot(do.call(rbind.data.frame, stat_list), aes(x=variable, y=as.numeric(value), fill=factor(name))) + geom_bar(stat='identity', position='dodge', ) + facet_wrap( ~ sample_id, ncol=3)
+
+```
+**conclusion:**
+
+Let's not use KBM7, after some inspection fo the data and looking at the description of the gene set at GEO, I don't want to spent more effort trying to include this dataset. It seems like some datasets are stranded, while others contain unstranded DNA reads both in forward and reverse orientation.
+
+
+## normalization
+
+```{r, fig.width=20, fig.height=20}
+
+
+colData = DataFrame(cell_type=c(rep('ESC', 2), rep('hfRPE',3), rep("HT1080", 3),
+                                rep("Jurkat", 2), rep('K562', 2), rep('SupT1', 3),
+                                rep("T1DS", 3), rep("T2DS", 3)),
+                    row.names=c('H7_hESC_rep1', 'H7_hESC_rep2',
+                                'hfRPESeq012611_GSM898967', 'hfRPESeq090910_GSM898966', 
+                                'hfRPESeq072611_GSM1099813',
+                                'HT1080_ctrl_rep1_GSM1483942',
+                                'HT1080_ctrl_rep2_GSM1483943',
+                                'HT1080_ctrl_rep3_GSM1483944', 'J4_ctrl_rep1',
+                                'J4_ctrl_rep2', 'K562_rep1', 'K562_rep2',
+                                'SupT1_Mock_12hr_rep1', 'SupT1_Mock_12hr_rep2',
+                                'SupT1_Mock_12hr_rep3', 'T1DS_rep1_GSM1338313',
+                                'T1DS_rep2_GSM1338315', 'T1DS_rep3_GSM1338317',
+                                'T2DS_rep1_GSM1338314', 'T2DS_rep2_GSM1338316',
+                                'T2DS_rep3_GSM1338318'))
+
+unstranded_list = lapply(count_list,function(x){
+        count = x[5:nrow(x),2]
+        names(count) = x[5:nrow(x), 1]
+        return(count)
+    })
+count_table = do.call(cbind, unstranded_list)
+colnames(count_table) = names(count_list)
+count_table = count_table[,-grep('KBM7', names(count_list))]
+
+## without quantile normalization
+exp = SummarizedExperiment(assays=list(counts=count_table[, rownames(colData)]), rowRanges=ens_gene_ranges, colData=colData)
+dds_direct = DESeqDataSet(exp, design = ~ cell_type)
+dds_direct = DESeq(dds_direct)
+fpm_direct = fpm(dds_direct)
+fpm_direct = fpm_direct + min(fpm_direct[fpm_direct!=0])/2
+ggplot(melt(fpm_direct), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwithout quantile normalization')
+ggplot(melt(fpkm(dds_direct)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpkm values\nwithout quantile normalization')
+
+
+## try conditional quantile normalization
+select_max <- function(x){
+    if (nrow(x) > 1){
+        max_length = which(x$transcript_length==max(x$transcript_length))
+        x_max = x[max_length, ,drop=F]
+        if (nrow(x_max) > 1){
+            x_max$percentage_gc_content = mean(x_max$percentage_gc_content)
+            x_max = x[1, ,drop=F]
+        }
+        return(x_max)
+    } else {
+        return(x)
+    }
+}
+## assume the longest transcript has the right GC-content
+bm_max_length_gc = ddply(bm_ens_gene, .(ensembl_gene_id), select_max)
+
+## normal quantile normalization
+q_norm = normalize.quantiles(as.matrix(count_table))
+colnames(q_norm) = colnames(count_table)
+ggplot(melt(q_norm), aes(x=log10(value), color=Var2)) + geom_density()
+
+
+
+q_norm = normalize.quantiles(as.matrix(count_table[, rownames(colData)]))
+colnames(q_norm) = rownames(colData)
+ggplot(melt(q_norm), aes(x=log10(value), color=Var2)) + geom_density()
+rounded = round(q_norm,0)
+exp = SummarizedExperiment(assays=list(counts=rounded), rowRanges=ens_gene_ranges, colData=colData)
+dds_norm = DESeqDataSet(exp, design = ~ cell_type)
+dds_norm = DESeq(dds_norm)
+ggplot(melt(fpm(dds_norm)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+ggplot(melt(fpkm(dds_norm)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+
+## with pseudo-count after fpm
+fpm_norm = fpm(dds_norm)
+fpm_norm = fpm_norm + min(fpm_norm[fpm_norm!=0])/2
+ggplot(melt(fpm_norm), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+
+
+## with pseudo-count before fpm
+q_norm = normalize.quantiles(as.matrix(count_table[, rownames(colData)]))
+colnames(q_norm) = rownames(colData)
+ggplot(melt(q_norm), aes(x=log10(value), color=Var2)) + geom_density()
+rounded = floor(q_norm) + 1 
+exp = SummarizedExperiment(assays=list(counts=rounded), rowRanges=ens_gene_ranges, colData=colData)
+dds_norm_pseudo = DESeqDataSet(exp, design = ~ cell_type)
+dds_norm_pseudo = DESeq(dds_norm_pseudo)
+ggplot(melt(fpm(dds_norm_pseudo)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+ggplot(melt(fpkm(dds_norm_pseudo)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+
+
+## try affine normalization (advanced quantile normalization)
+affine_counts = normalizeAffine(count_table[,rownames(colData)])
+exp = SummarizedExperiment(assays=list(counts=round(affine_counts,0)), rowRanges=ens_gene_ranges, colData=colData)
+dds_affine = DESeqDataSet(exp, design = ~ cell_type)
+dds_affine = DESeq(dds_affine)
+ggplot(melt(fpm(dds_affine)), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2)
+
+```
+
+**conclusion:**
+
+Fpm values seem to work very well together with quantile normalization of the counts. But actually without quantile normalization the distribution of fpm values works well.
+The only problem is the lowly expressed genes, these seem to be different in each cell type. Could be all just 1 count. Maybe we can just flatten this by assigning only one value to them.
+
+Let's try both with and without quantile normalization and with and without flattening low expressing genes.
+
+Also we should maybe just remove the two rep1 experiments of T1DS and T2DS for now, since the distribution seems a bit undersampled. And we still have 2 other replicates.
+
+
+```{r, fig.width=10, fig.height=10}
+colData = colData[c(-16,-19), , drop=F]
+exp = SummarizedExperiment(assays=list(counts=count_table[, rownames(colData)]), rowRanges=ens_gene_ranges, colData=colData)
+dds_direct = DESeqDataSet(exp, design = ~ cell_type)
+dds_direct = DESeq(dds_direct)
+fpm_direct = fpm(dds_direct)
+fpm_direct = fpm_direct + min(fpm_direct[fpm_direct!=0])/2
+ggplot(melt(fpm_direct), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwithout quantile normalization') + geom_vline(xintercept=log10(0.2))
+fpm_direct_flat = fpm(dds_direct)
+fpm_direct_flat[fpm_direct_flat < 0.2 & fpm_direct_flat!= 0] = 0.2
+fpm_direct_flat[fpm_direct_flat == 0] = 0.1
+ggplot(melt(fpm_direct_flat), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwithout quantile normalization\nflat low expression') 
+
+
+q_norm = normalize.quantiles(count_table[, rownames(colData)])
+colnames(q_norm) = rownames(colData)
+ggplot(melt(q_norm), aes(x=log10(value), color=Var2)) + geom_density()
+rounded = round(q_norm,0)
+exp = SummarizedExperiment(assays=list(counts=rounded), rowRanges=ens_gene_ranges, colData=colData)
+dds_norm = DESeqDataSet(exp, design = ~ cell_type)
+dds_norm = DESeq(dds_norm)
+
+## with pseudo-count after fpm
+fpm_norm = fpm(dds_norm)
+rownames(fpm_norm) = rownames(count_table)
+fpm_norm = fpm_norm + min(fpm_norm[fpm_norm!=0])/2
+ggplot(melt(fpm_norm), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwith quantile normalization')
+fpm_norm_flat = fpm(dds_norm)
+rownames(fpm_norm_flat) = rownames(count_table)
+ggplot(melt(fpm_norm_flat), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwith quantile normalization,\nbefore psuedocount') + geom_vline(xintercept=log10(0.3)) 
+fpm_norm_flat[fpm_norm_flat < 0.3 & fpm_norm_flat!= 0] = 0.3
+fpm_norm_flat[fpm_norm_flat == 0] = 0.15
+ggplot(melt(fpm_norm_flat), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwith quantile normalization\nflat low expression') 
+
+```
+
+**conclusion:**
+
+Let's try our different adjustment settings.
+
+
+## SuRE data
+
+First we need the SuRE data, this has filtered gencode data with annotated promoter positions. Let's also annotate the different groups of promoters in LADs as defined in "Promoter_SuRE_in_LADs_exploration_BvS161031.html".
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:12]<-c("SuRE", "GROcap", "CAGE", "LAD")
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = cbind.data.frame(P, color=COL[P$class])
+p_classes = p_classes[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6)
+
+```
+
+
+## link promoter SuRE data to gene expression
+```{r, fig.width=10, fig.height=10}
+
+
+Ep_direct_flat<-merge(fpm_direct_flat,unique(P[,c('ensembl_gene_id','chr','start_position','end_position', 'strand', 'tss')]), by.x='row.names', by.y="ensembl_gene_id")
+
+print(colnames(Ep_direct_flat))
+
+loc_col = match(c('chr', 'start_position', 'end_position', 'Row.names'),
+                colnames(Ep_direct_flat))
+colnames(Ep_direct_flat)[loc_col] = c('seqnames', 'start', 'end', 'names')
+
+#DamID data:
+load("../raw_data/CdG140714humanLmnb1wK562.rData") #Lamin B1 DamID data compiled by Carolyn de Graaf
+
+# convert everything to GenomicRanges objects:
+Dgr<-makeGRangesFromDataFrame(allHumanAvHg19[,-4], keep.extra.columns=TRUE, starts.in.df.are.0based=TRUE) #same for tiling array DamID data
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              name=P$name,
+                                              gene_id = P$ensembl_gene_id),
+                                              keep.extra.columns=TRUE)
+
+
+F<-5000
+gene_gr.t<-gene_gr
+w<-width(gene_gr.t)<F*2
+GC<-as.integer((start(gene_gr.t[w])+end(gene_gr.t[w]))/2)
+start(gene_gr.t[w])<-GC-F
+end(gene_gr.t[w])<-GC+F
+
+h<-findOverlaps(gene_gr.t, Dgr) #find sets of overlapping probes:
+
+oENSG<-gene_gr.t[from(h)]$gene_id
+oVAL<-elementMetadata(Dgr[to(h)])
+
+lad_list = lapply(colnames(oVAL), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+
+DamIDbyGene<-data.frame(row.names=unique(oENSG)[!is.na(unique(oENSG))], do.call(cbind, lad_list))
+colnames(DamIDbyGene) = colnames(oVAL)
+
+```
+
+
+## correlation between expression and LAD-status per cell type
+
+```{r, fig.width=10, fig.height=10}
+
+sampleCor_direct = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpm_direct)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+sampleCor_direct = do.call(rbind, sampleCor_direct)
+rownames(sampleCor_direct) = rownames(colData)
+colnames(sampleCor_direct) = c('cor','intercept','slope','Drange')
+
+cellCor_direct = lapply(unique(colData$cell_type), function(x){
+                dam_signal = DamIDbyGene[,x]
+                exp = rowMeans(log10(fpm_direct)[rownames(DamIDbyGene),which(colData$cell_type==x)])
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+cellCor_direct = do.call(rbind, cellCor_direct)
+rownames(cellCor_direct) = unique(colData$cell_type)
+colnames(cellCor_direct) = c('cor','intercept','slope','Drange')
+
+cellCor_direct_flat = lapply(unique(colData$cell_type), function(x){
+                dam_signal = DamIDbyGene[,x]
+                exp = rowMeans(log10(fpm_direct_flat)[rownames(DamIDbyGene),which(colData$cell_type==x)])
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+cellCor_direct_flat = do.call(rbind, cellCor_direct_flat)
+rownames(cellCor_direct_flat) = unique(colData$cell_type)
+colnames(cellCor_direct_flat) = c('cor','intercept','slope','Drange')
+
+sampleCor_direct_flat = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpm_direct_flat)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+sampleCor_direct_flat = do.call(rbind, sampleCor_direct_flat)
+rownames(sampleCor_direct_flat) = rownames(colData)
+colnames(sampleCor_direct_flat) = c('cor','intercept','slope','Drange')
+
+cellCor_norm_flat = lapply(unique(colData$cell_type), function(x){
+                dam_signal = DamIDbyGene[,x]
+                exp = rowMeans(log10(fpm_norm_flat)[rownames(DamIDbyGene),which(colData$cell_type==x)])
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+cellCor_norm_flat = do.call(rbind, cellCor_norm_flat)
+rownames(cellCor_norm_flat) = unique(colData$cell_type)
+colnames(cellCor_norm_flat) = c('cor','intercept','slope','Drange')
+
+sampleCor_norm_flat = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpm_norm_flat)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+sampleCor_norm_flat = do.call(rbind, sampleCor_norm_flat)
+rownames(sampleCor_norm_flat) = rownames(colData)
+colnames(sampleCor_norm_flat) = c('cor','intercept','slope','Drange')
+
+
+cellCor_norm = lapply(unique(colData$cell_type), function(x){
+                dam_signal = DamIDbyGene[,x]
+                exp = rowMeans(log10(fpm_norm)[rownames(DamIDbyGene),which(colData$cell_type==x)])
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+cellCor_norm = do.call(rbind, cellCor_norm)
+rownames(cellCor_norm) = unique(colData$cell_type)
+colnames(cellCor_norm) = c('cor','intercept','slope','Drange')
+
+sampleCor_norm = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpm_norm)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+sampleCor_norm = do.call(rbind, sampleCor_norm)
+rownames(sampleCor_norm) = rownames(colData)
+colnames(sampleCor_norm) = c('cor','intercept','slope','Drange')
+
+fpm_affine = fpm(dds_affine)
+fpm_affine = fpm_affine + min(fpm_affine[fpm_affine != 0])/2
+cellCor_affine = lapply(unique(colData$cell_type), function(x){
+                dam_signal = DamIDbyGene[,x]
+                exp = rowMeans(log10(fpm_affine)[rownames(DamIDbyGene),which(colData$cell_type==x)])
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+
+cellCor_affine = do.call(rbind, cellCor_affine)
+rownames(cellCor_affine) = unique(colData$cell_type)
+colnames(cellCor_affine) = c('cor','intercept','slope','Drange')
+
+
+
+
+## maybe FPKM values
+fpkm = fpkm(dds_direct)
+fpkm = fpkm + min(fpkm[fpkm!=0])/2
+sampleCor_fpkm = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpkm)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+sampleCor_fpkm = do.call(rbind, sampleCor_fpkm)
+rownames(sampleCor_fpkm) = rownames(colData)
+colnames(sampleCor_fpkm) = c('cor','intercept','slope','Drange')
+
+
+
+fpkm_norm = fpkm(dds_norm)
+fpkm_norm = fpkm_norm + min(fpkm_norm[fpkm_norm!=0])/2
+rownames(fpkm_norm) = rownames(fpkm)
+sampleCor_fpkm_norm = lapply(rownames(colData), function(x){
+                dam_signal = DamIDbyGene[,colData[x,]]
+                exp = log10(fpkm_norm)[rownames(DamIDbyGene),x]
+                c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+            })
+sampleCor_fpkm_norm = do.call(rbind, sampleCor_fpkm_norm)
+rownames(sampleCor_fpkm_norm) = rownames(colData)
+colnames(sampleCor_fpkm_norm) = c('cor','intercept','slope','Drange')
+
+
+cat('correlation using direct FPM values (with psuedocount)\n')
+kable(cellCor_direct, digits=3)
+kable(sampleCor_direct, digits=3)
+
+cat('correlation using direct FPM values (with psuedocount)\n')
+kable(cellCor_direct_flat, digits=3)
+kable(sampleCor_direct_flat, digits=3)
+
+
+cat('correlation using FPM values from quantile normalized counts (with psuedocount)\n')
+kable(cellCor_norm_flat, digits=3)
+kable(sampleCor_norm_flat, digits=3)
+
+cat('correlation using FPM values from quantile normalized counts (with psuedocount)\n')
+kable(cellCor_norm, digits=3)
+kable(sampleCor_norm, digits=3)
+
+cat('correlation using FPM values from affine normalized counts (with psuedocount)\n')
+kable(cellCor_affine, digits=3)
+
+cat('correlation using direct FPKM values (with psuedocount)\n')
+kable(sampleCor_fpkm, digits=3)
+
+cat('correlation using FPKM values from quantile normalized counts (with psuedocount)\n')
+kable(sampleCor_fpkm_norm, digits=3)
+
+cat('\n')
+
+```
+
+**conclusion:**
+With all the different normalization approaches, the correlation between LAD and expression does not become better on a global scale. Also there is no improvement of reproducability of replicates. Direct FPM values seem to be the best we can get. Maybe FPKM values could also be used. But I think we need more, better proxies to really show which is best. But this improvement in any case will be marginal, so let's keep to FPM values, which are generally seen as a good method in other RNA-seq experiments.
+There is something off in the DS twin data. let's see how the replicates correlate with eachother.
+
+
+```{r, fig.width=10, fig.height=10}
+ggplot(data.frame(log10(fpm_direct)), aes(x=T1DS_rep2_GSM1338315, y = T1DS_rep3_GSM1338317)) + geom_point(size=0.3, alpha=0.3)
+
+ggplot(data.frame(log10(fpm_direct)), aes(x=T2DS_rep2_GSM1338316, y = T2DS_rep3_GSM1338318)) + geom_point(size=0.3, alpha=0.3)
+
+```
+**concusion:**
+
+Maybe not use this data
+
+
+
+
+
+```{r, fig.width=10, fig.height=10}
+
+colData = colData[!colData$cell_type %in% c('T1DS','T2DS'),, drop=FALSE]
+log_fpm_dds = log10(fpm_direct[,rownames(colData)])
+
+DEcor = lapply(rownames(DamIDbyGene), function(x){
+                dam_signal = as.numeric(DamIDbyGene[x,colData$cell_type])
+                exp = as.numeric(log_fpm_dds[x,])
+                suppressWarnings(
+                  c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+                )
+            })
+DEcor = do.call(rbind.data.frame, DEcor)
+colnames(DEcor) = c('cor','intercept','slope','Drange')
+rownames(DEcor) = rownames(DamIDbyGene)
+#plot correlations and slopes:
+ggplot(DEcor, aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+
+DRcut<-0.3 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor$Drange>DRcut) #how many drop out
+
+match_P = match(rownames(DEcor), P$ensembl_gene_id)
+DEcor$class = P[match_P,'class']
+DEcor$SuRE = P[match_P, 'SuRE']
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+
+ggplot(DEcor, aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor[DEcor$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6)
+
+# now let's try a different cutoff
+ggplot(DEcor, aes(x=Drange, color=class)) + geom_density() + geom_vline(xintercept=0.3) +geom_vline(xintercept=0.75)
+
+DRcut<-0.75 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor$Drange>DRcut) #how many drop out
+
+ggplot(DEcor[DEcor$Drange>DRcut,], aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor[DEcor$Drange>DRcut & DEcor$slope!=0 & DEcor$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6) 
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+cat('\nratio of positive correlation in all samples:\n')
+table(DEcor$cor>0)
+cat('\nratio of positive correlation with at least 0.3 dynamic range of probe intensity:\n')
+table(DEcor[DEcor$Drange>0.3, 'cor']>0)
+cat('\nratio of positive correlation with at least 0.75 dynamic range of probe intensity:\n')
+table(DEcor[DEcor$Drange>0.75, 'cor']>0)
+```
+**conclusion:**
+
+Although the difference's between classes could be bigger, in general we can see the trends we would expect in the data. But a large part of the expression data shows a positive correlation between lamina interaction and expression. It would be interesting to see how the probe signal changes around these genes.
+
+
+
+
+```{r, fig.width=10, fig.height=10}
+
+oVAL = normalize.quantiles(as.matrix(allHumanAvHg19[,unique(colData$cell_type)]))
+oVAL = data.frame(oVAL, col.names=unique(colData$cell_type))
+
+lad_list = lapply(unique(colData$cell_type), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+
+DamIDbyGene_qnorm<-data.frame(row.names=unique(oENSG), do.call(cbind, lad_list))
+colnames(DamIDbyGene_qnorm) = unique(colData$cell_type)
+
+colData = colData[!colData$cell_type %in% c('T1DS','T2DS'),, drop=FALSE]
+log_fpm_dds = log10(fpm_direct[,rownames(colData)])
+
+DEcor_qnorm = lapply(rownames(DamIDbyGene_qnorm), function(x){
+                dam_signal = as.numeric(DamIDbyGene_qnorm[x,colData$cell_type])
+                exp = as.numeric(log_fpm_dds[x,])
+                suppressWarnings(
+                  c(cor(dam_signal, exp, use='p',
+                      method='pearson'),
+                  lm(exp ~ dam_signal)$coefficients,
+                  diff(range(dam_signal, na.rm=TRUE)))
+                )
+            })
+DEcor_qnorm = do.call(rbind.data.frame, DEcor_qnorm)
+colnames(DEcor_qnorm) = c('cor','intercept','slope','Drange')
+rownames(DEcor_qnorm) = rownames(DamIDbyGene_qnorm)
+#plot correlations and slopes:
+ggplot(DEcor_qnorm, aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+
+DRcut<-0.3 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor_qnorm$Drange>DRcut) #how many drop out
+
+match_P = match(rownames(DEcor_qnorm), P$ensembl_gene_id)
+DEcor_qnorm$class = P[match_P,'class']
+DEcor_qnorm$SuRE = P[match_P, 'SuRE']
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+
+ggplot(DEcor_qnorm, aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor_qnorm[DEcor_qnorm$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6)
+
+# now let's try a different cutoff
+ggplot(DEcor_qnorm, aes(x=Drange, color=class)) + geom_density() + geom_vline(xintercept=0.3) +geom_vline(xintercept=0.75)
+
+DRcut<-0.75 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor_qnorm$Drange>DRcut) #how many drop out
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut,], aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0,], aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0 & DEcor_qnorm$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6) 
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor_qnorm[DEcor_qnorm$Drange>DRcut & DEcor_qnorm$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+cat('\nratio of positive correlation in all samples:\n')
+table(DEcor_qnorm$cor>0)
+cat('\nratio of positive correlation with at least 0.3 dynamic range of probe intensity:\n')
+table(DEcor_qnorm[DEcor_qnorm$Drange>0.3, 'cor']>0)
+cat('\nratio of positive correlation with at least 0.75 dynamic range of probe intensity:\n')
+table(DEcor_qnorm[DEcor_qnorm$Drange>0.75, 'cor']>0)
+```
+
+
+## lamina interaction around promoter
+
+For our different cell types, how do the promoters from each of the different categories identified by comparing GROcap with SuRE? The different categories were identified in K562, but since I expect cell-specific genes that are repressed to be largely repressed in the other celltypes and the non repressed genes to also still be associated with the lamina since they are apparently not bothered by it, we should see the same dips in other cell lines as well.
+
+```{r, fig.width=10, fig.height=10}
+F<-22000
+
+
+Egr.p = Egr[width(Egr)>F]
+p_match = match(Egr.p$names, P$ensembl_gene_id)
+P_start = P[p_match, 'tss'] - F
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F
+ranges(Egr.p) = IRanges(P_start, P_end)
+
+h<-findOverlaps(Egr.p, Dgr)
+oENSG<-Egr.p[from(h)]$names
+oPOS<-ifelse(strand(Egr.p[from(h)])=='+',
+             (start(Dgr[to(h)])+end(Dgr[to(h)]))/2 - start(Egr.p[from(h)]) -F,
+             end(Egr.p[from(h)]) - (start(Dgr[to(h)])+end(Dgr[to(h)]))/2 -F)
+
+         #coordinates of all overlapping probes relative to the gene starts
+oVAL<-elementMetadata(Dgr[to(h)])
+
+
+#plot:
+par(mfrow=c(1,3))
+for(celltype in unique(colData$cell_type))
+ {for(i in names(COL)) #for the three gene classes
+   {s<-unique(P$ensembl_gene_id[which(P$class==i)])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subVAL<-oVAL[w, celltype]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subVAL<-subVAL[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9, ylim=c(-0.5,1),
+         main=paste(celltype, i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(subPOS, runmed(subVAL, k=wsize), col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+   }
+ }
+
+ par(mfrow=c(1,3))
+for(celltype in c('T1DS', 'T2DS'))
+ {for(i in names(COL)) #for the three gene classes
+   {s<-unique(P$ensembl_gene_id[which(P$class==i)])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subVAL<-oVAL[w, celltype]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subVAL<-subVAL[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9, ylim=c(-0.5,1),
+         main=paste(celltype, i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(subPOS, runmed(subVAL, k=wsize), col=COL[i], lwd=2)
+    abline(v=0, lty="dotted")
+   }
+ }
+```
+**conclusion:**
+Most cell types show more or less the same differences, only the fibroblasts from the down syndrom twins is really different in this respect. Maybe there is a difference because these cells are prone to senescence.
+
+
+## expression correlation with lamina association and promoter dip
+
+Genes showing higher negative correlation are likely to be silenced by their LAD environment while genes showing a more positive correlation should be less affected by their lamina association.
+
+```{r, fig.width=10, fig.height=10}
+DEcor$cor_group = NA
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor > 0.5), 'cor_group'] = 'high_positive'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= 0.5 & DEcor$cor > 0), 'cor_group'] = 'low_positive'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= 0 & DEcor$cor > -0.5), 'cor_group'] = 'low_negative'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= -0.5), 'cor_group'] = 'high_negative'
+
+par(mfrow=c(1,4))
+for(celltype in unique(colData$cell_type))
+ {for(i in c('high_negative', 'low_negative', 'low_positive', 'high_positive')) #for the three gene classes
+   {s<-rownames(DEcor[which(DEcor$cor_group==i), ])
+    s<-s[!is.na(s)]
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    subVAL<-oVAL[w, celltype]
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subVAL<-subVAL[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9,
+         main=paste(celltype, i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(subPOS, runmed(subVAL, k=wsize), col='red', lwd=2)
+    abline(v=0, lty="dotted")
+   }
+ }
+```
+**conclusion:**
+You can see the same dip, but it's shallow. Maybe because the overal LAD signal is very low. The set of positive correlating genes has a more negative LAD-score. For a clearer picture maybe if we should select for genes in fLADs. Another reason could be that the lamina association signal is not normalized across the different cell lines.
+
+
+
+
+```{r, fig.width=10, fig.height=10}
+colnames(allHumanStateHg19) = colnames(allHumanAvHg19)
+cell_lad_state = allHumanStateHg19[,unique(colData$cell_type)]
+Dgr$lad_state = NA
+Dgr$lad_state[rowSums(cell_lad_state) == ncol(cell_lad_state)] = 'iLAD'
+Dgr$lad_state[rowSums(cell_lad_state) == ncol(cell_lad_state) * 2] = 'cLAD'
+Dgr$lad_state[rowSums(cell_lad_state) < ncol(cell_lad_state) * 2 &
+              rowSums(cell_lad_state) > ncol(cell_lad_state)] = 'fLAD'
+
+F<-5000
+Egr.t<-Egr
+gene_width<-width(Egr.t)<F*2
+GC<-as.integer((start(Egr.t[gene_width])+end(Egr.t[gene_width]))/2)
+start(Egr.t[gene_width])<-GC-F
+end(Egr.t[gene_width])<-GC+F
+
+h<-findOverlaps(Egr.t, Dgr) #find sets of overlapping probes:
+
+gene_vec = Egr.t[from(h)]$names
+state_vec = Dgr[to(h)]$lad_state
+lad_state_genes = lapply(unique(gene_vec), function(x){
+    tab = table(state_vec[gene_vec==x])
+    c(x, names(tab)[tab==max(tab)][1])
+  })
+lad_state_genes = do.call(rbind, lad_state_genes)
+lad_state_genes = data.frame(row.names=lad_state_genes[,1],
+                             lad_state=lad_state_genes[,2])
+
+colData = colData[!colData$cell_type %in% c('T1DS','T2DS'),, drop=FALSE]
+log_fpm_dds = log10(fpm_direct[,rownames(colData)])
+
+DamIDbyGene_LAD = DamIDbyGene[lad_state_genes=='cLAD' | 
+                               lad_state_genes=='fLAD',]
+
+DEcor = lapply(rownames(DamIDbyGene_LAD), function(x){
+                dam_signal = as.numeric(DamIDbyGene_LAD[x,colData$cell_type])
+                exp = as.numeric(log_fpm_dds[x,])
+                suppressWarnings(
+                    c(cor(dam_signal, exp, use='p',
+                        method='pearson'),
+                    lm(exp ~ dam_signal)$coefficients,
+                    diff(range(dam_signal, na.rm=TRUE)))
+                  )
+            })
+DEcor = do.call(rbind.data.frame, DEcor)
+colnames(DEcor) = c('cor','intercept','slope','Drange')
+rownames(DEcor) = rownames(DamIDbyGene_LAD)
+#plot correlations and slopes:
+ggplot(DEcor, aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+
+DRcut<-0.3 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor$Drange>DRcut) #how many drop out
+
+match_P = match(rownames(DEcor), P$ensembl_gene_id)
+DEcor$class = P[match_P,'class']
+DEcor$SuRE = P[match_P, 'SuRE']
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+
+ggplot(DEcor, aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor[DEcor$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6)
+
+# now let's try a different cutoff
+ggplot(DEcor, aes(x=Drange, color=class)) + geom_density() + geom_vline(xintercept=0.3) +geom_vline(xintercept=0.75)
+
+DRcut<-0.75 #cutoff for Drange (minimum dynamic range of DamID data)
+table(DEcor$Drange>DRcut) #how many drop out
+
+ggplot(DEcor[DEcor$Drange>DRcut,], aes(x=cor, y=slope)) + geom_point(size=0.5, col="#00000033") +
+    xlab('Pearsom correlation') + ggtitle("distribution of correlations and slopes")
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, y=slope)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=DEcor[DEcor$Drange>DRcut & DEcor$slope!=0 & DEcor$class %in% c('inactive', 'not_repressed', 'repressed'),], aes(color=class), size=0.6) 
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=cor, color=class))+ geom_density()
+
+ggplot(DEcor[DEcor$Drange>DRcut & DEcor$slope!=0,], aes(x=slope, color=class))+ geom_density()
+
+cat('\nratio of positive correlation in all samples:\n')
+table(DEcor$cor>0)
+cat('\nratio of positive correlation with at least 0.3 dynamic range of probe intensity:\n')
+table(DEcor[DEcor$Drange>0.3, 'cor']>0)
+cat('\nratio of positive correlation with at least 0.75 dynamic range of probe intensity:\n')
+table(DEcor[DEcor$Drange>0.75, 'cor']>0)
+DEcor$cor_group = NA
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor > 0.5), 'cor_group'] = 'high_positive'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= 0.5 & DEcor$cor > 0), 'cor_group'] = 'low_positive'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= 0 & DEcor$cor > -0.5), 'cor_group'] = 'low_negative'
+DEcor[which(DEcor$Drange>0.75 & DEcor$cor <= -0.5), 'cor_group'] = 'high_negative'
+
+par(mfrow=c(1,6))
+for(i in c('high_negative', 'low_negative', 'low_positive', 'high_positive')) #for the three gene classes
+{
+  s<-rownames(DEcor[which(DEcor$cor_group==i), ])
+  s = s[which(s %in% oENSG)]
+  s_order = apply(DamIDbyGene_LAD[s,],1,function(x){names(x)[order(x)]})
+  for (j in 1:6){
+    w<-oENSG %in% s #which rows in oENSG correspond to genes in s
+    subPOS<-oPOS[w]
+    
+    subVAL<-lapply(s,function(x){
+        this_w = which(oENSG == x)
+        cell_type = s_order[j,x]
+        return(oVAL[this_w,cell_type])
+      })
+    subVAL = do.call(cbind, subVAL)
+    o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+    subPOS<-subPOS[o]
+    subVAL<-subVAL[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F,F)*0.9,
+         main=paste('order',j, i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio") + ylim(-2,1)
+    lines(subPOS, runmed(subVAL, k=wsize), col='red', lwd=2)
+    abline(v=0, lty="dotted")
+  }
+  
+}
+
+```
+
+
+```{r, fig.width=10, fig.height=10}
+mean_K = rowMeans(fpm_direct[,c('K562_rep1', 'K562_rep2')])
+names(mean_K) = rownames(count_table)
+
+
+expression = mean_K[P$ensembl_gene_id]
+P$expression = log10(expression + min(expression[which(expression>0)])/3)
+
+plot(P$SuRE, P$expression, xlab="log10(SuRE)", ylab="log10(expression)", pch=19, cex=0.1, col=COLi)
+points(P$SuRE[INACT], P$expression[INACT], pch=19, cex=0.6, col=COL["inactive"])
+points(P$SuRE[NREP], P$expression[NREP], pch=19, cex=0.6, col=COL["not_repressed"])
+points(P$SuRE[REP], P$expression[REP], pch=19, cex=0.6, col=COL["repressed"])
+legend("topleft", legend=c("iLAD prom", paste("LAD prom ", names(COL), " n=", Pcnts, sep="")), col=c(COLi,COL), pch=19)
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+plot(P$GROcap, P$expression, xlab="log10(GROcap)", ylab="log10(expression)", pch=19, cex=0.1, col=COLi)
+points(P$GROcap[INACT], P$expression[INACT], pch=19, cex=0.6, col=COL["inactive"])
+points(P$GROcap[NREP], P$expression[NREP], pch=19, cex=0.6, col=COL["not_repressed"])
+points(P$GROcap[REP], P$expression[REP], pch=19, cex=0.6, col=COL["repressed"])
+legend("topleft", legend=c("iLAD prom", paste("LAD prom ", names(COL), " n=", Pcnts, sep="")), col=c(COLi,COL), pch=19)
+
+```
+**conclusion:**
+
+It seems like the gene expression data does not correlate well with GROcap. Maybe it's because genes might be expressed from different TSS's.
+
+

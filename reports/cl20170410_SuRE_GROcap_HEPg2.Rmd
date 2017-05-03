@@ -1,0 +1,609 @@
+
+
+
+```r
+
+load("/home/NFS/users/ca.d.graaf/projects/analyses/CdG121011humanLmnb1Atlas/CdG140714humanLmnb1wK562.rData")
+
+## exclude blood cells, down syndrome and Geulen et al. data
+allHumanStateHg19 = allHumanStateHg19[, !colnames(allHumanStateHg19)%in%c('KB', 'JK', 'ST', 'K6', 'DS', 'FB', 'TN')]
+state_sum = rowSums(allHumanStateHg19[, 5:ncol(allHumanStateHg19)])
+allHumanStateHg19$LAD[state_sum==5] = 'ciLAD'
+allHumanStateHg19$LAD[state_sum==10] = 'cLAD'
+flad_vec = paste('fLAD', state_sum-5, sep='_')
+allHumanStateHg19$LAD[state_sum<10&state_sum>5] = flad_vec[state_sum<10&state_sum>5]
+write.table(allHumanStateHg19[,c('seqname', 'start','end','LAD')],file = 'cl20170410_LAD_3state_noblood.bed', col.names = F, quote=F,row.names=F) 
+
+
+```
+
+```bash
+cat cl20170410_LAD_3state_noblood.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > cl20170410_LAD_3state_noblood_continuous.bed
+```
+
+
+```r
+library(rtracklayer)
+load("../raw_data/gencode.sure.160617.rda")
+P = gencode.sure.160617[,c(1:8)]
+tssr_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$tss - 500,
+                                              end=P$tss + 500,
+                                              strand=P$strand,
+                                              row.names=P$name),
+                                              keep.extra.columns=TRUE)
+export.bed(tssr_gr, '../raw_data/tssr_500_500.bed')
+```
+
+```
+
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~j.v.arensbergen/git_data/SuRE_bigwig/SuRE23_HEPG2/sure23.hepg2.iPCR.norm.HEPG2_norm.minus.170329.bw \
+               /dev/stdout | gzip -c > raw_data/SuRE_HepG2_tssr_500_500_minus.txt.gz &
+nice -19 \
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~j.v.arensbergen/git_data/SuRE_bigwig/SuRE23_HEPG2/sure23.hepg2.iPCR.norm.HEPG2_norm.plus.170329.bw \
+               /dev/stdout | gzip -c > raw_data/SuRE_HepG2_tssr_500_500_plus.txt.gz &
+
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~/data/tracks/hg19/wgEncodeRikenCageHepg2CellPapMinusSignalRep1.bigWig \
+               /dev/stdout | gzip -c > raw_data/CAGE_HepG2_tssr_500_500_minus_rep1.txt.gz &
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~/data/tracks/hg19/wgEncodeRikenCageHepg2CellPapMinusSignalRep2.bigWig \
+               /dev/stdout | gzip -c > raw_data/CAGE_HepG2_tssr_500_500_minus_rep2.txt.gz &
+
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~/data/tracks/hg19/wgEncodeRikenCageHepg2CellPapPlusSignalRep1.bigWig \
+               /dev/stdout | gzip -c > raw_data/CAGE_HepG2_tssr_500_500_plus_rep1.txt.gz &
+bwtool summary -header \
+               -fill=0 \
+               -with-sum \
+               -skip-median \
+               -keep-bed \
+               raw_data/tssr_500_500.bed \
+               ~/data/tracks/hg19/wgEncodeRikenCageHepg2CellPapPlusSignalRep2.bigWig \
+               /dev/stdout | gzip -c > raw_data/CAGE_HepG2_tssr_500_500_plus_rep2.txt.gz &
+
+```
+
+
+```{r}
+library(reshape2)
+library(rtracklayer)
+library(ggplot2)
+library(DESeq2)
+library(gridExtra)
+library(plyr)
+library(scales)
+library(Matrix)
+library(grid)
+library(glmnet)
+library(rtfbs)
+library(BSgenome)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(doMC)
+library(ggdendro)
+registerDoMC(cores=10)
+load('../raw_data/biomart.rdata')
+
+## There was one promoter that was wrongly annotated
+bm_p[bm_p$ensembl_transcript_id=='ENST00000357491','ensembl_gene_id' ] = 'ENSG00000196350'
+
+
+
+## Did not want to go through the hassle of install complete TFBStools package, since it was
+## complaining abount dependencies. And I only needed JASPAR motif parsing functionality.
+## So I copied the function from TFBSTools.
+## <<< copied from TFBSTools >>>
+### -----------------------------------------------------------------
+### readJASPARMatrix: read the jaspar format PFM in txt file
+### "individual" format:
+### >MA0001.1 AGL3
+### A  [ 0  3 79 40 66 48 65 11 65  0 ]
+### C  [94 75  4  3  1  2  5  2  3  3 ]
+### G  [ 1  0  3  4  1  0  5  3 28 88 ]
+### T  [ 2 19 11 50 29 47 22 81  1  6 ]
+### "all" format: multiple "individual" matrices and seperated with a blank line
+### Exported
+.processJASPARText <- function(text){
+  ID <- sub("^>", "", strsplit(text[1], "\t")[[1]][1])
+  name <- strsplit(text[1], "\t")[[1]][2]
+  if(!identical(substr(text[2:5], 1, 1), DNA_BASES)){
+    stop("The second to fifth lines of the file must start with",
+         "`A`, `C`, `G`, `T`, respectively.")
+  }
+  profileMatrix <- do.call(rbind, strsplit(sub(" *]$", "", 
+                                               sub("^(A|C|G|T)  \\[ *", "",
+                                                   text[2:5])), " +"))
+  mode(profileMatrix) <- "integer"
+  rownames(profileMatrix) <- DNA_BASES
+  ## changed the following part:
+  # ans <- PFMatrix(ID=ID, name=name, profileMatrix=profileMatrix)
+  pwm = log(t(profileMatrix)/colSums(profileMatrix))
+  ans <- list(ID=ID, name=name, profileMatrix=pwm)
+}
+
+readJASPARMatrix <- function(fn, type=c("individual", "all")){
+  type <- match.arg(type)
+  text <- readLines(fn)
+  if(type == "individual"){
+    if(length(text) != 5L){
+      stop("The `individual` format is supposed to have 5 lines!")
+    }
+    ans <- .processJASPARText(text)
+  }else{
+    if(length(text) %% 6 != 0L){
+      stop("The `all` format is supposed to have a number of lines",
+           "mutipled by 6!")
+    }
+    text2 <- split(text, rep(1:(length(text)/6), rep(6, length(text)/6)))
+    ans <- lapply(text2, .processJASPARText)
+    # ans <- do.call(PFMatrixList, ans)
+  }
+  return(ans)
+}
+## <<< end of copie >>>>
+
+## get a table with matching sets
+## table = complete table to take matching sets from
+## class_col = column name of class of interest
+## class = name of class to match the set on
+## order_on = column name to order on
+matchSet <- function(table, class_col, class, order_on){
+  o_vec = order(table[,order_on])
+  o_table = table[o_vec, ]
+  setA = which(o_table[,class_col]==class)
+  setB = c(setA + 1, setA -1)
+  ## can also return o_table[unique(c(setA, setB)), ]
+  ## but this way order is perserved.
+  i_vec = o_vec[unique(c(setA, setB))]
+  return(table[i_vec[order(i_vec)], ])
+}
+example = matchSet(P[!is.na(P$iLAD_class), ], 'iLAD_class', 'edge_gene', 'GROcap')
+
+load("../raw_data/gencode.sure.160617.rda")
+P = gencode.sure.160617[,c(1:8)]
+
+sure_min = read.table('../raw_data/SuRE_HepG2_tssr_500_500_minus.txt.gz',
+                      row.names=4,
+                      stringsAsFactors=F)[,c(1:3,5,11)]
+sure_plus = read.table('../raw_data/SuRE_HepG2_tssr_500_500_plus.txt.gz',
+                       row.names=4,
+                       stringsAsFactors=F)[,c(1:3,5,11)]
+cage_min_rep1 = read.table('../raw_data/CAGE_HepG2_tssr_500_500_minus_rep1.txt.gz',
+                           row.names=4,
+                           stringsAsFactors=F)[,c(1:3,5,11)]
+cage_min_rep2 = read.table('../raw_data/CAGE_HepG2_tssr_500_500_minus_rep2.txt.gz',
+                            row.names=4,
+                            stringsAsFactors=F)[,c(1:3,5,11)]
+cage_plus_rep1 = read.table('../raw_data/CAGE_HepG2_tssr_500_500_plus_rep1.txt.gz',
+                            row.names=4,
+                            stringsAsFactors=F)[,c(1:3,5,11)]
+cage_plus_rep2 = read.table('../raw_data/CAGE_HepG2_tssr_500_500_plus_rep2.txt.gz',
+                            row.names=4,
+                            stringsAsFactors=F)[,c(1:3,5,11)]
+
+colnames(sure_min) = colnames(sure_plus) = colnames(cage_min_rep1) = colnames(cage_min_rep2) = colnames(cage_plus_rep1) = colnames(cage_plus_rep2) = c('seqnames', 'start', 'end', 'strand', 'sum')
+
+sure_min$mean = sure_min$sum / 1001
+sure_plus$mean = sure_plus$sum / 1001
+
+
+cage_min = cage_plus = cage_min_rep1[,1:4]
+cage_min$sum = rowMeans(cbind(cage_min_rep1$sum, cage_min_rep2$sum))
+cage_plus$sum = rowMeans(cbind(cage_plus_rep1$sum, cage_plus_rep2$sum))
+cage_min$mean = cage_min$sum / 1001
+cage_plus$mean = cage_plus$sum / 1001
+
+load("../raw_data/gencode.sure.160617.rda")
+P = gencode.sure.160617[,c(1:8)]
+order_vec = P$name
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(order_vec, P$name), ]
+
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+P$SuRE = NaN
+P$SuRE[P$strand=='+'] = sure_plus$mean[P$strand=='+']
+P$SuRE[P$strand=='-'] = sure_min$mean[P$strand=='-']
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE = log10(P$SuRE + Pseud)
+P$CAGE = NaN
+P$CAGE[P$strand=='+'] = cage_plus$mean[P$strand=='+']
+P$CAGE[P$strand=='-'] = cage_min$mean[P$strand=='-']
+P$CAGE = log10(P$CAGE + min(P$CAGE[P$CAGE!=0])/2)
+
+
+ggplot(P, aes(x=SuRE, y=CAGE)) + geom_point(alpha=0.3,size=0.1)
+```
+
+```{r}
+
+lad_gr = import.bed('../../../data/tracks/hg19/cl20170410_LAD_3state_noblood_continuous.bed')
+tss_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                             start=P$tss,
+                                             end=P$tss,
+                                             strand=P$strand,
+                                             row.names=P$name),
+                                             keep.extra.columns=TRUE)
+o = findOverlaps(tss_gr, lad_gr)
+P$LAD = NA
+P$LAD[queryHits(o)] = lad_gr[subjectHits(o)]$name
+
+tss_gr = tss_gr[order(P$SuRE,sample(c(1:nrow(P))))]
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), CAGE.lad=rep(NA,n), CAGE.cilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$CAGE.lad[i]<-mean(t$CAGE[t$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3')], na.rm=TRUE)
+   RM$CAGE.cilad[i]<-mean(t$CAGE[t$LAD=='ciLAD'], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$CAGE[P$SuRE==log10(Pseud) & P$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3']), mean(P$CAGE[P$SuRE==log10(Pseud) & P$LAD=='ciLAD']))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$CAGE - approx(x=RM$SuRE.mean, y=RM$CAGE.cilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3') & P$CAGE< -2 #inactive
+NREP<- P$SuRE> 0 & P$LRS> -0.5 & P$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3') & P$CAGE> -2 #not repressed
+REP<- P$SuRE> 0.3 & P$LRS< -1 & P$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3')  & P$CAGE< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P$LAD%in%c('cLAD', 'fLAD_4', 'fLAD_3') & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD=='ciLAD']<-"ciLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"escaper"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+P$class = factor(P$class, levels=c('ciLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('cLAD', 'ciLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'ciLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P$class), '; n=',table(P$class))
+names(class_names) = levels(P$class)
+P$class_n = P$class
+levels(P$class_n) = class_names
+COL_class_n = COL_class[names(class_names)]
+names(COL_class_n) = class_names
+
+lad_names = c(cLAD=paste0('LAD; n=', table(P$LAD)['cLAD']),
+              ciLAD=paste0('iLAD; n=', table(P$LAD)['ciLAD']))
+P$lad_n = factor(lad_names[as.character(P$LAD)])
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+
+
+RM_melt = melt(RM, measure.vars=c('CAGE.cilad', 'CAGE.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='CAGE.lad', lad_names['cLAD'], lad_names['ciLAD'])
+
+
+ggplot(P, aes(x=SuRE,y=CAGE, color=LAD)) +
+    geom_point(data=P[P$LAD=='ciLAD', ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD=='cLAD', ], size=0.5, alpha=0.5) + 
+    theme_bw() +
+    labs(y='log10(CAGE)', x='log10(SuRE)') +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad)
+
+
+ggplot(P, aes(x=SuRE, y=CAGE, color=lad_n)) +
+    geom_point(data=P[P$LAD=='ciLAD', ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD=='cLAD', ], size=0.5, alpha=0.2) + 
+    theme_bw() +
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(CAGE)', x='log10(SuRE)') +
+    theme(legend.title=element_blank()) +
+    scale_color_manual(values=COL_lad_n)
+
+p_classes = P[which(P$class %in% c('inactive', 'escaper', 'repressed')),]
+ggplot(P, aes(x=SuRE, y=CAGE)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n), size=0.6) + 
+    labs(y='log10(CAGE)', x='log10(SuRE)') +
+    theme_bw() +
+    geom_line(data=RM, aes(x=SuRE.mean, y=CAGE.cilad), color=COL_lad['ciLAD']) +
+    geom_line(data=RM, aes(x=SuRE.mean, y=CAGE.lad), color=COL_lad['cLAD']) +
+    theme(legend.title=element_blank()) +
+    scale_colour_manual(values=COL_class_n) 
+
+
+table(P$name2[P$class=='escaper'])
+```
+
+**conclusion:**
+Data seems to be more noisy than in K562  in addition we are not sure about lamina organisation in HepG2. Hopefully doing DamID in HepG2 will solve this problem in the future, for now we have a set of genes in cLADs and fLADs for non-blood related tissues. By taking genes in cLADs and fLADs which are lamina associated in most of the cell types we have the most reasonable list for now.
+
+
+
+```{r}
+
+count_rep1 = read.table('../raw_data/expression/K562_rep1ReadsPerGene.out.tab')
+count_rep2 = read.table('../raw_data/expression/K562_rep2ReadsPerGene.out.tab')
+
+count_table = cbind(count_rep1[,4], rep2=count_rep2[,4])
+rownames(count_table) = count_rep1[,1]
+colnames(count_table) = c('rep1', 'rep2')
+exp = SummarizedExperiment(assays = list(counts=count_table[-(1:4), ]))
+dds = DESeqDataSet(exp, design= ~ 1)
+fpm = fpm(dds)
+fpm = rowMeans(fpm)
+fpm = log10(fpm + min(fpm[fpm!=0])/2)
+
+g_match = match(P$ensembl_gene_id, names(fpm))
+P$K562_fpm = NaN
+P$K562_fpm[!is.na(g_match)] = fpm[g_match[!is.na(g_match)]]
+```
+
+
+```{r}
+
+wilcox_affinity <- function(x_affinity, y_affinity, groups, tf_table, id_vec=NULL){
+  if (is.null(id_vec)){
+    id_vec = colnames(x_affinity)
+  }  
+  fit = mclapply(id_vec, function(id){
+    x = x_affinity[,id]
+    y = y_affinity[,id]
+    r = rank(c(x,y))
+    r_x = r[1:length(x)]
+    r_y = r[-(1:length(x))]
+    mean_r = c(mean(r_x), mean(r_y))
+    direction = groups[which(mean_r==max(mean_r))]
+    if (length(direction) == 2){
+      direction = 'unchanged'
+    }
+    median_fc = median(x) / median(y)
+    mean_fc = mean(x) / mean(y)
+    rank_fc = mean_r[1] / mean_r[2]
+    if (length(which(x==0))/length(x)>0.3 &
+        length(which(y==0))/length(y)>0.3){
+      w = chisq.test(rbind(table(x==0), table(y==0)))
+    } else {
+      w = wilcox.test(x, y)
+    }
+    return(list(w,direction, median_fc, mean_fc, rank_fc))
+  })
+  p_vec = unlist(lapply(fit, function(x){ x[[1]]$p.value}))
+  p_adjust = p.adjust(p_vec, method='fdr')
+  direction = lapply(fit, function(x){ x[[2]]})
+  median_fc =  lapply(fit, function(x){ x[[3]]})
+  mean_fc =  lapply(fit, function(x){ x[[4]]})
+  rank_fc =  lapply(fit, function(x){ x[[5]]})
+  result_table = cbind(id=id_vec, 
+                       tf_table[id_vec, ],
+                       direction=unlist(direction),
+                       p_adjust = p_adjust,
+                       median_fc = unlist(median_fc),
+                       mean_fc = unlist(mean_fc), 
+                       rank_fc = unlist(rank_fc), stringsAsFactors=F)
+  return(result_table)
+}
+
+tissues_expressed = read.table('../../../data/fantom/max_tissues_expressed.txt.gz',
+                               sep='\t', header=T, stringsAsFactors=T)
+
+aff_table_jaspar = read.table('../raw_data/jaspar_affinity_300_300/seq_psam.dat', stringsAsFactors=F)
+tf_table_jaspar = read.table('../raw_data/tf_table.txt', sep='\t', row.names=1, stringsAsFactors=F)
+colnames(tf_table_jaspar) = c('name', 'species', 'class', 'family')
+tf_translation = read.table('../raw_data/tf_translation.txt', stringsAsFactors=F)
+
+
+tf_cage = P[P$ensembl_gene_id%in%tf_translation$gene_id[!is.na(tf_translation$gene_id)],
+            c('ensembl_gene_id', 'CAGE')]
+tf_cage_max = ddply(tf_cage, .(ensembl_gene_id), function(x){c(max_cage=max(x$CAGE))})
+
+tf_translation$K562_fpm = fpm[tf_translation$gene_id]
+rownames(tf_cage_max) = tf_cage_max$ensembl_gene_id
+tf_translation$cage_max = tf_cage_max[tf_translation$gene_id, 'max_cage']
+
+
+tf_expression = ddply(tf_translation[,c('name','gene_id','K562_fpm', 'cage_max')],.(name),
+                     function(x, te){
+                          name=x[1,1]
+                          ens = which(te$ensembl_gene_id%in%x$gene_id)
+                          if (length(ens) > 0){
+                            tissues= min(te[ens,'tissues_expressed'])
+                          } else {
+                            tissues = NA
+                          }
+                          c(expression_K562=min(x$K562_fpm),
+                            CAGE_HEKG2=min(x$cage_max),
+                            tissues_expressed=tissues)
+                     }, te=tissues_expressed)
+tf_table_jaspar$expression = NaN
+tf_match = match(tf_expression$name, tf_table_jaspar$name)
+tf_table_jaspar$expression[tf_match] = tf_expression$expression
+tf_table_jaspar$tissues_expressed = NaN
+tf_table_jaspar$tissues_expressed[tf_match] = tf_expression$tissues_expressed
+tf_table_jaspar$CAGE_HEKG2 = NaN
+tf_table_jaspar$CAGE_HEKG2[tf_match] = tf_expression$CAGE_HEKG2
+
+id_vec = colnames(aff_table_jaspar) = gsub('.xml','', colnames(aff_table_jaspar))
+
+matched_evsr = matchSet(P[P$class%in%c('repressed', 'escaper'), ], 'class', 'escaper', 'SuRE')
+escaper_affinity_m = aff_table_jaspar[matched_evsr[which(matched_evsr$class=='escaper'),'name'],]
+repressed_affinity_m = aff_table_jaspar[matched_evsr[which(matched_evsr$class=='repressed'),'name'],]
+evsr_jaspar_m = wilcox_affinity(escaper_affinity_m, repressed_affinity_m, c('escaper', 'repressed'), tf_table_jaspar, id_vec)
+write.table(evsr_jaspar_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_all_matched_HEPG2.txt')
+evsr_jaspar_sig_m = evsr_jaspar_m[which(evsr_jaspar_m$p_adjust < 0.05 &
+                                        ifelse(evsr_jaspar_m$direction=='repressed', 
+                                               evsr_jaspar_m$mean_fc < 1,
+                                               evsr_jaspar_m$mean_fc > 1)), ]
+write.table(evsr_jaspar_sig_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_sig_matched_HEPG2.txt')
+cor_matrix = read.table('cl20170223_jaspar_2016_psam_correlations.txt', sep='\t', stringsAsFactors=F)
+
+dd = as.dendrogram(hclust(as.dist(1-cor_matrix[evsr_jaspar_sig_m$id, evsr_jaspar_sig_m$id])))
+ddata_x = dendro_data(dd)
+labs = label(ddata_x)
+lab_vec = as.character(labs$label)
+labs$name = evsr_jaspar_sig_m[lab_vec, 'name']
+labs$class = evsr_jaspar_sig_m[lab_vec, 'class']
+
+seg = segment(ddata_x)
+seg$color=rep('gray', length(seg$x))
+seg$color[which(seg$yend==0)] = as.character(evsr_jaspar_sig_m[lab_vec, 'direction'])
+seg$size = rep(0, length(seg$x))
+seg$size[which(seg$yend==0)] = 1
+COL_seg = c(COL, gray='gray')
+
+COL_text = rainbow(length(unique(labs$class)))
+names(COL_text) = unique(labs$class)
+
+pdf('evsr_motif_dendrogram_matched_HEPG2.pdf', width=15)
+ggplot(seg) +
+  theme_bw() +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend, size=seg$size, color=color)) +
+  scale_color_manual(values=c(COL_seg, COL_text)) +
+  scale_size(range=c(1,1.5)) +
+  ylim(-0.1,1) +
+  geom_text(data=labs, aes(label=name, x=x, y=0, angle=60,hjust='right', colour=class)) 
+dev.off()
+
+
+pdf('evsr_violin_matched_HEPG2.pdf')
+for (id in evsr_jaspar_sig_m$id){
+  df = data.frame(class=P[P$class%in%c('repressed', 'escaper'), 'class'],
+                  affinity=aff_table_jaspar[P[P$class%in%c('repressed', 'escaper'), 'name'], id])
+  if (!(all(df[df$class=='repressed','affinity']==0) |
+       all(df[df$class=='escaper','affinity']==0))){
+    print(ggplot(df, aes(x=class, y=log10(affinity), color=class)) + 
+            geom_violin() +
+            ggtitle(paste0(id, '; ', evsr_jaspar_m[id, 'name'], '\n', evsr_jaspar_m[id, 'direction'], '; ', evsr_jaspar_m[id, 'mean_fc'])) +
+            geom_point(position=position_jitter(0.5), alpha=0.3, size=0.3) +
+            scale_color_manual(values=COL))
+  }
+}
+dev.off()
+```
+
+
+```{r}
+
+load('cl20170404_CAGE_correlations_jaspar_norm.rda')
+
+
+matched_evsr = matchSet(P[P$class%in%c('repressed', 'escaper'), ], 'class', 'escaper', 'SuRE')
+
+entrez_escaper = which(entrez_vec%in%matched_evsr[which(matched_evsr$class=='escaper'), 'entrezgene'])
+entrez_repressed = which(entrez_vec%in%matched_evsr[which(matched_evsr$class=='repressed'), 'entrezgene'])
+
+id_vec = rownames(cor_table) = rownames(tf_table_jaspar)[match(rownames(cor_table), tf_table_jaspar$name)]
+
+evsr_jaspar_exp_m = wilcox_affinity(t(cor_table[,entrez_escaper]), t(cor_table[,entrez_repressed]), c('escaper', 'repressed'), tf_table_jaspar, id_vec)
+write.table(evsr_jaspar_exp_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_all_matched_exp_HEPG2.txt')
+evsr_jaspar_sig_exp_m = evsr_jaspar_exp_m[which(evsr_jaspar_exp_m$p_adjust < 0.05 &
+                                        ifelse(evsr_jaspar_exp_m$direction=='repressed', 
+                                               evsr_jaspar_exp_m$mean_fc < 1,
+                                               evsr_jaspar_exp_m$mean_fc > 1)), ]
+write.table(evsr_jaspar_sig_exp_m, sep='\t',row.names=F, file='escaper_vs_repressed_aff_jaspar_sig_matched_exp_HEPG2.txt')
+
+dd = as.dendrogram(hclust(as.dist(1-cor_matrix[evsr_jaspar_sig_exp_m$id, evsr_jaspar_sig_exp_m$id])))
+ddata_x = dendro_data(dd)
+labs = label(ddata_x)
+lab_vec = as.character(labs$label)
+labs$name = evsr_jaspar_sig_exp_m[lab_vec, 'name']
+labs$class = evsr_jaspar_sig_exp_m[lab_vec, 'class']
+
+seg = segment(ddata_x)
+seg$color=rep('gray', length(seg$x))
+seg$color[which(seg$yend==0)] = as.character(evsr_jaspar_sig_exp_m[lab_vec, 'direction'])
+seg$size = rep(0, length(seg$x))
+seg$size[which(seg$yend==0)] = 1
+COL_seg = c(COL, gray='gray')
+
+COL_text = rainbow(length(unique(labs$class)))
+names(COL_text) = unique(labs$class)
+
+pdf('evsr_motif_dendrogram_matched_exp_HEPG2.pdf', width=15)
+ggplot(seg) +
+  theme_bw() +
+  geom_segment(aes(x=x, y=y, xend=xend, yend=yend, size=seg$size, color=color)) +
+  scale_color_manual(values=c(COL_seg, COL_text)) +
+  scale_size(range=c(1,1.5)) +
+  ylim(-0.1,1) +
+  geom_text(data=labs, aes(label=name, x=x, y=0, angle=60,hjust='right', colour=class)) 
+dev.off()
+
+
+pdf('evsr_violin_matched_exp_HEPG2.pdf')
+for (id in evsr_jaspar_sig_exp_m$id){
+  df = data.frame(class=c(rep('escaper', length(entrez_escaper)),
+                          rep('repressed', length(entrez_repressed))),
+                  exp_cor=as.numeric(cor_table[id,c(entrez_escaper, entrez_repressed)]))
+  if (!(all(df[df$class=='repressed','exp_cor']==0) |
+       all(df[df$class=='escaper','exp_cor']==0))){
+    print(ggplot(df, aes(x=class, y=exp_cor, color=class)) + 
+            geom_violin() +
+            ggtitle(paste0(id, '; ', evsr_jaspar_m[id, 'name'], '\n', evsr_jaspar_m[id, 'direction'], '; ', evsr_jaspar_m[id, 'mean_fc'])) +
+            geom_point(position=position_jitter(0.5), alpha=0.3, size=0.3) +
+            scale_color_manual(values=COL))
+  }
+}
+dev.off()
+
+```
