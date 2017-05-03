@@ -1,0 +1,391 @@
+# knitr document van Steensel lab
+
+# Promoters looping out of LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+Comparing GROcap and CAGE data with SuRE data in LADs we found an interesting set of promoters showing activity in all 3 data sets even though they were found in LAD regions. We saw, that for this group of promoters that even though the gene itself is located inside a LAD, the lamin signal around the promoter drops which hints that the promoter is located outside of the LAD. To some extend other groups of promoters also showed these dips in lamina association. I would like to know what defines promoters that show a big dip in lamina association in respect to the actual gene body. 
+
+This is a continuation of 'cl20161104_SuRE_in_differential_LADs.Rmd'
+
+
+## libraries, paths and data prep
+
+```{r}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(biomaRt)
+library(plyr)
+library(preprocessCore)
+library(cqn)
+library(aroma.light)
+load('../raw_data/biomart.rdata')
+
+```
+
+### gene expression
+
+```{r, fig.width=10, fig.height=10}
+file_list = list.files('../raw_data/expression', pattern='ReadsPerGene', full.names=T)
+
+sample_id_list = lapply(file_list, function(x){
+                        file = strsplit(x,'/')[[1]][4]
+                        return(gsub('ReadsPerGene.out.tab', '', file))
+                        })
+count_list = lapply(file_list, function(x){
+                count_table = read.table(x, stringsAsFactors=F)
+                colnames(count_table) = c('name', 'unstranded', 'sense', 'antisense')
+                return(count_table)
+            })
+names(count_list) = unlist(sample_id_list)
+
+
+## since there are different machines, they might have different GC biases
+## for GC bias we have to use hg19 genome
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+## let's focus on genes located on actual chromosomes
+gff_ranges = gff_ranges[seqnames(gff_ranges) %in% seqlevels(gff_ranges)[1:25]]
+seqlevels(gff_ranges) = seqlevels(gff_ranges)[1:25]
+
+ens_gene_ranges = gff_ranges[gff_ranges$gene_id %in% count_list[[1]][,1]]
+
+
+
+colData = DataFrame(cell_type=c(rep('ESC', 2), rep('hfRPE',3), rep("HT1080", 3),
+                                rep("Jurkat", 2), rep('K562', 2), rep('SupT1', 3)),
+                    row.names=c('H7_hESC_rep1', 'H7_hESC_rep2',
+                                'hfRPESeq012611_GSM898967', 'hfRPESeq090910_GSM898966', 
+                                'hfRPESeq072611_GSM1099813',
+                                'HT1080_ctrl_rep1_GSM1483942',
+                                'HT1080_ctrl_rep2_GSM1483943',
+                                'HT1080_ctrl_rep3_GSM1483944', 'J4_ctrl_rep1',
+                                'J4_ctrl_rep2', 'K562_rep1', 'K562_rep2',
+                                'SupT1_Mock_12hr_rep1', 'SupT1_Mock_12hr_rep2',
+                                'SupT1_Mock_12hr_rep3'))
+
+unstranded_list = lapply(count_list,function(x){
+        count = x[5:nrow(x),2]
+        names(count) = x[5:nrow(x), 1]
+        return(count)
+    })
+count_table = do.call(cbind, unstranded_list)
+colnames(count_table) = names(count_list)
+count_table = count_table[,-grep('KBM7', names(count_list))]
+
+## without quantile normalization
+exp = SummarizedExperiment(assays=list(counts=count_table[, rownames(colData)]), rowRanges=ens_gene_ranges, colData=colData)
+dds_direct = DESeqDataSet(exp, design = ~ cell_type)
+dds_direct = DESeq(dds_direct)
+fpm_direct = fpm(dds_direct)
+fpm_direct = fpm_direct + min(fpm_direct[fpm_direct!=0])/2
+ggplot(melt(fpm_direct), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values')
+
+
+```
+
+
+### SuRE data
+
+```{r}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = cbind.data.frame(P, color=COL[P$class])
+p_classes = p_classes[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6)
+
+```
+
+
+### LAD-data
+
+```{r}
+#DamID data:
+load("../raw_data/CdG140714humanLmnb1wK562.rData") #Lamin B1 DamID data compiled by Carolyn de Graaf
+## make column names more descriptive of sample
+colnames(allHumanAvHg19)[5:16] = 
+    colnames(allHumanStateHg19)[5:16] = c('Tig3', 'ESC', 'HT1080', 'Jurkat', 'SupT1',
+                                          'T2N', 'T1DS', 'LS174T', 'RPE', 'Tig3Guelen',
+                                          'KBM7', 'K562')
+
+## remove T1DS and T2N (fibroblasts of down syndrom twin) and Tig3Guelen.
+## because T1DS and T2N have weird correlation with gene expression and Tig3Guelen
+## is from a different platform
+cell_selection = !colnames(allHumanAvHg19) %in% c('T2N', 'T1DS', 'Tig3Guelen')
+
+lad_avg_probe = allHumanAvHg19[, cell_selection]
+lad_hmm = allHumanStateHg19[, cell_selection]
+
+```
+
+
+### genomic ranges and links between data types.
+
+```{r}
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #number of unique promoters
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+table(P$ensembl_gene_id %in% row.names(fpm_direct))
+table(row.names(fpm_direct) %in% P$ensembl_gene_id)
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              names=P$ensembl_gene_id,
+                                              tss=P$tss),
+                                              keep.extra.columns=TRUE) 
+
+lad_gr <- makeGRangesFromDataFrame(data.frame(seqnames = lad_hmm$seqname,
+                                              start = lad_hmm$start,
+                                              end = lad_hmm$end,
+                                              row.names=rownames(lad_hmm)))
+
+
+## full region around TSS
+F_full = 22000
+full_region_gr = gene_gr
+full_start = full_region_gr$tss - F_full
+full_start = ifelse(full_start<1,1,full_start)
+full_end = full_region_gr$tss + F_full
+ranges(full_region_gr) = IRanges(full_start, full_end)
+
+## region close to promoter
+F_prom = 2500
+prom_region_gr = gene_gr
+prom_start = prom_region_gr$tss - F_prom
+prom_start = ifelse(prom_start<1,1,prom_start)
+prom_end = prom_region_gr$tss + F_prom
+ranges(prom_region_gr) = IRanges(prom_start, full_end)
+
+## region further in gene body
+up_region_gr = gene_gr
+offset = ifelse(strand(up_region_gr)=='+', 10000, -10000)
+up_start = up_region_gr$tss - F_prom + offset
+up_start = ifelse(up_start<1,1,up_start)
+up_end = up_region_gr$tss + F_prom + offset
+ranges(up_region_gr) = IRanges(up_start, up_end)
+
+```
+
+
+## Amount of transcripts per gene
+
+Maybe having part of the gene inside a LAD is a specific mechanism to controll which TSS is used
+
+```{r}
+
+P$transcript_count = as.numeric(table(P$ensembl_gene_id)[P$ensembl_gene_id])
+subset_P = P[width(gene_gr) > 10000 & P$LAD==1 & !is.na(P$ensembl_gene_id), ]
+ggplot(subset_P, aes(x=class, y=transcript_count, color=class)) + geom_violin(alpha=0.3) + geom_point(position=position_jitter(width=0.8), alpha=0.3, size=0.3)
+
+plot_list = list()
+for (class in c('repressed','not_repressed','inactive')){
+    plot_list[[class]] = ggplot(subset_P[subset_P$class == class,], 
+                                aes(x=transcript_count>1)) + 
+                         geom_bar(aes(y = (..count..)/sum(..count..),
+                                  fill=transcript_count>1)) + 
+                         scale_y_continuous(labels=percent, limits=c(0,1)) + 
+                         ggtitle(class) + 
+                         geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                       label = paste0('n=',..count..)), 
+                                   stat = "count", vjust = -0.25)
+}
+do.call(grid.arrange, c(plot_list,ncol=3))
+
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+tss_gr$cpg_distance = mcols(distanceToNearest(tss_gr, cpg_ranges))$distance
+
+P$cpg_class = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$ensembl_transcript_id
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$ensembl_transcript_id
+
+P$cpg_class[P$ensembl_transcript_id %in% cpg_prom] = 'CpG'
+P$cpg_class[P$ensembl_transcript_id %in% non_cpg_prom] = 'non_CpG'
+
+```
+
+**conclusion:**
+There seems to be a slightly higher ratio of genes with multiple TSS's in the not-repressed group. It would be nice to see if their other TSS's are represed by the lamina association
+
+
+
+## difference in activity of multiple promoters of same gene
+
+If indeed previous observation is linked to a regulatory mechanism to control specific promoters in genes with multiple promoters, one would expect one promoter to be repressed, while the other is active. We can get a value for level of repression by deviding GROseq by SuRE signal. By using this value for each transcript with it's own promoter and substracting the mean repression value of the other promoters of the same gene we can get a crude value of repression difference.
+
+```{r}
+
+ens_vec = unique(P$ensembl_gene_id[P$transcript_count>1 & !is.na(P$ensembl_gene_id)])
+
+repression_dif = lapply(ens_vec, function(x){
+    this_p = P[which(P$ensembl_gene_id==x), ]
+    result = data.frame(id=this_p$ensembl_transcript_id, repression_dif= NaN)
+
+    result[,2] = unlist(lapply(1:nrow(this_p),function(i){
+        if (length(this_p$LRS) > 2){
+          return(this_p$LRS[i] - mean(this_p$LRS[-i]))
+        } else {
+          return(this_p$LRS[i] - this_p$LRS[-i])
+        }
+      }))
+    return(result)
+  })
+repression_dif = do.call(rbind, repression_dif)
+rep_match = match(repression_dif$id, P$ensembl_transcript_id)
+P$repression_dif = NaN
+P[rep_match,'repression_dif'] = repression_dif$repression_dif
+
+
+ggplot(P[!is.na('repression_dif')&!is.na(P$class),], aes(x=repression_dif < 0, y=log10(abs(repression_dif)), color=repression_dif < 0)) + 
+  geom_violin(alpha=0.3) + 
+  geom_point(position=position_jitter(width=0.9), alpha=0.3, size=0.3) + 
+  facet_wrap( ~ class) + 
+  labs(colour='less repression\nthan\nsplice variant?', x='less repression than splice variant?', y='log10(difference in LAD repression score)')
+
+
+
+subset_P = P[!is.na('repression_dif')&!is.na(P$class),]
+plot_list = list()
+for (class in c('repressed','not_repressed','inactive')){
+    plot_list[[class]] = ggplot(subset_P[subset_P$class == class,], 
+                                aes(x=repression_dif<0)) + 
+                         geom_bar(aes(y = (..count..)/sum(..count..),
+                                  fill=repression_dif<0)) + 
+                         scale_y_continuous(labels=percent, limits=c(0,1)) + 
+                         ggtitle(class) + 
+                         geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                       label = paste0('n=',..count..)), 
+                                   stat = "count", vjust = -0.25)
+}
+do.call(grid.arrange, c(plot_list,ncol=3))
+
+```
+**conclusion**
+
+Seems like there is less difference in general between promoter repression in our non_repressed subset. This probably has something to do with noise in low-signal promoters. Looking at the LAD repression score, most differences can be observed between the repressed and inactive group. So splice variants where one promoter shows an autonomous SuRE signal, while the other does not.
+
+
+
+
+```{r}
+
+full_region_lad_overlap = findOverlaps(full_region_gr, lad_gr)
+prom_region_lad_overlap = findOverlaps(prom_region_gr, lad_gr)
+up_region_lad_overlap = findOverlaps(up_region_gr, lad_gr)
+
+full_region_avg_probe = aggregate(subjectHits(full_region_lad_overlap),
+                                  list(hit=queryHits(full_region_lad_overlap)),
+                                  function(x){
+                                    mean(lad_avg_probe[x,'K562'])
+                                  })
+prom_region_avg_probe = aggregate(subjectHits(prom_region_lad_overlap),
+                                  list(hit=queryHits(prom_region_lad_overlap)),
+                                  function(x){
+                                    mean(lad_avg_probe[x,'K562'])
+                                  })
+up_region_avg_probe = aggregate(subjectHits(up_region_lad_overlap),
+                                  list(hit=queryHits(up_region_lad_overlap)),
+                                  function(x){
+                                    mean(lad_avg_probe[x,'K562'])
+                                  })
+P$full_avg_probe = P$prom_avg_probe = P$up_avg_probe = NaN
+P$full_avg_probe[full_region_avg_probe[,1]] = full_region_avg_probe[,2]
+P$prom_avg_probe[prom_region_avg_probe[,1]] = prom_region_avg_probe[,2]
+P$up_avg_probe[up_region_avg_probe[,1]] = up_region_avg_probe[,2]
+
+P$prom_lad_diff = P$prom_avg_probe - P$up_avg_probe
+
+plot_list = list()
+subset_list = list('Promoter more in LAD'=P[P$prom_lad_diff > 0.5, ],
+                   'same LAD'=P[P$prom_lad_diff <= 0.5 & P$prom_lad_diff >= -0.5, ],
+                   'Promoter less in LAD'=P[P$prom_lad_diff < -0.5, ])
+for (name in names(subset_list)){
+  subset = subset_list[[name]]
+  classes = subset[subset$class %in% c('inactive', 'not_repressed', 'repressed'),]
+  plot_list[[name]] = ggplot(subset, aes(x=SuRE, y=GROcap)) +
+                          geom_point(size=0.1, colour=COLi) +
+                          ggtitle(name) + 
+                          geom_point(data=classes, aes(color=class), size=0.6)
+}
+do.call(grid.arrange, plot_list)
+
+P$LAD = factor(P$LAD)
+ggplot(P[P$avg_lad>0.5,], aes(x=GROcap, y=prom_lad_diff)) + geom_point(alpha=0.3, size=0.3) + facet_wrap(~LAD)
+```
+
+
+

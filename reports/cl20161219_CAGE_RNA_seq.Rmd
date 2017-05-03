@@ -1,0 +1,554 @@
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+library(gage)
+library(fgsea)
+library(gageData)
+library(biomaRt)
+load('../raw_data/biomart.rdata')
+
+```
+
+
+```{r, fig.width=20, fig.height=20}
+
+file_list = list.files('../raw_data/expression', pattern='ReadsPerGene', full.names=T)
+
+sample_id_list = lapply(file_list, function(x){
+                        file = strsplit(x,'/')[[1]][4]
+                        return(gsub('ReadsPerGene.out.tab', '', file))
+                        })
+count_list = lapply(file_list, function(x){
+                count_table = read.table(x, stringsAsFactors=F)
+                colnames(count_table) = c('name', 'unstranded', 'sense', 'antisense')
+                return(count_table)
+            })
+names(count_list) = unlist(sample_id_list)
+
+
+## since there are different machines, they might have different GC biases
+## for GC bias we have to use hg19 genome
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+## let's focus on genes located on actual chromosomes
+gff_ranges = gff_ranges[seqnames(gff_ranges) %in% seqlevels(gff_ranges)[1:25]]
+
+ens_gene_ranges = gff_ranges[gff_ranges$gene_id %in% count_list[[1]][,1]]
+
+
+colData = DataFrame(cell_type=c(rep('ESC', 2), rep("HT1080", 3),
+                                rep("Jurkat", 2), rep('K562', 2)),
+                    row.names=c('H7_hESC_rep1', 'H7_hESC_rep2',
+                                'HT1080_ctrl_rep1_GSM1483942',
+                                'HT1080_ctrl_rep2_GSM1483943',
+                                'HT1080_ctrl_rep3_GSM1483944', 'J4_ctrl_rep1',
+                                'J4_ctrl_rep2', 'K562_rep1', 'K562_rep2'))
+
+unstranded_list = lapply(count_list,function(x){
+        count = x[5:nrow(x),2]
+        names(count) = x[5:nrow(x), 1]
+        return(count)
+    })
+count_table = do.call(cbind, unstranded_list)
+colnames(count_table) = names(count_list)
+count_table = count_table[,-grep('KBM7', names(count_list))]
+
+## without quantile normalization
+exp = SummarizedExperiment(assays=list(counts=count_table[, rownames(colData)]), rowRanges=ens_gene_ranges, colData=colData)
+dds_direct = DESeqDataSet(exp, design = ~ cell_type)
+dds_direct = DESeq(dds_direct)
+fpm_direct = fpm(dds_direct)
+fpm_direct = fpm_direct + min(fpm_direct[fpm_direct!=0])/2
+ggplot(melt(fpm_direct), aes(x=log10(value), color=Var2)) + geom_density(adjust=1/2) + ggtitle('fpm values\nwithout quantile normalization')
+
+```
+```{r}
+#DamID data:
+load("../raw_data/CdG140714humanLmnb1wK562.rData") #Lamin B1 DamID data compiled by Carolyn de Graaf
+
+lad_probe_raw = allHumanAvHg19[,c(6:8, 16)]
+lad_state = allHumanStateHg19[,c(6:8, 16)]
+
+colnames(lad_probe_raw) = colnames(lad_state) = c('ESC', 'HT1080', 'Jurkat',  'K562')
+# ggplot(melt(lad_probe_raw), aes(x=value, color=variable)) + geom_density()
+
+
+# lad_probe_vnorm = data.frame(apply(lad_probe_raw,2,function(x){
+#     x = x - mean(x)
+#     x = x / var(x)
+#   }))
+
+# ggplot(melt(lad_probe_vnorm), aes(x=value, color=variable)) + geom_density()
+
+# lad_probe_qnorm = normalize.quantiles(as.matrix(lad_probe_raw))
+# lad_probe_qnorm = data.frame(lad_probe_qnorm)
+# dimnames(lad_probe_qnorm) = dimnames(lad_probe_raw)
+# ggplot(melt(lad_probe_qnorm), aes(x=value, color=variable)) + geom_density()
+
+Dgr<-makeGRangesFromDataFrame(allHumanAvHg19, starts.in.df.are.0based=TRUE) #same for tiling array DamID data
+
+```
+
+
+
+### SuRE data
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCAGE<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCAGE
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "not_repressed", "inactive", 'boundary', 'iLAD')
+
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6)
+
+```
+
+
+
+```{r}
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #number of unique promoters
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+p_match = match(P$ensembl_gene_id, rownames(fpm_direct))
+P$rnaseq_K562 = P$rnaseq_ESC = P$rnaseq_jurkat = P$rnaseq_HT1080 = NA
+
+P$rnaseq_K562[!is.na(p_match)] = rowMeans(fpm_direct[p_match[!is.na(p_match)], colData$cell_type=='K562'])
+P$rnaseq_ESC[!is.na(p_match)]  = rowMeans(fpm_direct[p_match[!is.na(p_match)], colData$cell_type=='ESC'])
+P$rnaseq_jurkat[!is.na(p_match)]  = rowMeans(fpm_direct[p_match[!is.na(p_match)], colData$cell_type=='Jurkat'])
+P$rnaseq_HT1080[!is.na(p_match)] = rowMeans(fpm_direct[p_match[!is.na(p_match)], colData$cell_type=='HT1080'])
+
+
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              ensembl_gene_id=P$ensembl_gene_id,
+                                              ensembl_transcript_id=P$ensembl_transcript_id),
+                                              keep.extra.columns=TRUE) 
+
+TSSR_gr = gene_gr
+p_match = match(TSSR_gr$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = P[p_match, 'tss'] - ifelse(P[p_match, 'strand']=='+',50,300)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + ifelse(P[p_match, 'strand']=='+',300,50)
+ranges(TSSR_gr) = IRanges(P_start, P_end)
+names(TSSR_gr) = TSSR_gr$ensembl_transcript_id
+export.bed(TSSR_gr, '../raw_data/tssr.bed')
+```
+
+```
+gunzip -c ../../data/tracks/hg19/HT1080_CAGE.CNhs11860.10758-110E2.hg19.ctss.bed.gz | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_ht1080_cage.bed
+gunzip -c ../../data/tracks/hg19/jurkat_CAGE.CNhs11253.10464-106H5.hg19.ctss.bed.gz | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_jurkat_cage.bed
+
+gunzip -c ../../data/tracks/hg19/GSM1501174_CAGE-seq_Level2prom_ESCs-NESCs.bed.txt.gz | \
+    tail -n+2 | \
+    awk '{print $1"\t"$2"\t"$3"\t.\t"$5"\t"$4}' | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_esc_cage.bed
+
+gunzip -c ../../data/tracks/hg19/K562_CAGE_biol_rep1.CNhs12334.10824-111C5.hg19.ctss.bed.gz | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_k562_cage_rep1.bed
+
+gunzip -c ../../data/tracks/hg19/K562_CAGE_biol_rep2.CNhs12335.10825-111C6.hg19.ctss.bed.gz | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_k562_cage_rep2.bed
+
+gunzip -c ../../data/tracks/hg19/K562_CAGE_biol_rep3.CNhs12336.10826-111C7.hg19.ctss.bed.gz | \
+    bedtools intersect -s -wa -wb -a raw_data/tssr.bed -b - | \
+    awk '{
+        if (NR==1){
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }
+        else if ($1==chr && $2==start && $3==end && $6==strand && id==$4){
+            score = score + $11
+        }
+        else{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+            chr=$1
+            start=$2
+            end=$3
+            id=$4
+            strand=$6
+            score=$11
+        }}END{
+            print chr"\t"start"\t"end"\t"id"\t"score"\t"strand
+        }' > raw_data/tssr_k562_cage_rep3.bed
+
+
+```
+
+```{r}
+cage_ht1080 = import.bed('../raw_data/tssr_ht1080_cage.bed')
+cage_jurkat = import.bed('../raw_data/tssr_jurkat_cage.bed')
+cage_esc = import.bed('../raw_data/tssr_esc_cage.bed')
+
+cage_k562_rep1 = import.bed('../raw_data/tssr_k562_cage_rep1.bed')
+cage_k562_rep2 = import.bed('../raw_data/tssr_k562_cage_rep2.bed')
+cage_k562_rep3 = import.bed('../raw_data/tssr_k562_cage_rep3.bed')
+
+P$CAGE_HT1080 = P$CAGE_jurkat = P$CAGE_ESC =  P$CAGE_K562_rep1 =  P$CAGE_K562_rep2 = P$CAGE_K562_rep3 = 0
+
+ht1080_match = match(P$ensembl_transcript_id, cage_ht1080$name)
+P$CAGE_HT1080[!is.na(ht1080_match)] = cage_ht1080[ht1080_match[!is.na(ht1080_match)]]$score
+jurkat_match = match(P$ensembl_transcript_id, cage_jurkat$name)
+P$CAGE_jurkat[!is.na(jurkat_match)] = cage_jurkat[jurkat_match[!is.na(jurkat_match)]]$score
+esc_match = match(P$ensembl_transcript_id, cage_esc$name)
+P$CAGE_ESC[!is.na(esc_match)] = cage_esc[esc_match[!is.na(esc_match)]]$score
+CAGE_K562_rep1_match = match(P$ensembl_transcript_id, cage_k562_rep1$name)
+P$CAGE_K562_rep1[!is.na(CAGE_K562_rep1_match)] = cage_k562_rep1[CAGE_K562_rep1_match[!is.na(CAGE_K562_rep1_match)]]$score
+CAGE_K562_rep2_match = match(P$ensembl_transcript_id, cage_k562_rep2$name)
+P$CAGE_K562_rep2[!is.na(CAGE_K562_rep2_match)] = cage_k562_rep2[CAGE_K562_rep2_match[!is.na(CAGE_K562_rep2_match)]]$score
+CAGE_K562_rep3_match = match(P$ensembl_transcript_id, cage_k562_rep3$name)
+P$CAGE_K562_rep3[!is.na(CAGE_K562_rep3_match)] = cage_k562_rep3[CAGE_K562_rep3_match[!is.na(CAGE_K562_rep3_match)]]$score
+P$CAGE_K562 = rowMeans(P[,c('CAGE_K562_rep1', 'CAGE_K562_rep2','CAGE_K562_rep3')])
+
+ggplot(melt(P[,c('CAGE_HT1080','CAGE_jurkat','CAGE_ESC', 'CAGE_K562_rep1', 'CAGE_K562_rep2', 'CAGE_K562_rep3')]), aes(x=log10(value + 1), color=variable)) + geom_density()
+
+ggplot(P, aes(x=CAGE_HT1080, y=CAGE_jurkat)) + geom_point(alpha=0.3, size=0.3)
+ggplot(P, aes(x=log10(CAGE_HT1080), y=log10(CAGE_jurkat))) + geom_point(alpha=0.3, size=0.3)
+ggplot(P, aes(x=log10(CAGE_HT1080), y=log10(CAGE_ESC))) + geom_point(alpha=0.3, size=0.3)
+ggplot(P, aes(x=log10(CAGE_HT1080), y=log10(CAGE_K562))) + geom_point(alpha=0.3, size=0.3)
+ggplot(P, aes(x=log10(CAGE_K562_rep3), y=log10(CAGE_K562_rep2))) + geom_point(alpha=0.3, size=0.3)
+ggplot(P, aes(x=log10(CAGE_K562_rep3), y=log10(CAGE_K562_rep1))) + geom_point(alpha=0.3, size=0.3)
+```
+**conclusion:**
+
+Samples I got from the Phantom database seem to have a similar distribution, K562 replicates seem higly reproducible, the ESC sample from GEO is different, but shows same kind of distribution.
+
+
+```{r}
+tss_gr = gene_gr
+tss_start = gene_gr$tss
+ranges(tss_gr) = IRanges(tss_start, tss_start)
+lad_overlap = nearest(tss_gr, Dgr)
+P$LAD_K562 = P$LAD_ESC = P$LAD_jurkat = P$LAD_HT1080 = NA
+P[,c('LAD_K562', 'LAD_ESC', 'LAD_jurkat', 'LAD_HT1080')] = lad_state[names(Dgr[lad_overlap]), 
+                                                                     c('K562', 'ESC',
+                                                                       'Jurkat', 'HT1080')]
+
+active_lad = which(P$LAD_K562 == 2 & log10(P$CAGE_K562) > 1)
+active_ilad = which(P$LAD_K562 == 1 & log10(P$CAGE_K562) > 1)
+P$active_state_K562 = NA
+P$active_state_K562[active_lad] = 'active LAD'
+P$active_state_K562[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_jurkat == 2 & log10(P$CAGE_jurkat) > 1)
+active_ilad = which(P$LAD_jurkat == 1 & log10(P$CAGE_jurkat) > 1)
+P$active_state_jurkat = NA
+P$active_state_jurkat[active_lad] = 'active LAD'
+P$active_state_jurkat[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_ESC == 2 & log10(P$CAGE_ESC) > 0.5)
+active_ilad = which(P$LAD_ESC == 1 & log10(P$CAGE_ESC) > 0.5)
+P$active_state_ESC = NA
+P$active_state_ESC[active_lad] = 'active LAD'
+P$active_state_ESC[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_HT1080 == 2 & log10(P$CAGE_HT1080) > 1)
+active_ilad = which(P$LAD_HT1080 == 1 & log10(P$CAGE_HT1080) > 1)
+P$active_state_HT1080 = NA
+P$active_state_HT1080[active_lad] = 'active LAD'
+P$active_state_HT1080[active_ilad] = 'active iLAD'
+
+P$width = P$txEnd - P$txStart
+
+fit_K562 = lm(log10(rnaseq_K562) ~ log10(CAGE_K562) + factor(LAD_K562) + log10(width) + factor(LAD_K562):log10(CAGE_K562) + factor(LAD_K562):log10(width) + log10(CAGE_K562):log10(width), data=P[!is.na(P$active_state_K562), ])
+summary(fit_K562)
+
+fit_jurkat = lm(log10(rnaseq_jurkat) ~ log10(CAGE_jurkat) + factor(LAD_jurkat) + log10(width) + factor(LAD_jurkat):log10(CAGE_jurkat) + factor(LAD_jurkat):log10(width) + log10(CAGE_jurkat):log10(width), data=P[!is.na(P$active_state_jurkat), ])
+summary(fit_jurkat)
+
+fit_ESC = lm(log10(rnaseq_ESC) ~ log10(CAGE_ESC) + factor(LAD_ESC) + log10(width) + factor(LAD_ESC):log10(CAGE_ESC) + factor(LAD_ESC):log10(width) + log10(CAGE_ESC):log10(width), data=P[!is.na(P$active_state_ESC), ])
+summary(fit_ESC)
+
+fit_HT1080 = lm(log10(rnaseq_HT1080) ~ log10(CAGE_HT1080) + factor(LAD_HT1080) + log10(width) + factor(LAD_HT1080):log10(CAGE_HT1080) + factor(LAD_HT1080):log10(width) + log10(CAGE_HT1080):log10(width), data=P[!is.na(P$active_state_HT1080), ])
+summary(fit_HT1080)
+
+
+
+active_lad = which(P$LAD_K562 == 2 & log10(P$CAGE_K562) > 1.5)
+active_ilad = which(P$LAD_K562 == 1 & log10(P$CAGE_K562) > 1.5)
+P$active_state_K562 = NA
+P$active_state_K562[active_lad] = 'active LAD'
+P$active_state_K562[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_jurkat == 2 & log10(P$CAGE_jurkat) > 1.5)
+active_ilad = which(P$LAD_jurkat == 1 & log10(P$CAGE_jurkat) > 1.5)
+P$active_state_jurkat = NA
+P$active_state_jurkat[active_lad] = 'active LAD'
+P$active_state_jurkat[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_ESC == 2 & log10(P$CAGE_ESC) > 1)
+active_ilad = which(P$LAD_ESC == 1 & log10(P$CAGE_ESC) > 1)
+P$active_state_ESC = NA
+P$active_state_ESC[active_lad] = 'active LAD'
+P$active_state_ESC[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_HT1080 == 2 & log10(P$CAGE_HT1080) > 1.5)
+active_ilad = which(P$LAD_HT1080 == 1 & log10(P$CAGE_HT1080) > 1.5)
+P$active_state_HT1080 = NA
+P$active_state_HT1080[active_lad] = 'active LAD'
+P$active_state_HT1080[active_ilad] = 'active iLAD'
+
+P$width = P$txEnd - P$txStart
+
+fit_K562 = lm(log10(rnaseq_K562) ~ log10(CAGE_K562) + factor(LAD_K562) + log10(width) + factor(LAD_K562):log10(CAGE_K562) + factor(LAD_K562):log10(width) + log10(CAGE_K562):log10(width), data=P[!is.na(P$active_state_K562), ])
+summary(fit_K562)
+
+fit_jurkat = lm(log10(rnaseq_jurkat) ~ log10(CAGE_jurkat) + factor(LAD_jurkat) + log10(width) + factor(LAD_jurkat):log10(CAGE_jurkat) + factor(LAD_jurkat):log10(width) + log10(CAGE_jurkat):log10(width), data=P[!is.na(P$active_state_jurkat), ])
+summary(fit_jurkat)
+
+fit_ESC = lm(log10(rnaseq_ESC) ~ log10(CAGE_ESC) + factor(LAD_ESC) + log10(width) + factor(LAD_ESC):log10(CAGE_ESC) + factor(LAD_ESC):log10(width) + log10(CAGE_ESC):log10(width), data=P[!is.na(P$active_state_ESC), ])
+summary(fit_ESC)
+
+fit_HT1080 = lm(log10(rnaseq_HT1080) ~ log10(CAGE_HT1080) + factor(LAD_HT1080) + log10(width) + factor(LAD_HT1080):log10(CAGE_HT1080) + factor(LAD_HT1080):log10(width) + log10(CAGE_HT1080):log10(width), data=P[!is.na(P$active_state_HT1080), ])
+summary(fit_HT1080)
+
+
+active_lad = which(P$LAD_K562 == 2 & log10(P$CAGE_K562) > 0.5)
+active_ilad = which(P$LAD_K562 == 1 & log10(P$CAGE_K562) > 0.5)
+P$active_state_K562 = NA
+P$active_state_K562[active_lad] = 'active LAD'
+P$active_state_K562[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_jurkat == 2 & log10(P$CAGE_jurkat) > 0.5)
+active_ilad = which(P$LAD_jurkat == 1 & log10(P$CAGE_jurkat) > 0.5)
+P$active_state_jurkat = NA
+P$active_state_jurkat[active_lad] = 'active LAD'
+P$active_state_jurkat[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_ESC == 2 & log10(P$CAGE_ESC) > 0)
+active_ilad = which(P$LAD_ESC == 1 & log10(P$CAGE_ESC) > 0)
+P$active_state_ESC = NA
+P$active_state_ESC[active_lad] = 'active LAD'
+P$active_state_ESC[active_ilad] = 'active iLAD'
+
+active_lad = which(P$LAD_HT1080 == 2 & log10(P$CAGE_HT1080) > 0.5)
+active_ilad = which(P$LAD_HT1080 == 1 & log10(P$CAGE_HT1080) > 0.5)
+P$active_state_HT1080 = NA
+P$active_state_HT1080[active_lad] = 'active LAD'
+P$active_state_HT1080[active_ilad] = 'active iLAD'
+
+P$width = P$txEnd - P$txStart
+
+fit_K562 = lm(log10(rnaseq_K562) ~ log10(CAGE_K562) + factor(LAD_K562) + log10(width) + factor(LAD_K562):log10(CAGE_K562) + factor(LAD_K562):log10(width) + log10(CAGE_K562):log10(width), data=P[!is.na(P$active_state_K562), ])
+summary(fit_K562)
+
+fit_jurkat = lm(log10(rnaseq_jurkat) ~ log10(CAGE_jurkat) + factor(LAD_jurkat) + log10(width) + factor(LAD_jurkat):log10(CAGE_jurkat) + factor(LAD_jurkat):log10(width) + log10(CAGE_jurkat):log10(width), data=P[!is.na(P$active_state_jurkat), ])
+summary(fit_jurkat)
+
+fit_ESC = lm(log10(rnaseq_ESC) ~ log10(CAGE_ESC) + factor(LAD_ESC) + log10(width) + factor(LAD_ESC):log10(CAGE_ESC) + factor(LAD_ESC):log10(width) + log10(CAGE_ESC):log10(width), data=P[!is.na(P$active_state_ESC), ])
+summary(fit_ESC)
+
+fit_HT1080 = lm(log10(rnaseq_HT1080) ~ log10(CAGE_HT1080) + factor(LAD_HT1080) + log10(width) + factor(LAD_HT1080):log10(CAGE_HT1080) + factor(LAD_HT1080):log10(width) + log10(CAGE_HT1080):log10(width), data=P[!is.na(P$active_state_HT1080), ])
+summary(fit_HT1080)
+```
+
+**conclusion:**
+
+Unfortunately we need a better model with better data to give support from different cell-types. The change in slope for CAGE expression in LADs (CAGE-LAD interaction) is reported as being positive while from previous findings you would expect this to be negative

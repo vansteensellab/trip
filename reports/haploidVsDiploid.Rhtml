@@ -1,0 +1,94 @@
+<html>
+
+<head>
+<title>knitr document van Steensel lab</title>
+<style type="text/css">
+body {font-family:"Helvetica", sans-serif;}
+h3 {color: #335599;	margin-bottom: 0em;margin-top: 1em;}
+p {margin-top: 0em;}
+</style>
+</head>
+
+<body>
+<h1>Main Title</h2>
+<h2>Christ Leemans, from date - to date </h2>
+
+<h3>Introduction</h3>
+<p>Introduction to the project</p>
+
+<h3>Description of Data</h3>
+<ul>
+<li>Where did I get the data, how does the data look, how many samples and replicates</li>
+</ul>
+
+</p>
+
+<h3>Path, Libraries, Parameters and Useful Functions</h3>
+<!--begin.rcode html-Path&Pars, message=FALSE
+
+StartTime<-Sys.time()
+
+setwd("~/Projects/SingleCellDamID/")
+
+#6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+#libraries:
+
+
+end.rcode-->
+
+<h3>Custom functions</h3>
+<p>Functions used</p>
+
+
+<h3>Load data</h3>
+<p>Data loading </p>
+
+
+<!--begin.rcode html-LoadData
+
+end.rcode-->
+
+
+<h3>Some data pre-processing</h3>
+<p>Calculate some basic values/quality control</p>
+
+<!--begin.rcode html-Preprocess_scDamID
+
+
+end.rcode-->
+
+
+
+<h3>Step 1</h3>
+<p>How reprodicible are the Hi-C data (only dynamic LAD bins):</p>
+
+<!--begin.rcode html-HiC_BasicCharacterization
+
+end.rcode-->
+<p><b>Conclusion: </b> the conclusion</p>
+
+
+
+<h3>Step 2</h3>
+<p>description</p>
+
+<!--begin.rcode html-HiC_LADs_iLADs_dLADs, warning=FALSE, fig.width=8, fig.height=5, out.width=700
+
+end.rcode-->
+<p><b>Conclusion: </b><br>conclusion of step 2</p>
+
+
+<h3>Session Info</h3>
+<!--begin.rcode html-SessionInfo
+
+sessionInfo()
+getwd()
+date()
+paste("Run time: ",format(Sys.time()-StartTime))
+
+end.rcode-->
+
+</body>
+</html>

@@ -1,0 +1,21 @@
+
+## library, parameters and stuff
+```{r}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+
+load("../raw_data/gencode.sure.160617.rda")
+tss= gencode.sure.160617$tss
+strand = gencode.sure.160617$strand
+promoters = data.frame(sequence=gencode.sure.160617$chr,
+                       start=tss - 1000 * as.numeric(strand=='+'), 
+                       end=tss + 1000 * as.numeric(strand=='-'),
+                       name=gencode.sure.160617$name,
+                       score=1000,
+                       strand=strand)
+write.table(promoters, file='../raw_data/SuRE_promoters.bed',sep='\t', row.names=F, col.names=F,quote=F)
+
+```

@@ -1,0 +1,181 @@
+# knitr document van Steensel lab
+
+# Gene repression in LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+I would like to examine the relation between lamina association and gene expression. In order to do that, we will need to obtain expression data for cell types in which we did DamID. In this report I would like to see which DamID data we can use for this analysis, since we would like to compare DamID between cell types, we need to be able to normalize this data.
+
+
+| column  | cell-type | notes | publication | platform |
+| ------- | --------- | ----- | ----- | ----- |
+| TG | Tig3 | human diploid embryonic lung fibroblasts cell | manuscript by Carolyn  | NimbleGen |
+| HT | HT1080 | fibrosarcoma cell line | [[http://dx.doi.org/10.1101%2Fgr.141028.112|Meuleman et al. 2013]] | NimbleGen |
+| RP | RPE | retinal pigment epithelial cells | manuscript by Carolyn | NimbleGen |
+| LS | LS174T-hap | intestinal epithelial cancer cells | manuscript by Carolyn | NimbleGen |
+| ES | hESC | human embryonic stem-cells | manuscript by Carolyn | NimbleGen |
+| KB | KBM7 | human myeloid leukemia cell line | [[http://dx.doi.org/10.1016/j.cell.2015.08.040|Kind et al. 2015]]  | NimbleGen |
+| JK | Jurkat | Immortalized T-Lymphocytes | manuscript by Carolyn | NimbleGen |
+| ST | SupT1 | T1-Lymphocyte cell line | manuscript by Carolyn | NimbleGen |
+| K5 | K562  | Erytholeukemia cell line | manuscript by Carolyn | NimbleGen |
+| DS | T1-DS  | fetal fibroblasts from monozygotic twins discordant for trisomy 21 (down syndrome twin)  | [[http://doi.org/10.1038/nature13200|Letourneau et al. 2014]] | NimbleGen |
+| FB | T2-N  | fetal fibroblasts from monozygotic twins discordant for trisomy 21 (normal twin) | [[http://doi.org/10.1038/nature13200|Letourneau et al. 2014]] | NimbleGen |
+| TN | Tig3 | human diploid embryonic lung fibroblasts cell | [[http://doi.org/10.1038/nature06947|Guelen et. al 2008]] | Custom tilling array |
+
+## SuRE data
+
+Since we will be focusing on promoters, let's look at this subset. For Joris's sure experiments a data table was created, this has filtered gencode data with annotated promoter positions. 
+
+```{r, fig.width=10, fig.height=10}
+library(rtracklayer)
+library(ggplot2)
+library(reshape2)
+library(gridExtra)
+library(preprocessCore)
+load('../raw_data/biomart.rdata')
+
+## There was one promoter that was wrongly annotated
+bm_p[bm_p$ensembl_transcript_id=='ENST00000357491','ensembl_gene_id' ] = 'ENSG00000196350'
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:12]<-c("SuRE", "GROcap", "CAGE", "LAD")
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+```
+
+
+```{r}
+#DamID data:
+load("../raw_data/CdG140714humanLmnb1wK562.rData") #Lamin B1 DamID data compiled by Carolyn de Graaf
+
+# convert everything to GenomicRanges objects:
+Dgr<-makeGRangesFromDataFrame(allHumanAvHg19[,-4], keep.extra.columns=TRUE, starts.in.df.are.0based=TRUE) #same for tiling array DamID data
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              name=P$name,
+                                              gene_id = P$ensembl_gene_id),
+                                              keep.extra.columns=TRUE)
+
+
+h<-findOverlaps(gene_gr, Dgr) #find sets of overlapping probes:
+
+oENSG<-gene_gr[from(h)]$gene_id
+oVAL<-elementMetadata(Dgr[to(h)])
+
+lad_list = lapply(colnames(oVAL), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+
+DamIDbyGene<-data.frame(row.names=unique(oENSG)[!is.na(unique(oENSG))], do.call(cbind, lad_list))
+selection = colnames(DamIDbyGene) = colnames(oVAL)
+
+ggplot(melt(DamIDbyGene), aes(x=value, color=variable)) +
+    geom_density()
+
+
+## 2 clear outliers are the fibroblast samples
+ggplot(melt(DamIDbyGene[,c('DS','FB')]), aes(x=value, color=variable)) +
+    geom_density()
+
+selection = selection[!selection%in%c('DS','FB')]
+ggplot(melt(DamIDbyGene[,selection]), aes(x=value, color=variable)) +
+    geom_density()
+
+```
+
+## Normalization
+Now let's see if we can normalize these datasets.
+
+```{r}
+quant = normalize.quantiles(as.matrix(allHumanAvHg19[,selection]))
+dimnames(quant) = dimnames(allHumanAvHg19[, selection])
+
+oVAL = quant[to(h), ]
+lad_list = lapply(colnames(oVAL), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+NormDamIDbyGene<-data.frame(row.names=unique(oENSG)[!is.na(unique(oENSG))], do.call(cbind, lad_list))
+colnames(NormDamIDbyGene) = colnames(oVAL)
+
+p1 = ggplot(melt(DamIDbyGene[,selection]), aes(x=value, color=variable)) +
+    geom_density()
+p2 = ggplot(melt(NormDamIDbyGene), aes(x=value, color=variable)) +
+    geom_density()
+grid.arrange(p1,p2)
+```
+**conclusion:**
+Carolin's Tig3 cells and the RPE cells look really different from the other cell types.
+
+
+```{r}
+selection = selection[!selection%in%c('TG','RP')]
+quant = normalize.quantiles(as.matrix(allHumanAvHg19[,selection]))
+dimnames(quant) = dimnames(allHumanAvHg19[, selection])
+
+oVAL = quant[to(h), ]
+lad_list = lapply(colnames(oVAL), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+NormDamIDbyGene<-data.frame(row.names=unique(oENSG)[!is.na(unique(oENSG))], do.call(cbind, lad_list))
+colnames(NormDamIDbyGene) = colnames(oVAL)
+
+p1 = ggplot(melt(DamIDbyGene[,selection]), aes(x=value, color=variable)) +
+    geom_density()
+p2 = ggplot(melt(NormDamIDbyGene), aes(x=value, color=variable)) +
+    geom_density()
+grid.arrange(p1,p2)
+
+```
+
+
+## Mouse LADs
+
+```{r}
+
+gtf_gr = import('../../../data/tracks/mm9/gencode.vM1.annotation.gtf.gz')
+t_gr = gtf_gr[gtf_gr$type=='transcript']
+load("/home/NFS/users/ca.d.graaf/projects/analyses/CdG130501mouseLmnb1Atlas/CdG140219mouseAtlas10CellType.rData")
+Dgr = makeGRangesFromDataFrame(annot)
+
+gene_gr = gtf_gr[gtf_gr$type=='gene']
+
+h<-findOverlaps(gene_gr, Dgr) #find sets of overlapping probes:
+
+oENSG<-gene_gr[from(h)]$gene_id
+oVAL<-qNorm_score_atlas_av[to(h),grep('.{2}M', colnames(qNorm_score_atlas_av))]
+
+lad_list = lapply(colnames(oVAL), function(x, oVAL, oENSG){
+                    head(oVAL[,x])
+                    aggregate(oVAL[,x], by=list(oENSG), FUN=mean, na.rm=TRUE)$x
+                }, oVAL, oENSG)
+
+DamIDbyGene<-data.frame(row.names=unique(oENSG)[!is.na(unique(oENSG))], do.call(cbind, lad_list))
+selection = colnames(DamIDbyGene) = colnames(oVAL)
+
+ggplot(melt(DamIDbyGene), aes(x=value, color=variable)) +
+    geom_density()
+

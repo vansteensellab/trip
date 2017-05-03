@@ -1,0 +1,1488 @@
+
+# knitr document van Steensel lab
+
+# Gene repression in LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+Generally speaking, genes inside lamina associated domains are not or very lowly expressed. These genes can either be actively repressed by their DNA context (e.g. heterochromatin, lamina association), or simply be inactive (because essential factors for expression are missing?). Yet another group of genes seem to evade gene repression in the context of lamina associated domains. In this report I would like to investigate what defines these 3 groups of genes and how they compare to genes outside of lamina associated domains.
+
+## Description of Data.
+
+gencode.sure.160617.rda: 
+    file from Joris, received 17 June 2016. Promoter positions in this file are from Gencode. Contains SuRE, gro-cap and cage expression data as well as the number of tissues in which each promoter is expressed.
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+library(gage)
+library(fgsea)
+library(CGtools)
+library(biomaRt)
+library(Matrix)
+library(grid)
+load('../raw_data/biomart.rdata')
+
+## There was one promoter that was wrongly annotated
+bm_p[bm_p$ensembl_transcript_id=='ENST00000357491','ensembl_gene_id' ] = 'ENSG00000196350'
+
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+P = P[P$chr!='chr19', ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+## to be used by CGtools as the complete set of TSS's
+peaks = data.frame(seqname=P$chr,
+                   start=P$tss,
+                   end=P$tss,
+                   strand=P$strand)
+
+
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCage<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCage
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE> 0 & P$LRS> -0.5 & P$LAD==1 & P$GROcap> -2 #not repressed
+REP<- P$SuRE> 0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"escaper"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+P$class = factor(P$class, levels=c('iLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'iLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P$class), '; n=',table(P$class))
+names(class_names) = levels(P$class)
+P$class_n_prom = P$class
+levels(P$class_n_prom) = class_names
+COL_class_n_prom = COL_class[names(class_names)]
+names(COL_class_n_prom) = class_names
+
+lad_names = c(LAD=paste0('LAD; n=', table(P$LAD)['1']),
+              iLAD=paste0('LAD; n=', table(P$LAD)['0']))
+P$lad_n_prom = factor(ifelse(P$LAD==1, lad_names['LAD'], lad_names['iLAD']))
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+
+pdf('cl20170124_keystone_slides_no19.pdf', useDingbats=F)
+RM_melt = melt(RM, measure.vars=c('GROcap.ilad', 'GROcap.lad'))
+RM_melt$variable = ifelse(RM_melt$variable=='GROcap.lad', lad_names['LAD'], lad_names['iLAD'])
+ggplot(P, aes(x=SuRE, y=GROcap)) +
+    geom_point(size=0.5, color='black', alpha=0.05) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    guides(fill=FALSE) +
+    theme_bw() +
+    theme(legend.title=element_blank())
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=1, alpha=0.6) + 
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    theme(legend.title=element_blank()) +
+    guides(fill=FALSE) +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_color_manual(values=COL_lad_n)
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=1, alpha=0.6) + 
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_color_manual(values=COL_lad_n)
+
+
+ggplot(P, aes(x=SuRE, y=GROcap, color=lad_n_prom)) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.05) + 
+    geom_point(data=P[P$LAD==1, ], size=0.5, alpha=0.6) + 
+    geom_line(data=RM_melt, aes(x=SuRE.mean, y=value, color=variable), size=1) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_color_manual(values=COL_lad_n)
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[P$class=='inactive',], aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_vline(xintercept=-0.3, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[P$class%in%c('inactive', 'repressed'),], aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_vline(xintercept=0.3, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 1), linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+p_classes = P[which(P$class %in% c('inactive', 'escaper', 'repressed')),]
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_n_prom), size=1) + 
+    geom_line(data=RM, aes(x=SuRE.mean, y=GROcap.ilad), color=COL_lad['iLAD']) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 0.5), linetype='dotdash', size=0.3) +
+    geom_line(data=RM[RM$SuRE.mean>0,], aes(x=SuRE.mean, y=GROcap.ilad - 1), linetype='dotdash', size=0.3) +
+    geom_vline(xintercept=0, linetype='dotdash', size=0.3) +
+    geom_hline(yintercept=-2, linetype='dotdash', size=0.3) +
+    theme_bw() +
+    guides(fill=FALSE) +
+    theme(legend.title=element_blank()) +
+    labs(y='log10(GROcap)', x='log10(SuRE)') +
+    theme(legend.justification=c(0,1), legend.position=c(0.01,0.99)) +
+    scale_colour_manual(values=COL_class_n_prom) 
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              name=P$name,
+                                              gene_id = P$ensembl_gene_id),
+                                              keep.extra.columns=TRUE)
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss,
+                         gene_gr$tss)
+
+TSSR_gr = gene_gr
+P_start = P$tss - ifelse(P$strand=='+',50,300)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P$tss + ifelse(P$strand=='+',300,50)
+ranges(TSSR_gr) = IRanges(P_start, P_end)
+
+body_gr = gene_gr
+P_start = ifelse(P$strand=='+', 
+                 P$tss + 300,
+                 P$txStart - 3000)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = ifelse(P$strand=='+',
+               P$txEnd + 3000,
+               P$tss - 300)
+ranges(body_gr) = IRanges(P_start, P_end)
+
+F_window=22000
+
+window_gr = gene_gr[width(gene_gr)>F_window]
+p_match = match(window_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_window
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_window
+ranges(window_gr) = IRanges(P_start, P_end)
+
+
+p_most_active = ddply(P, .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else {
+        result = x[order(x$GROcap, decreasing=T)[1],]
+    }
+    return(result)
+  })
+
+m_active = match(p_most_active$name, P$name)
+
+
+p_most_down = ddply(P[!is.na(P$ensembl_gene_id),], .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else if (all(x$strand=='+')){
+        result = x[order(x$tss, decreasing=T)[1],]
+    } else if (all(x$strand=='-')){
+        result = x[order(x$tss)[1],]
+    } else {
+        print('huh???')
+        print(x)
+        result = x[1,]
+    } 
+    return(result)
+  })
+
+o = findOverlaps(tss_gr, gene_gr, maxgap=20000, ignore.strand=T)
+o = o[which(P[to(o), 'ensembl_gene_id']!=P[from(o), 'ensembl_gene_id'])]
+
+ensg_too_close = P[from(o), 'ensembl_gene_id']
+
+m_most_down = match(p_most_down$name, P$name)
+m_most_down_window = match(p_most_down$name, window_gr$name)
+
+
+p_most_up = ddply(P[!is.na(P$ensembl_gene_id),], .(ensembl_gene_id), function(x){
+    if (nrow(x)==1){
+        result = x[1,]
+    } else if (all(x$strand=='+')){
+        result = x[order(x$tss, decreasing=F)[1],]
+    } else if (all(x$strand=='-')){
+        result = x[order(x$tss)[1],]
+    } else {
+        print('huh???')
+        print(x)
+        result = x[1,]
+    } 
+    return(result)
+  })
+m_most_up = match(p_most_up$name, P$name)
+m_most_up_window = match(p_most_up$name, window_gr$name)
+
+## choose -/+ 1000 based on doi: 10.4161/epi.19565 
+F_cpg = 1000
+cpg_gr = gene_gr
+p_match = match(cpg_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_cpg
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_cpg
+ranges(cpg_gr) = IRanges(P_start, P_end)
+
+export.bed(TSSR_gr, '../raw_data/tssr.bed')
+export.bed(body_gr, '../raw_data/gene_body.bed')
+export.bed(window_gr, '../raw_data/prom_window.bed')
+export.bed(cpg_gr, '../raw_data/cpg_window.bed')
+
+window_gr_3prime = gene_gr[width(gene_gr)>F_window]
+p_match = match(window_gr_3prime$name, P$name)
+P_start = ifelse(P[p_match, 'strand'] =='+', 
+                 P[p_match, 'txEnd'] - F_window,
+                 P[p_match, 'txStart'] - F_window)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = ifelse(P[p_match, 'strand'] =='+', 
+               P[p_match, 'txEnd'] + F_window,
+               P[p_match, 'txStart'] + F_window)
+ranges(window_gr_3prime) = IRanges(P_start, P_end)
+export.bed(window_gr_3prime, '../raw_data/3prime_window.bed')
+
+
+F_cpg = 300
+cpg_gr = gene_gr
+p_match = match(cpg_gr$name, P$name)
+P_start = P[p_match, 'tss'] - F_cpg
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + F_cpg
+ranges(cpg_gr) = IRanges(P_start, P_end)
+export.bed(cpg_gr, '../raw_data/cpg_window_300.bed')
+
+
+p_class = P[P$class!='boundary',]
+ggplot(p_class, aes(x=class, y=tissues_expressed, color=class_n_prom)) +
+    geom_violin(alpha=0.3) +
+    geom_point(data=p_class[p_class$class != 'iLAD', ],
+               position=position_jitter(width=0.4),
+               alpha=0.5) + 
+    theme_bw() +
+    theme(legend.title=element_blank()) +
+    scale_colour_manual(values=COL_class_n_prom) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+lmnb1_count = read.table('../raw_data/rep2_pLT_LMNB1_0.counts.txt.gz')
+dam_count = read.table('../raw_data/rep2_pLT_Dam_0.counts.txt.gz')
+colnames(lmnb1_count) = colnames(dam_count) = c('seqnames', 'start', 'end', 'count')
+for (lmnb1_file in c('../raw_data/rep2_pLT_LMNB1_0_1.counts.txt.gz',
+                     '../raw_data/rep2_pLT_LMNB1_1.counts.txt.gz',
+                     '../raw_data/rep2_pT_LMNB1.counts.txt.gz')){
+    lmnb1_count[,4] = rowSums(cbind(lmnb1_count[,4], read.table(lmnb1_file)[,4]))
+    dam_file = sub('LMNB1', 'Dam', lmnb1_file)
+    dam_count[,4] = rowSums(cbind(dam_count[,4], read.table(dam_file)[,4]))
+}
+
+
+lmnb1_gr = makeGRangesFromDataFrame(lmnb1_count)
+
+lad_hmm_gr = import.bed('../../../data/tracks/hg19/cl20161019_LAD_2state_K562.bed')
+lad_overlap = findOverlaps(lad_hmm_gr[lad_hmm_gr$name=='LAD'], lmnb1_gr)
+ilad_overlap = findOverlaps(lad_hmm_gr[lad_hmm_gr$name=='interLAD'], lmnb1_gr)
+
+lad_log2 = log2(sum(lmnb1_count[to(lad_overlap),'count'])/sum(dam_count[to(lad_overlap),'count']))
+ilad_log2 = log2(sum(lmnb1_count[to(ilad_overlap),'count'])/sum(dam_count[to(ilad_overlap),'count']))
+
+h<-findOverlaps(window_gr, lmnb1_gr)
+oENST<-window_gr[from(h)]$name
+oPOS<-ifelse(strand(window_gr[from(h)])=='+',
+             (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 - start(window_gr[from(h)]) -F_window,
+             end(window_gr[from(h)]) - (start(lmnb1_gr[to(h)])+end(lmnb1_gr[to(h)]))/2 -F_window)
+         #coordinates of all overlapping probes relative to the gene starts
+lmnb1_vec <- lmnb1_count[to(h), 'count']
+dam_vec <- dam_count[to(h), 'count']
+par(mfrow=c(1,3))
+for (i in names(COL)){
+  s<-unique(P$name[which(P$class==i) ])
+  s<-s[!is.na(s)]
+  w<-oENST %in% s #which rows in oENST correspond to genes in s
+  subPOS<-oPOS[w]
+  subLMNB1 <-lmnb1_vec[w]
+  subDam <-dam_vec[w]
+  o<-order(subPOS) #need to order all values by distance to gene start for running median plot:
+  subPOS<-subPOS[o]
+  subLMNB1<-subLMNB1[o]
+  subDam<-subDam[o]
+  #determine runmed k:
+  wsize<-floor(length(subPOS)/20) #2% of all datapoints in the set
+  if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+  #plot:
+  run_log2 = log2(runsum(Rle(subLMNB1), k=wsize, endrule='constant')/
+                  runsum(Rle(subDam), k=wsize, endrule='constant'))
+  plot(subPOS, run_log2, col=COL[i], lwd=2, type='l', xlim=c(-F_window,F_window)*0.9,ylim=c(-3,3),
+       main=paste('K562', i, '\n', length(s)), xlab="position relative to gene start (bp)", ylab="log2(DAM-lamin / DAM-only)")
+  abline(h=lad_log2, lty="dotdash", col=COL_lad['LAD'], lwd=2)
+  abline(h=ilad_log2, lty="dotdash", col=COL_lad['iLAD'], lwd=2)
+  abline(v=0, lty="dotted")
+}
+
+
+chrom_gr = import.bed('../../../data/tracks/hg19/wgEncodeBroadHmmK562HMM.bed')
+COL_chromatin = unique(data.frame(chrom_gr)[,c('name', 'itemRgb')])
+COL_chrom = COL_chromatin[,2]
+
+names(COL_chrom) = COL_chromatin[,1]
+
+
+
+P$chrom_hmm = chrom_gr[nearest(tss_gr, chrom_gr)]$name
+
+chrom_levels = unique(P$chrom_hmm)
+chrom_order = order(unlist(lapply(chrom_levels, function(x){as.numeric(strsplit(x,'_')[[1]][1])})))
+P$chrom_hmm = factor(P$chrom_hmm, levels=chrom_levels[chrom_order])
+ggplot(P[P$class!='boundary',], aes(x=class_n_prom, fill=chrom_hmm)) + 
+    geom_bar(color='black', position='fill') +
+    theme_bw() +
+    scale_fill_manual(values=COL_chrom) +
+    scale_y_continuous(labels=percent, limits=c(0,1)) +
+    ylab('percent') +
+    ggtitle('chromatin state near TSS of promoter') +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.title=element_blank())
+# load('../raw_data/prom_window_pol2a.rda')
+pol2_count_file_vec = list.files('../raw_data/',pattern='POL2')
+pol2_count_file_vec = grep('prom_window', pol2_count_file_vec, value=T, invert=T)
+
+pol2_count_list = lapply(pol2_count_file_vec, function(x){
+        gr = import.bed(paste0('../raw_data/', x))
+        score(gr) = start(gr$thick) / width(gr)
+        return(gr)
+    })
+pol2_name_list = lapply(strsplit(pol2_count_file_vec, '_'), function(x){
+    if (x[1]=='gene'){
+        r = paste(x[2:4], collapse='_')
+    } else {
+        r = paste(x[1:3], collapse='_')
+    }
+    return(r)
+})
+names(pol2_count_list) = unlist(pol2_name_list)
+
+
+pol2_score_table = do.call(cbind,lapply(pol2_count_list,function(x){score(x)}))
+
+tssr_POL2A = rowMeans(pol2_score_table[,c('tssr_POL2A_rep1', 'tssr_POL2A_rep2')]) /
+             rowMeans(pol2_score_table[,c('tssr_POL2A_ctrl1', 'tssr_POL2A_ctrl2')])
+
+tssr_POL2AS2 = rowMeans(pol2_score_table[,c('tssr_POL2AphosphoS2_rep1',
+                                       'tssr_POL2AphosphoS2_rep2')]) /
+               pol2_score_table[,'tssr_POL2AphosphoS2_ctrl']
+
+tssr_POL2AS5 = rowMeans(pol2_score_table[,c('tssr_POL2AphosphoS5_rep1',
+                                       'tssr_POL2AphosphoS5_rep2')]) /
+               rowMeans(pol2_score_table[,c('tssr_POL2AphosphoS5_ctrl1',
+                                       'tssr_POL2AphosphoS5_ctrl2')])
+
+body_POL2A = rowMeans(pol2_score_table[,c('body_POL2A_rep1', 'body_POL2A_rep2')]) /
+             rowMeans(pol2_score_table[,c('body_POL2A_ctrl1', 'body_POL2A_ctrl2')])
+
+body_POL2AS2 = rowMeans(pol2_score_table[,c('body_POL2AphosphoS2_rep1',
+                                       'body_POL2AphosphoS2_rep2')]) /
+               pol2_score_table[,'body_POL2AphosphoS2_ctrl']
+
+body_POL2AS5 = rowMeans(pol2_score_table[,c('body_POL2AphosphoS5_rep1',
+                                       'body_POL2AphosphoS5_rep2')]) /
+               rowMeans(pol2_score_table[,c('body_POL2AphosphoS5_ctrl1',
+                                       'body_POL2AphosphoS5_ctrl2')])
+
+tssr_match = match(P$name, pol2_count_list[['tssr_POL2A_rep1']]$name)
+body_match = match(P$name, pol2_count_list[['body_POL2A_rep1']]$name)
+
+
+P$tssr_POL2A = tssr_POL2A[tssr_match]
+P$body_POL2A = body_POL2A[body_match]
+
+tssr_match = match(P$name, pol2_count_list[['tssr_POL2AphosphoS2_rep1']]$name)
+body_match = match(P$name, pol2_count_list[['body_POL2AphosphoS2_rep1']]$name)
+P$tssr_POL2AS2 = tssr_POL2AS2[tssr_match]
+P$body_POL2AS2 = body_POL2AS2[body_match]
+
+tssr_match = match(P$name, pol2_count_list[['tssr_POL2AphosphoS5_rep1']]$name)
+body_match = match(P$name, pol2_count_list[['body_POL2AphosphoS5_rep1']]$name)
+P$body_POL2AS5 = body_POL2AS5[body_match]
+P$tssr_POL2AS5 = tssr_POL2AS5[tssr_match]
+P$PI_POL2A = P$tssr_POL2A / P$body_POL2A
+P$PI_POL2AS2 = P$tssr_POL2AS2 / P$body_POL2AS2
+P$PI_POL2AS5 = P$tssr_POL2AS5 / P$body_POL2AS5
+P$PI_POL2AS2vs5 = P$tssr_POL2AS5 / P$body_POL2AS2
+P$body_POL2AS2vsAll = P$body_POL2AS2 / P$body_POL2A
+P$tssr_POL2AS5vsAll = P$tssr_POL2AS5 / P$tssr_POL2A
+
+this_p = P[m_most_down,]
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')),]
+s_escaper = which(p_expressed$class=='escaper')
+gro_order = order(p_expressed$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[p_expressed$class[gro_ilad] == 'iLAD']
+
+norm_grocap = c(s_escaper, s_ilad)
+
+p_expressed$col = p_expressed$class
+levels(p_expressed$col) = paste0(levels(p_expressed$class),'; n=', table(p_expressed[norm_grocap, 'class']))
+COL_class_n_pol = COL_class_n_prom
+names(COL_class_n_pol) = levels(p_expressed$col)
+
+fc_matrix = matrix(ncol=4, nrow=4, dimnames=list(c('POL2', 'POL2S5', 'POL2S2', 'PRO-seq'), c('tssr_mean', 'body_mean', 'tssr_median', 'body_median')))
+
+fc_matrix['POL2','tssr_mean'] = mean(p_expressed[s_ilad, 'tssr_POL2A']) / mean(p_expressed[s_escaper, 'tssr_POL2A'])
+fc_matrix['POL2','body_mean'] = mean(p_expressed[s_ilad, 'body_POL2A']) / mean(p_expressed[s_escaper, 'body_POL2A'])
+fc_matrix['POL2','tssr_median'] = median(p_expressed[s_ilad, 'tssr_POL2A']) / median(p_expressed[s_escaper, 'tssr_POL2A'])
+fc_matrix['POL2','body_median'] = median(p_expressed[s_ilad, 'body_POL2A']) / median(p_expressed[s_escaper, 'body_POL2A'])
+
+fc_matrix['POL2S5','tssr_mean'] = mean(p_expressed[s_ilad, 'tssr_POL2AS5']) / mean(p_expressed[s_escaper, 'tssr_POL2AS5'])
+fc_matrix['POL2S5','body_mean'] = mean(p_expressed[s_ilad, 'body_POL2AS5']) / mean(p_expressed[s_escaper, 'body_POL2AS5'])
+fc_matrix['POL2S5','tssr_median'] = median(p_expressed[s_ilad, 'tssr_POL2AS5']) / median(p_expressed[s_escaper, 'tssr_POL2AS5'])
+fc_matrix['POL2S5','body_median'] = median(p_expressed[s_ilad, 'body_POL2AS5']) / median(p_expressed[s_escaper, 'body_POL2A'])
+
+fc_matrix['POL2S2','tssr_mean'] = mean(p_expressed[s_ilad, 'tssr_POL2AS2']) / mean(p_expressed[s_escaper, 'tssr_POL2AS2'])
+fc_matrix['POL2S2','body_mean'] = mean(p_expressed[s_ilad, 'body_POL2AS2']) / mean(p_expressed[s_escaper, 'body_POL2AS2'])
+fc_matrix['POL2S2','tssr_median'] = median(p_expressed[s_ilad, 'tssr_POL2AS2']) / median(p_expressed[s_escaper, 'tssr_POL2AS2'])
+fc_matrix['POL2S2','body_median'] = median(p_expressed[s_ilad, 'body_POL2AS2']) / median(p_expressed[s_escaper, 'body_POL2AS2'])
+
+
+ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2A', 'body_POL2A')), aes(x=class, y=log2(value + 0.1), color=col)) +
+    ylab('log2(POL2A / ctrl)') +
+    ggtitle('general POL2 at transcription start site\nversus gene body\nmost downstream TSS per gene') +
+    geom_violin(alpha=0.3) +
+    stat_summary(fun.y = 'median', fun.ymin = 'median', fun.ymax = 'median',
+                 geom = "crossbar", width = 0.3) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class_n_pol) + facet_wrap(~variable)  +
+    theme_bw() +
+    theme(legend.title=element_blank())
+
+
+ggplot(melt(p_expressed[norm_grocap, ], measure.vars=c('tssr_POL2A', 'tssr_POL2AS5', 'tssr_POL2AS2')), aes(x=class, y=log2(value + 0.1), color=col)) +
+    ylab('log2(POL2A / ctrl)') +
+    geom_violin(alpha=0.3) +
+    stat_summary(fun.y = 'median', fun.ymin = 'median', fun.ymax = 'median',
+                 geom = "crossbar", width = 0.3) +
+    ggtitle('POL2 mods at transcription start site\nmost downstream TSS per gene') +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class_n_pol) + facet_wrap(~variable)  +
+    theme_bw() +
+    theme(legend.title=element_blank())
+
+
+count_file_vec = c('tssr_PROseq_plus.count.txt.gz',
+                   'tssr_PROseq_minus.count.txt.gz',
+                   'gene_body_PROseq_plus.count.txt.gz',
+                   'gene_body_PROseq_minus.count.txt.gz')
+
+
+count_list = lapply(count_file_vec, function(x){
+        count_table = read.table(paste0('../raw_data/', x), row.names=4)
+        count_table = count_table[,c(1:3, 11)]
+        colnames(count_table) = c('seqnames', 'start', 'end', 'sum')
+        count_table$strand = ifelse(length(grep('plus', x))==1, '+', '-')
+        count_table$start = count_table$start + 1
+        count_table$sum = count_table$sum * ifelse(length(grep('plus', x))==1, 1, -1)
+        gr = makeGRangesFromDataFrame(count_table,
+                                      keep.extra.columns=T)
+        score(gr) = gr$sum / width(gr)
+        return(gr)
+    })
+name_list = lapply(strsplit(count_file_vec, '[_.]'), function(x){
+    if (x[1]=='gene'){
+        r = paste(x[2:4], collapse='_')
+    } else {
+        r = paste(x[1:3], collapse='_')
+    }
+    return(r)
+})
+names(count_list) = unlist(name_list)
+
+score_table = do.call(cbind,lapply(count_list,function(x){score(x)}))
+rownames(score_table) = names(count_list[[1]])
+
+P$tssr_proseq_sense = P$tssr_proseq_antisense = 
+    P$body_proseq_sense = P$body_proseq_antisense = NaN
+
+plus_match = match(P[which(P$strand=='+'), 'name'], rownames(score_table))
+P[which(P$strand=='+'), c('tssr_proseq_sense','tssr_proseq_antisense', 'body_proseq_sense', 'body_proseq_antisense')] = score_table[plus_match, c('tssr_PROseq_plus', 'tssr_PROseq_minus', 'body_PROseq_plus', 'body_PROseq_minus')]
+
+minus_match = match(P[which(P$strand=='-'), 'name'], rownames(score_table))
+P[which(P$strand=='-'), c('tssr_proseq_sense','tssr_proseq_antisense', 'body_proseq_sense', 'body_proseq_antisense')] = score_table[minus_match, c('tssr_PROseq_minus', 'tssr_PROseq_plus', 'body_PROseq_minus', 'body_PROseq_plus')]
+
+
+this_p = P[m_most_down, ]
+
+p_expressed = which(this_p$class %in% c('escaper', 'iLAD'))
+this_p = this_p[p_expressed, ]
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[this_p$class[gro_ilad] == 'iLAD']
+
+norm_grocap = c(rownames(this_p)[s_escaper],
+                rownames(this_p)[s_ilad])
+
+
+p_expressed = this_p[norm_grocap, ]
+
+fc_matrix['PRO-seq','tssr_mean'] = mean(this_p[s_ilad, 'tssr_proseq_sense']) / mean(this_p[s_escaper, 'tssr_proseq_sense'])
+fc_matrix['PRO-seq','body_mean'] = mean(this_p[s_ilad, 'body_proseq_sense']) / mean(this_p[s_escaper, 'body_proseq_sense'])
+fc_matrix['PRO-seq','tssr_median'] = median(this_p[s_ilad, 'tssr_proseq_sense']) / median(this_p[s_escaper, 'tssr_proseq_sense'])
+fc_matrix['PRO-seq','body_median'] = median(this_p[s_ilad, 'body_proseq_sense']) / median(this_p[s_escaper, 'body_proseq_sense'])
+
+grid.arrange(tableGrob(round(fc_matrix,3)), top='Fold-changes (iLAD / escaper)\nfor each POL2 antibody and PRO-seq\nusing mean and median\nNO pseudocounts were used')
+
+
+
+p_expressed$col = p_expressed$class
+levels(p_expressed$col) = paste0(levels(p_expressed$class),'; n=', table(p_expressed[norm_grocap, 'class']))
+COL_class_n_pro = COL_class_n_prom
+names(COL_class_n_pro) = levels(p_expressed$col)
+this_melt = melt(p_expressed, measure.vars=c('tssr_proseq_sense', 'body_proseq_sense'))
+this_melt$value = this_melt$value + min(this_melt$value[this_melt$value>0])/2
+
+ggplot(this_melt, aes(x=class, y=log2(value), color=col)) +
+    ggtitle('PRO-seq signal at TSS vs gene body\nwith pseudo-count minimum/2\n(0.000170168 / 2)') +
+    ylab('log2(PROseq)') +
+    theme_bw() +
+    geom_violin(alpha=0.3) +
+    stat_summary(fun.y = 'median', fun.ymin = 'median', fun.ymax = 'median',
+                 geom = "crossbar", width = 0.3) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    scale_color_manual(values=COL_class_n_pro) + facet_wrap(~variable)
+
+
+plus_matrix = read.table('../raw_data/prom_window_PROseq_plus.txt.gz', row.names=4)
+plus_matrix = plus_matrix[,6:ncol(plus_matrix)]
+minus_matrix = read.table('../raw_data/prom_window_PROseq_minus.txt.gz', row.names=4)
+minus_matrix = minus_matrix[,6:ncol(minus_matrix)]
+
+this_p = P[m_most_down, ]
+this_p = this_p[which(!this_p$ensembl_gene_id%in%ensg_too_close), ]
+this_p = this_p[this_p$name %in% rownames(plus_matrix), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,4) + xlim(-5000,F_window) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        ggtitle(paste0(i, '\nn=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="general overview PRO-seq of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only"))
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440,4), function(x){
+                           c(x*100-50, mean(unlist(plus[,x:(x+3)])))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_line(col=COL_class[i]) + 
+                        coord_cartesian(ylim = c(0,1), expand = TRUE) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="normalized on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only (strand specific)"))
+
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix))
+    plus = rbind(plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        coord_cartesian(ylim = c(0,1), expand = TRUE) +
+                        xlim(-10000,F_window) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="normalized on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only (strand specific)"))
+
+s = s_list[['iLAD']]
+strand = p_expressed$strand[s]
+name_vec = p_expressed$name[s]
+s = match(name_vec, rownames(plus_matrix))
+pm = plus_matrix[s[which(strand=='+')],]
+pm_list = rownames(pm)[order(rowSums(pm[,1:200]), decreasing=T)]
+m = match(pm_list, P$name)
+P[m,c('chr','txStart', 'txEnd','tss')]
+
+
+plus_matrix_3prime = read.table('../raw_data/3prime_window_PROseq_plus.txt.gz', row.names=4)
+plus_matrix_3prime = plus_matrix_3prime[,6:ncol(plus_matrix_3prime)]
+minus_matrix_3prime = read.table('../raw_data/3prime_window_PROseq_minus.txt.gz', row.names=4)
+minus_matrix_3prime = minus_matrix_3prime[,6:ncol(minus_matrix_3prime)]
+
+this_p = P[m_most_down, ]
+this_p = this_p[which(!this_p$ensembl_gene_id%in%ensg_too_close), ]
+this_p = this_p[this_p$name %in% rownames(plus_matrix_3prime)]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,1) + xlim(-5000,F_window) +
+                        ggtitle(paste0(i, '\nn=', length(s))) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="general overview 3'end PRO-seq of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5'end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only (strand specific)"))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_line(col=COL_class[i]) + 
+                        coord_cartesian(ylim = c(0,1), expand = TRUE) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        theme_bw() +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview 3'end of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only (strand specific)"))
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(plus_matrix_3prime))
+    plus = rbind(plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                 minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ] * -1)
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        coord_cartesian(ylim = c(0,1), expand = TRUE) +
+                        xlim(-10000,F_window) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview 3'end of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal: 1 read is assigned to a single nucleotide only (strand specific)"))
+
+
+count_rep1 = read.table('../raw_data/expression/K562_rep1ReadsPerGene.out.tab')
+count_rep2 = read.table('../raw_data/expression/K562_rep2ReadsPerGene.out.tab')
+
+count_table = cbind(count_rep1[,4], rep2=count_rep2[,4])
+rownames(count_table) = count_rep1[,1]
+colnames(count_table) = c('rep1', 'rep2')
+exp = SummarizedExperiment(assays = list(counts=count_table[-(1:4), ]))
+dds = DESeqDataSet(exp, design= ~ 1)
+fpm = fpm(dds)
+P$K562_fpm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpm))
+P$K562_fpm[!is.na(g_match)] = rowMeans(fpm[g_match[!is.na(g_match)],])
+p_most_active = P[rownames(p_most_active), ]
+p_most_active = p_most_active[!is.na(p_most_active$K562_fpm), ]
+p_most_active_class = p_most_active[p_most_active$class%in%c('escaper', 'repressed', 'inactive'), ]
+
+p_expressed = which(p_most_active$class %in% c('escaper', 'iLAD'))
+s_escaper = which(p_most_active[p_expressed, 'class']=='escaper')
+gro_order = order(p_most_active[p_expressed,'GROcap'])
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[p_most_active[p_expressed,'class'][gro_ilad] == 'iLAD']
+
+norm_grocap_active = c(rownames(p_most_active[p_expressed,])[s_escaper],
+                rownames(p_most_active[p_expressed,])[s_ilad])
+
+p_expressed = p_most_active[norm_grocap_active,]
+p_expressed$col = p_expressed$class
+levels(p_expressed$col) = paste0(levels(p_expressed$class),'; n=', table(p_expressed$class))
+COL_class_n_seq = COL_class_n_prom
+names(COL_class_n_seq) = levels(p_expressed$col)
+
+fold_changes = c(mean(p_expressed[p_expressed$class=='iLAD', 'K562_fpm'])/
+                 mean(p_expressed[p_expressed$class=='escaper', 'K562_fpm']),
+                 median(p_expressed[p_expressed$class=='iLAD', 'K562_fpm'])/
+                 median(p_expressed[p_expressed$class=='escaper', 'K562_fpm']))
+fold_changes = round(fold_changes, 3)
+
+p_expressed$K562_fpm = log10(p_expressed$K562_fpm + min(p_expressed$K562_fpm[p_expressed$K562_fpm!=0])/2)
+
+ggplot(p_expressed , aes(x=class, y=K562_fpm, color=col)) + 
+    geom_violin(alpha=0.3) + 
+    stat_summary(fun.y = 'median', fun.ymin = 'median', fun.ymax = 'median',
+                 geom = "crossbar", width = 0.3) +
+    ggtitle(paste0('whole cell poly-A\nfold-change of means: ', fold_changes[1],
+                   '\nfold-change of medians: ',  fold_changes[2],
+                   '\nfold-change calculated before log')) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('log10(poly-A RNA expression)') +
+    scale_color_manual(values=COL_class_n_seq) +
+    theme_bw()
+
+
+
+
+rep1_plus_matrix = read.table('../raw_data/prom_window_ttseq_rep1_plus.txt.gz', row.names=4)
+rep1_plus_matrix = rep1_plus_matrix[,6:ncol(rep1_plus_matrix)]
+rep1_minus_matrix = read.table('../raw_data/prom_window_ttseq_rep1_minus.txt.gz', row.names=4)
+rep1_minus_matrix = rep1_minus_matrix[,6:ncol(rep1_minus_matrix)]
+rep2_plus_matrix = read.table('../raw_data/prom_window_ttseq_rep2_plus.txt.gz', row.names=4)
+rep2_plus_matrix = rep2_plus_matrix[,6:ncol(rep2_plus_matrix)]
+rep2_minus_matrix = read.table('../raw_data/prom_window_ttseq_rep2_minus.txt.gz', row.names=4)
+rep2_minus_matrix = rep2_minus_matrix[,6:ncol(rep2_minus_matrix)]
+
+
+this_p = P[m_most_down, ]
+this_p = this_p[which(!this_p$ensembl_gene_id%in%ensg_too_close), ]
+this_p = this_p[which(this_p$name%in%rownames(rep1_plus_matrix)), ]
+# this_p$bg_ttseq = ifelse(this_p$strand=='+',
+#                          rowSums(rep1_plus_matrix[this_p$name, 1:200]) + 
+#                          rowSums(rep2_plus_matrix[this_p$name, 1:200]),
+#                          rowSums(rep1_minus_matrix[this_p$name, 1:200]) + 
+#                          rowSums(rep2_minus_matrix[this_p$name, 1:200]))
+# this_p = this_p[this_p$bg_ttseq < 200, ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    title = paste0(i, ';\nn=', length(s))
+
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                       c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                   })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,40) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="general overview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\ntried most upstream as well, but not much difference\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    title = paste0(i, ';\nn=', length(s))
+
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                       c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                   })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        coord_cartesian(ylim = c(0,40), expand = TRUE) +
+                        xlim(-10000,F_window) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        theme_bw() +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="general overview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+s_escaper = which(this_p$class=='escaper')
+gro_order = order(this_p$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(this_p$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                           c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,50) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        geom_line(data=mean[mean[,1]>22000,], 
+                                   stat="smooth", method="lm",
+                                   color='black', lty='dotdash', lwd=1, alpha=0.5) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on GRO-cap\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                           c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,50) +
+                        xlim(-10000,F_window) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_line(data=mean[mean[,1]>22000,], 
+                                   stat="smooth", method="lm",
+                                   color='black', lty='dotdash', lwd=1, alpha=0.5)
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on GRO-cap\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                           c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,50) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        geom_line(data=mean[mean[,1]>22000,], 
+                                   stat="smooth", method="lm",
+                                   color='black', lty='dotdash', lwd=1, alpha=0.5) +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 4), function(x){
+                           c(x*100+100, sum(plus[,x:(x+3)])/length(s)/4)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,50) +
+                        xlim(-10000,F_window) +
+                        theme_bw() +
+                        geom_line(col=COL_class[i]) + 
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_line(data=mean[mean[,1]>22000,], 
+                                   stat="smooth", method="lm",
+                                   color='black', lty='dotdash', lwd=1, alpha=0.5) +
+                        theme(axis.title=element_blank())
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+rep1_plus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep1_plus.txt.gz', row.names=4)
+rep1_plus_matrix_3prime = rep1_plus_matrix_3prime[,6:ncol(rep1_plus_matrix_3prime)]
+rep1_minus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep1_minus.txt.gz', row.names=4)
+rep1_minus_matrix_3prime = rep1_minus_matrix_3prime[,6:ncol(rep1_minus_matrix_3prime)]
+rep2_plus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep2_plus.txt.gz', row.names=4)
+rep2_plus_matrix_3prime = rep2_plus_matrix_3prime[,6:ncol(rep2_plus_matrix_3prime)]
+rep2_minus_matrix_3prime = read.table('../raw_data/3prime_window_ttseq_rep2_minus.txt.gz', row.names=4)
+rep2_minus_matrix_3prime = rep2_minus_matrix_3prime[,6:ncol(rep2_minus_matrix_3prime)]
+
+this_p = P[p_most_up, ]
+this_p = this_p[which(!this_p$ensembl_gene_id%in%ensg_too_close), ]
+this_p = this_p[which(this_p$name%in%rownames(rep1_plus_matrix_3prime)), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p$strand[s]
+    name_vec = this_p$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100+100, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(paste0(i, ';\nn=', length(s))) +
+                        ylim(0,50) +
+                        theme_bw() +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_line(col=COL_class[i]) + 
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="general overview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\n3-prime aligned\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+gro_order = order(p_expressed$GROcap)
+gro_escaper = which(gro_order %in% s_escaper)
+
+gro_ilad = gro_order[c(gro_escaper + 1, gro_escaper - 1)]
+s_ilad = gro_ilad[which(p_expressed$class[gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 1), function(x){
+                           c(x*100+100, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,100) +
+                        theme_bw() +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_line(col=COL_class[i]) + 
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on GRO-cap\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\n3-prime aligned\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+p_expressed = this_p[which(this_p$class %in% c('escaper', 'iLAD')), ]
+s_escaper = which(p_expressed$class=='escaper')
+pro_order = order(p_expressed$tssr_proseq_sense)
+pro_escaper = which(pro_order %in% s_escaper)
+
+pro_ilad = pro_order[c(pro_escaper + 1, pro_escaper - 1)]
+s_ilad = pro_ilad[p_expressed$class[pro_ilad] == 'iLAD']
+
+norm_proseq = c(rownames(p_expressed)[s_escaper],
+                rownames(p_expressed)[s_ilad])
+
+s_list = list(iLAD=s_ilad, escaper=s_escaper)
+
+plot_list = list()
+for(i in c('iLAD', 'escaper')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_expressed$strand[s]
+    name_vec = p_expressed$name[s]
+    s = match(name_vec, rownames(rep1_plus_matrix))
+    plus1 = rbind(rep1_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep1_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus2 = rbind(rep2_plus_matrix_3prime[s[which(strand=='+' & !is.na(s))], ],
+                  rep2_minus_matrix_3prime[s[which(strand=='-' & !is.na(s))], ])
+    plus = plus1 + plus2 / 2
+    mean_list = lapply(seq(1,440, 1), function(x){
+                           c(x*100+100, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    title=paste0(i, '; n=', length(s))
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + 
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        ggtitle(title) +
+                        ylim(0,100) +
+                        theme_bw() +
+                        ylab('mean signal per nucleotide (over 100b window)') +
+                        geom_line(col=COL_class[i]) + 
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top="matched on PRO-seq of TSS-region (shown in plot of tssr vs body)\noverview of the most downstream TSS per gene\nfiltered for other gene > 20kb away (both 3' and 5' end of gene, both strands)\n3-prime aligned\nsignal is genome-wide binned signal for 200bp bins lifted over from hg38 using R"))
+
+
+cpg = read.table('../raw_data/cpg_density_300.txt', stringsAsFactors=F)
+colnames(cpg) = c('seqnames', 'start','stop','name','GC-dinuc', 'CGsum', 'CG_exp', 'CG_OE')
+cpg_match = match(P$name, cpg$name)
+P$CG_OE = NaN
+P$CG_OE = cpg[cpg_match,'CG_OE']
+
+this_p = P[P$class!='boundary', ]
+this_p$col = this_p$class
+levels(this_p$col) = paste0(levels(this_p$class),'; n=', table(this_p$class))
+COL_class_n_cpg = COL_class_n_prom
+names(COL_class_n_cpg) = levels(this_p$col)
+
+P_class = this_p[this_p$class%in%names(COL), ]
+ggplot(this_p, aes(x=class, y=CG_OE, color=col)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(data=P_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('CpG observed over expected') +
+    ggtitle('300bp left and right from TSS\n #CG/((#C + #G)/2)^2/length)') +
+    theme_bw() +
+    scale_color_manual(values=COL_class_n_cpg)
+
+
+cpg = read.table('../raw_data/cpg_density_1000.txt', stringsAsFactors=F)
+colnames(cpg) = c('seqnames', 'start','stop','name','GC-dinuc', 'CGsum', 'CG_exp', 'CG_OE')
+cpg_match = match(P$name, cpg$name)
+P$CG_OE = NaN
+P$CG_OE = cpg[cpg_match,'CG_OE']
+
+
+this_p = P[P$class!='boundary', ]
+this_p$col = this_p$class
+levels(this_p$col) = paste0(levels(this_p$class),'; n=', table(this_p$class))
+COL_class_n_cpg = COL_class_n_prom
+names(COL_class_n_cpg) = levels(this_p$col)
+
+P_class = this_p[this_p$class%in%names(COL), ]
+ggplot(this_p, aes(x=class, y=CG_OE, color=col)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(data=P_class, position=position_jitter(width=0.5), alpha=0.3, size=0.3) +
+    ylab('CpG observed over expected') +
+    ggtitle('1000bp left and right from TSS\n #CG/((#C + #G)/2)^2/length)') +
+    theme_bw() +
+    scale_color_manual(values=COL_class_n_cpg)
+
+
+
+
+
+
+cpg_ranges = import.bed('../raw_data/cpgIslandExtUnmasked_140601.bed.gz')
+cpg_ranges$score = as.numeric(gsub('CpG:','', cpg_ranges$name))
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1 * as.numeric(strand(gene_gr)=='+'))
+
+tss_gr$cpg_distance = mcols(distanceToNearest(tss_gr, cpg_ranges))$distance
+
+P$cpg_class = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$name
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$name
+P$cpg_class[P$name %in% cpg_prom] = 'CpG'
+P$cpg_class[P$name %in% non_cpg_prom] = 'non_CpG'
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=cpg_class, fill=cpg_class)) + 
+                                theme_bw() +
+                                guides(fill=FALSE) +
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(class) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.title=element_blank(),
+                                      plot.title = element_text(color=COL_class[class], size=14, face="bold.italic"))
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes\nall cpg-islands <1kb from TSS",gp=gpar(fontsize=20,font='bold')), nrow=1)
+
+
+tss_gr$cpg_distance = mcols(distanceToNearest(tss_gr, cpg_ranges[cpg_ranges$score>50]))$distance
+
+P$cpg_class_stringent = NA
+cpg_prom = tss_gr[which(tss_gr$cpg_distance < 1000)]$name
+
+non_cpg_prom = tss_gr[which(tss_gr$cpg_distance >= 1000)]$name
+P$cpg_class_stringent[P$name %in% cpg_prom] = 'CpG'
+P$cpg_class_stringent[P$name %in% non_cpg_prom] = 'non_CpG'
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=cpg_class_stringent, fill=cpg_class_stringent)) + 
+                                theme_bw() +
+                                guides(fill=FALSE) +
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(class) +
+
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.title=element_blank(),
+                                      plot.title = element_text(color=COL_class[class], size=14, face="bold.italic"))
+}
+grid.arrange(plot_list[['iLAD']], plot_list[['escaper']], plot_list[['repressed']], plot_list[['inactive']], top=textGrob("ratio between cpg and\nnon-cpg promoter classes\nstrong cpg-islands (score > 50) <1kb from TSS",gp=gpar(fontsize=20,font='bold')), nrow=1)
+
+
+
+repli_matrix = read.table('../raw_data/prom_window_repliseq_plus.txt.gz', row.names=4)
+repli_matrix = repli_matrix[,6:ncol(repli_matrix)]
+
+this_p = P[P$name %in% rownames(repli_matrix), ]
+sample_n = table(this_p[,'class'])['escaper']
+plot_list = list()
+for(i in c('iLAD', 'escaper', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(this_p[, 'class']==i)
+    strand = this_p[,'strand'][s]
+    name_vec = this_p[, 'name'][s]
+    s = match(name_vec, rownames(repli_matrix))
+    plus = repli_matrix[s,]
+    mean_list = lapply(seq(1,440), function(x){
+                           c(x*100-50, mean(plus[,x]))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    colnames(mean) = c('x', 'y')
+    #plot:
+    plot_list[[i]] = ggplot(mean, aes(x=x-F_window, y=y)) + geom_line(col=COL_class[i]) + 
+                        ylim(0,100) +
+                        ggtitle(paste(i, '; n=', length(s))) +
+                        geom_vline(xintercept=0, lty='dotted') + 
+                        theme_bw() +
+                        scale_x_continuous(breaks=seq(-F_window, F_window, F_window))
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top='signal of replication timing, think they smoothed the signal too much for this analysis'))
+
+
+subc = import.bed('../../../data/tracks/hg19/GSE63525_GM12878_subcompartments.bed')
+subc = subc[which(subc$name!='NA')]
+subc$name = gsub('[1234]','', subc$name)
+h = findOverlaps(tss_gr, subc)
+P$compartment = NA
+P$compartment[from(h)] = subc[to(h)]$name
+
+COL_compartment = unique(data.frame(subc)[,c('name', 'itemRgb')])
+COL_comp = COL_compartment[,2]
+names(COL_comp) = COL_compartment[,1]
+plot_list = list()
+for (class in c('iLAD', 'escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    subset = subset[which(!is.na(subset$compartment)),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=compartment, fill=compartment)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste0(class,'\n', n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                scale_fill_manual(values=COL_comp) +
+                                ylab('percent of TSS in compartments') +
+                                theme_bw() +
+                                theme(legend.position="none")
+}
+do.call(grid.arrange, c(plot_list, nrow=1, top = "ratio between GM12878 Hi-C compartments\nconverted the A1:2 in A and B1:4 in B"))
+
+lad_gr = import.bed('../../../data/tracks/hg19/cl20161017_LAD_continuous_4state_K562.bed')
+h = findOverlaps(tss_gr, lad_gr)
+P$lad_4state = NA
+P$lad_4state[from(h)] = lad_gr[to(h)]$name
+
+P$lad_4state[P$lad_4state=='fLAD'] = 'facultative'
+P$lad_4state[P$lad_4state=='cLAD'] = 'constitutive'
+
+plot_list = list()
+for (class in c('escaper', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    subset = subset[which(!is.na(subset$lad_4state)),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=lad_4state, fill=lad_4state)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste0(class,'\n', n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                ylab('percent of TSS in LAD type') +
+                                theme_bw() +
+                                xlab('LAD type') +
+                                theme(legend.position="none",
+                                       plot.title = element_text(color=COL_class[class],
+                                                                 size=14, face="bold.italic"))
+}
+do.call(grid.arrange, c(plot_list, nrow=1))
+
+dev.off()
+Date<-substr(gsub("-", "", Sys.time()),3,8)
+#generate gene lists, export to flat text files:
+write.table(unique(P$ensembl_gene_id[P$class=='inactive']), file=paste("LAD_noSuRE_GeneList_CL",Date,".txt", sep=""), quote=FALSE, row.names=FALSE, col.names=FALSE)
+write.table(unique(P$ensembl_gene_id[P$class=='escaper']), file=paste("LAD_notrepressed_GeneList_CL",Date,".txt", sep=""), quote=FALSE, row.names=FALSE, col.names=FALSE)
+write.table(unique(P$ensembl_gene_id[P$class=='repressed']), file=paste("LAD_repressed_GeneList_CL",Date,".txt", sep=""), quote=FALSE, row.names=FALSE, col.names=FALSE)
+write.table(unique(P$ensembl_gene_id[P$LAD==1]), file=paste("LAD_all_GeneList_CL",Date,".txt", sep=""), quote=FALSE, row.names=FALSE, col.names=FALSE)
+write.table(unique(P$ensembl_gene_id), file=paste("LADi+LAD_all_GeneList_CL",Date,".txt", sep=""), quote=FALSE, row.names=FALSE, col.names=FALSE)
+
+```

@@ -1,0 +1,216 @@
+# knitr document van Steensel lab
+
+# Expression variation of promoters.
+## Christ Leemans, 06-03-2017
+
+## Introduction
+We previously saw that promoters that escape lamina interaction show expression in a lot of different tissues. A promoter was considered expressed in a cell type when the CAGE was higher than 1. This was a really quick way to get to some idea of house-keeping function. However it does not say all about how the promoter is regulated across different cell types. In this report I would like to focus on measuring the variation of promoter expression across the fantom CAGE data.
+
+
+## tagwise dispersion calculation
+```
+library(edgeR)
+library(parallel)
+fantom_counts = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_counts.osc.txt.gz',
+                            header=T, stringsAsFactors=F, row.names=1)
+fantom_annot = read.table('~/data/fantom/hg19.cage_peak_phase1and2combined_ann.txt.gz',
+                           sep='\t', header=T)
+load("../raw_data/gencode.sure.160617.rda")
+gencode_transcript_vec = do.call(rbind, strsplit(gencode.sure.160617$name, split='[.]'))[,1]
+gencode_fantom = mclapply(gencode_transcript_vec, function(x, association, counts){
+        y = grep(x, association)
+        if (length(y) > 0){
+            return(colSums(counts[y,]))
+        }
+    }, association=fantom_annot$association_with_transcript, counts=fantom_counts[-1,], mc.cores=5)
+names(gencode_fantom) = gencode_transcript_vec
+gencode_count = do.call(rbind, gencode_fantom)
+
+
+groups = as.numeric(factor(gsub('_rep[1-9].+','',colnames(fantom_counts))))
+
+d = DGEList(counts=gencode_count, group=groups)
+design <- model.matrix(~group, data=d$samples)
+de = estimateCommonDisp(d, design)
+de = estimateTagwiseDisp(de, design)
+save(de, file='cl20170428_tagwise_dispersion.rData')
+write.table(cbind(rownames(de$counts), de$tagwise.dispersion),
+            file='cl20170428_tagwise_dispersion.txt',
+            row.names=F, col.names=F, quote=F, sep ='\t')
+```
+
+```{r}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+library(gage)
+library(fgsea)
+library(CGtools)
+library(biomaRt)
+library(Matrix)
+library(grid)
+load('../raw_data/biomart.rdata')
+
+## There was one promoter that was wrongly annotated
+bm_p[bm_p$ensembl_transcript_id=='ENST00000357491','ensembl_gene_id' ] = 'ENSG00000196350'
+
+## get a table with matching sets
+## table = complete table to take matching sets from
+## class_col = column name of class of interest
+## class = name of class to match the set on
+## order_on = column name to order on
+matchSet <- function(table, class_col, class, order_on){
+  o_vec = order(table[,order_on])
+  o_table = table[o_vec, ]
+  setA = which(o_table[,class_col]==class)
+  setB = c(setA + 1, setA -1)
+  ## can also return o_table[unique(c(setA, setB)), ]
+  ## but this way order is perserved.
+  i_vec = o_vec[unique(c(setA, setB))]
+  return(table[i_vec[order(i_vec)], ])
+}
+```
+
+
+```{r, fig.width=10, fig.height=8}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+nrow(P) #orriginal number of rows
+bm_match = match(P$ensembl_transcript_id, bm_p$ensembl_transcript_id)
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #some double rows were introduced
+
+P = P[match(Prom$name, P$name), ]
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+
+
+## to be used by CGtools as the complete set of TSS's
+peaks = data.frame(seqname=P$chr,
+                   start=P$tss,
+                   end=P$tss,
+                   strand=P$strand)
+
+
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCage<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCage
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+
+
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE> 0 & P$LRS> -0.5 & P$LAD==1 & P$GROcap> -2 #not repressed
+REP<- P$SuRE> 0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "escaper", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"escaper"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+P$class = factor(P$class, levels=c('iLAD', 'escaper', 'repressed', 'inactive', 'boundary'))
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "escaper", "inactive", 'boundary', 'iLAD')
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "escaper", "inactive")
+
+class_names = paste0(levels(P$class), '; n=',table(P$class))
+names(class_names) = levels(P$class)
+P$class_n_prom = P$class
+levels(P$class_n_prom) = class_names
+COL_class_n_prom = COL_class[names(class_names)]
+names(COL_class_n_prom) = class_names
+
+lad_names = c(LAD=paste0('LAD; n=', table(P$LAD)['1']),
+              iLAD=paste0('LAD; n=', table(P$LAD)['0']))
+P$lad_n_prom = factor(ifelse(P$LAD==1, lad_names['LAD'], lad_names['iLAD']))
+COL_lad_n = COL_lad
+names(COL_lad_n) = lad_names
+```
+
+```{r}
+
+dispersion = read.table('cl20170428_tagwise_dispersion.txt', stringsAsFactors=F, row.names=1)
+
+P$dispersion = NaN
+P$dispersion[match(rownames(dispersion), P$ensembl_transcript_id)] = dispersion[,1]
+
+ggplot(P[which(P$class!='boundary'),], aes(x=class, y=log(dispersion), col=class)) +
+    geom_violin(alpha=0.5) +
+    geom_point(data=P[which(P$class%in%c('escaper', 'repressed', 'inactive')), ], 
+               position=position_jitter(width=0.5), alpha=0.3, size=0.4) +
+    scale_color_manual(values=COL_class)
+
+p_matched = matchSet(P[P$class%in%c('iLAD','escaper'),], 'class','escaper','GROcap')
+ggplot(p_matched, aes(x=class, y=log(dispersion), col=class)) +
+    geom_violin(alpha=0.5) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.4) +
+    scale_color_manual(values=COL_class)
+
+p_matched = matchSet(P[P$class%in%c('iLAD','escaper'),], 'class','escaper','SuRE')
+ggplot(p_matched, aes(x=class, y=log(dispersion), col=class)) +
+    geom_violin(alpha=0.5) +
+    geom_point(position=position_jitter(width=0.5), alpha=0.3, size=0.4) +
+    scale_color_manual(values=COL_class)

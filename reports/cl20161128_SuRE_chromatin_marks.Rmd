@@ -1,0 +1,2663 @@
+
+
+samtools depth ENCFF000QDB.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000QDB.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000QDB.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2AphosphoS5_ENCFF000QDB.bw
+
+
+samtools depth ENCFF000QDE.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000QDE.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000QDE.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2AphosphoS5_ENCFF000QDE.bw
+
+samtools depth ENCFF000YWZ.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000YWZ.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000YWZ.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2AphosphoS2_ENCFF000YWZ.bw
+
+samtools depth ENCFF000YXA.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000YXA.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000YXA.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2AphosphoS2_ENCFF000YXA.bw
+
+samtools depth ENCFF000QDN.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000QDN.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000QDN.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2A_ENCFF000QDN.bw
+
+samtools depth ENCFF000QDM.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF000QDM.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../../hg19/hg19.chrom.sizes ENCFF000QDM.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_POLR2A_ENCFF000QDM.bw
+
+
+samtools depth ENCFF710NTS.bam | awk '{print $1"\t"$2"\t"$2"\t"$3}' | bedtools sort -i - > ENCFF710NTS.bg
+
+awk '{if (NR==FNR){a[$1]=$2}else{if ($2 > a[$1]){print $0}}}' ../
+../hg19/hg19.chrom.sizes ENCFF710NTS.bg | bedGraphToBigWig /dev/stdin ../../hg19/hg19.chrom.sizes K562_IgG_control_ENCFF710NTS.bw
+
+
+## libraries, paths and data prep
+
+```{r, fig.width=10, fig.height=10}
+library(reshape2)
+library(rtracklayer)
+library(DESeq2)
+library(ggplot2)
+library(gridExtra)
+library(plyr)
+library(preprocessCore)
+library(scales)
+library(gage)
+library(fgsea)
+library(gageData)
+library(biomaRt)
+load('../raw_data/biomart.rdata')
+
+```
+
+
+
+### SuRE data
+
+```{r, fig.width=10, fig.height=10}
+load("../raw_data/gencode.sure.160617.rda")
+Prom<-gencode.sure.160617; rm(gencode.sure.160617) #simpler name
+#first re-calculate pseudocounts without jitter
+P<-Prom[,c(1:8,23,20,26,28, 27)] #SuRE, GRO-cap, CAGE and LAD columns only
+names(P)[9:13]<-c("SuRE", "GROcap", "CAGE", "LAD", 'tissues_expressed')
+Pseud<-min(P$SuRE[P$SuRE>0], na.rm=TRUE)/2
+P$SuRE<-P$SuRE+Pseud
+P$SuRE<-log10(P$SuRE)
+PseudGro<-min(P$GROcap[P$GROcap>0], na.rm=TRUE)/2
+P$GROcap<-P$GROcap+PseudGro
+P$GROcap<-log10(P$GROcap)
+PseudCAGE<-min(P$CAGE[P$CAGE>0], na.rm=TRUE)/2
+P$CAGE<-P$CAGE+PseudCAGE
+P$CAGE<-log10(P$CAGE)
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), GROcap.lad=rep(NA,n), GROcap.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$GROcap.lad[i]<-mean(t$GROcap[t$LAD==1], na.rm=TRUE)
+   RM$GROcap.ilad[i]<-mean(t$GROcap[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$GROcap[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS<- P$GROcap - approx(x=RM$SuRE.mean, y=RM$GROcap.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$GROcap< -2 #inactive
+NREP<- P$SuRE>0 & P$LRS> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS< -1 & P$LAD==1  & P$GROcap< -2 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class<-NA
+P$class[P$LAD==0]<-"iLAD"
+P$class[INACT]<-"inactive"
+P$class[NREP]<-"not_repressed"
+P$class[REP]<-"repressed"
+P$class[BND] <- "boundary"
+
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "not_repressed", "inactive", 'boundary', 'iLAD')
+
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+       geom_point(size=0.1,color=COLi) + 
+       geom_point(data=p_classes, aes(color=class), size=0.6)
+
+## for promoters and gene expression let's convert promoter transcript id's to gene id's
+P$ensembl_transcript_id = do.call(rbind, strsplit(P$name, split='[.]'))[,1]
+
+P<-merge(P, bm_p, by="ensembl_transcript_id", all.x=TRUE)
+nrow(P) #number of unique promoters
+
+length(unique(P$ensembl_gene_id)) #number of unique genes
+
+table(P[,c('strand.x','strand.y')]) #almost all strand listings are consistent
+
+P<-P[, colnames(P)!='strand.y']
+colnames(P)[colnames(P)=='strand.x'] = "strand"
+
+
+```
+
+### gene expression
+```{r, fig.width=10, fig.height=10}
+
+count_rep1 = read.table('../raw_data/expression/K562_rep1ReadsPerGene.out.tab')
+count_rep2 = read.table('../raw_data/expression/K562_rep2ReadsPerGene.out.tab')
+
+count_table = cbind(count_rep1[,4], rep2=count_rep2[,4])
+rownames(count_table) = count_rep1[,1]
+colnames(count_table) = c('rep1', 'rep2')
+exp = SummarizedExperiment(assays = list(counts=count_table[-(1:4), ]))
+dds = DESeqDataSet(exp, design= ~ 1)
+fpm = fpm(dds)
+fpm = log10(fpm + min(fpm[fpm!=0])/2)
+P$K562_fpm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpm))
+P$K562_fpm = rowMeans(fpm[g_match,])
+
+```
+
+### genomic ranges and links between data types.
+
+```{r, fig.width=10, fig.height=10}
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              ensembl_gene_id=P$ensembl_gene_id,
+                                              ensembl_transcript_id=P$ensembl_transcript_id),
+                                              keep.extra.columns=TRUE) 
+
+chrom_gr = import.bed('../../../data/tracks/hg19/wgEncodeBroadHmmK562HMM.bed')
+COL_chromatin = unique(data.frame(chrom_gr)[,c('name', 'itemRgb')])
+COL_chrom = COL_chromatin[,2]
+
+names(COL_chrom) = COL_chromatin[,1]
+
+tss_gr = gene_gr
+ranges(tss_gr) = IRanges(gene_gr$tss - 1000 * as.numeric(strand(gene_gr)=='-'),
+                         gene_gr$tss + 1000 * as.numeric(strand(gene_gr)=='+'))
+
+P$chrom_hmm = chrom_gr[nearest(tss_gr, chrom_gr)]$name
+
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=chrom_hmm, fill=chrom_hmm)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between chromatin states\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) + 
+                                scale_fill_manual(values=COL_chrom) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+
+subc = import.bed('../../../data/tracks/hg19/GSE63525_GM12878_subcompartments.bed')
+h = findOverlaps(gene_gr, subc)
+P$subcompartment = NA
+P$subcompartment[from(h)] = subc[to(h)]$name
+
+comp_border_dist = rowMin(cbind(start(tss_gr[from(h)])-start(subc[to(h)]),
+                                end(subc[to(h)]) - end(tss_gr[from(h)])))
+
+comp_rel_pos = comp_border_dist / width(subc[to(h)])
+
+P$comp_border_dist = P$comp_rel_pos = NaN
+
+P$comp_border_dist[from(h)] = comp_border_dist
+P$comp_rel_pos[from(h)] = comp_rel_pos
+
+COL_compartment = unique(data.frame(subc)[,c('name', 'itemRgb')])
+COL_comp = COL_compartment[,2]
+names(COL_comp) = COL_compartment[,1]
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = P[which(P$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=subcompartment, fill=subcompartment)) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between GM12878 Hi-C subcompartments\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                scale_fill_manual(values=COL_comp) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_lad = P[P$LAD==1,]
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_lad, aes(color=subcompartment)) +
+    scale_color_manual(values=COL_comp)
+
+ggplot(p_lad, aes(x=subcompartment, y=SuRE, color=subcompartment)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(0.8), alpha=0.3) +
+    scale_color_manual(values=COL_comp)
+
+ggplot(p_lad, aes(x=subcompartment, y=GROcap, color=subcompartment)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(0.8), alpha=0.3) +
+    scale_color_manual(values=COL_comp)
+
+ggplot(P, aes(x=subcompartment, y=GROcap, color=subcompartment)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(0.8), alpha=0.3) +
+    scale_color_manual(values=COL_comp)
+
+ggplot(P, aes(x=class, y=log2(comp_border_dist), color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(0.8), alpha=0.3) +
+    scale_color_manual(values=COL_class)
+
+ggplot(P, aes(x=class, y=comp_rel_pos, color=class)) + 
+    geom_violin(alpha=0.3) + 
+    geom_point(position=position_jitter(0.8), alpha=0.3) +
+    scale_color_manual(values=COL_class) +
+    ylim(0,0.5)
+
+
+rep_mask = import.bed('../../../data/tracks/hg19/repeatMasker_hg19_fa_out_20140131.bed')
+h_rep = findOverlaps(tss_gr, rep_mask)
+
+rep_table = cbind.data.frame(P[from(h_rep),c('name','class')],
+                             rep_name=rep_mask[to(h_rep)]$name)
+rep_table$rep_family = unlist(lapply(as.character(rep_table$rep_name), function(x){strsplit(x,'[|]')[[1]][1]}))
+rep_table$rep_class = unlist(lapply(as.character(rep_table$rep_family), function(x){strsplit(x,'/')[[1]][1]}))
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = rep_table[which(rep_table$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=factor(rep_family), fill=factor(rep_family))) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between GM12878 Hi-C subcompartments\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = rep_table[which(rep_table$class==class),]
+    n = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=factor(rep_class), fill=factor(rep_class))) + 
+                                geom_bar(aes(y = (..count..)/sum(..count..))) +
+                                scale_y_continuous(labels=percent, limits=c(0,1)) +
+                                ggtitle(paste("ratio between GM12878 Hi-C subcompartments\n", class, n)) +
+                                geom_text(aes(y = ((..count..)/sum(..count..)), 
+                                              label = paste0('n=',..count..)), 
+                                          stat = "count", vjust = -0.25) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+
+
+```
+**conclusion:**
+
+Promoters of our not repressed group are also flagged as active in the chromatin HMM's. There seems to be no big difference in subcompartments defined by Hi-C. Maybe because this was defined in a different cell-type (GM12878).
+
+## Pausing index
+
+Let's look at paused promoters.
+For now let's use the definition of http://doi.org/doi:10.1186/s13059-016-0984-2.
+Here they identify a paused promoter you could compare POL2 at TSS region (TSSR, –50 to +300 bp around TSS) to that in the gene body (TSS + 300 bp to +3 kb past the annotated transcriptional end site (TES).
+
+PI = (count(TSSR)/length(TSSR))/(count(gene body)/length(gene body))
+
+```{r, fig.width=10, fig.height=10}
+
+TSSR_gr = gene_gr
+p_match = match(TSSR_gr$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = P[p_match, 'tss'] - ifelse(P[p_match, 'strand']=='+',50,300)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[p_match, 'tss'] + ifelse(P[p_match, 'strand']=='+',300,50)
+ranges(TSSR_gr) = IRanges(P_start, P_end)
+
+
+
+body_gr = gene_gr
+p_match = match(body_gr$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = ifelse(P[p_match, 'strand']=='+', P[p_match, 'tss'] + 300,
+                                P[p_match, 'txStart'] - 3000)
+P_start = ifelse(P_start<1,1,P_start)
+P_end = ifelse(P[p_match, 'strand']=='+', P[p_match, 'txEnd'] + 3000,
+                                P[p_match, 'tss'] - 300)
+ranges(body_gr) = IRanges(P_start, P_end)
+
+export.bed(TSSR_gr, '../raw_data/tssr.bed')
+export.bed(body_gr, '../raw_data/gene_body.bed')
+
+```
+
+
+```shell
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDM.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2A_rep1_ENCFF000QDM.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDN.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2A_rep2_ENCFF000QDN.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDM.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2A_rep1_ENCFF000QDM.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDN.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2A_rep2_ENCFF000QDN.count.txt &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2A_ctrl1_ENCFF235CSW.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2A_ctrl1_ENCFF235CSW.count.txt &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2A_ctrl2_ENCFF750MIM.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2A_ctrl2_ENCFF750MIM.count.txt &
+
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YWZ.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS2_rep1_ENCFF000YWZ.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YXA.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS2_rep2_ENCFF000YXA.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YWZ.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS2_rep1_ENCFF000YWZ.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000YXA.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS2_rep2_ENCFF000YXA.count.txt &
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF710NTS.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS2_ctrl_ENCFF710NTS.count.txt &
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF710NTS.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS2_ctrl_ENCFF710NTS.count.txt &
+
+
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDB.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS5_rep1_ENCFF000QDB.count.txt
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDE.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS5_rep2_ENCFF000QDE.count.txt
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDB.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS5_rep1_ENCFF000QDB.count.txt
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF000QDE.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS5_rep2_ENCFF000QDE.count.txt
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS5_ctrl1_ENCFF750MIM.count.txt
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF750MIM.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS5_ctrl1_ENCFF750MIM.count.txt
+
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/tssr.bed > \
+                  raw_data/tssr_POL2AphosphoS5_ctrl2_ENCFF235CSW.count.txt
+nice -19 bedtools coverage -counts \
+                  -abam ~/data/tracks/hg19/ENCFF235CSW.bam \
+                  -b raw_data/gene_body.bed > \
+                  raw_data/gene_body_POL2AphosphoS5_ctrl2_ENCFF235CSW.count.txt
+
+
+
+```
+
+```{r, fig.width=10, fig.height=10}
+
+count_file_vec = list.files('../raw_data/',pattern='POL2')
+
+count_list = lapply(count_file_vec, function(x){
+        gr = import.bed(paste0('../raw_data/', x))
+        score(gr) = start(gr$thick) / width(gr)
+        return(gr)
+    })
+name_list = lapply(strsplit(count_file_vec, '_'), function(x){
+    if (x[1]=='gene'){
+        r = paste(x[2:4], collapse='_')
+    } else {
+        r = paste(x[1:3], collapse='_')
+    }
+    return(r)
+})
+names(count_list) = unlist(name_list)
+
+
+score_table = do.call(cbind,lapply(count_list,function(x){score(x)}))
+
+tssr_POL2A = rowMeans(score_table[,c('tssr_POL2A_rep1', 'tssr_POL2A_rep2')]) /
+             rowMeans(score_table[,c('tssr_POL2A_ctrl1', 'tssr_POL2A_ctrl2')])
+
+tssr_POL2AS2 = rowMeans(score_table[,c('tssr_POL2AphosphoS2_rep1',
+                                       'tssr_POL2AphosphoS2_rep2')]) /
+               score_table[,'tssr_POL2AphosphoS2_ctrl']
+
+tssr_POL2AS5 = rowMeans(score_table[,c('tssr_POL2AphosphoS5_rep1',
+                                       'tssr_POL2AphosphoS5_rep2')]) /
+               rowMeans(score_table[,c('tssr_POL2AphosphoS5_ctrl1',
+                                       'tssr_POL2AphosphoS5_ctrl2')])
+
+body_POL2A = rowMeans(score_table[,c('body_POL2A_rep1', 'body_POL2A_rep2')]) /
+             rowMeans(score_table[,c('body_POL2A_ctrl1', 'body_POL2A_ctrl2')])
+
+body_POL2AS2 = rowMeans(score_table[,c('body_POL2AphosphoS2_rep1',
+                                       'body_POL2AphosphoS2_rep2')]) /
+               score_table[,'body_POL2AphosphoS2_ctrl']
+
+body_POL2AS5 = rowMeans(score_table[,c('body_POL2AphosphoS5_rep1',
+                                       'body_POL2AphosphoS5_rep2')]) /
+               rowMeans(score_table[,c('body_POL2AphosphoS5_ctrl1',
+                                       'body_POL2AphosphoS5_ctrl2')])
+
+tssr_match = match(paste(seqnames(TSSR_gr), start(TSSR_gr),end(TSSR_gr)),
+                   paste(seqnames(count_list[['tssr_POL2A_rep1']]), start(count_list[['tssr_POL2A_rep1']]),end(count_list[['tssr_POL2A_rep1']])))
+
+body_match = match(paste(seqnames(body_gr), start(body_gr),end(body_gr)),
+                   paste(seqnames(count_list[['body_POL2A_rep1']]), start(count_list[['body_POL2A_rep1']]),end(count_list[['body_POL2A_rep1']])))
+
+P$tssr_POL2A = tssr_POL2A[tssr_match]
+P$tssr_POL2AS2 = tssr_POL2AS2[tssr_match]
+P$tssr_POL2AS5 = tssr_POL2AS5[tssr_match]
+P$body_POL2A = body_POL2A[body_match]
+P$body_POL2AS2 = body_POL2AS2[body_match]
+P$body_POL2AS5 = body_POL2AS5[body_match]
+P$PI_POL2A = P$tssr_POL2A / P$body_POL2A
+P$PI_POL2AS2 = P$tssr_POL2AS2 / P$body_POL2AS2
+P$PI_POL2AS5 = P$tssr_POL2AS5 / P$body_POL2AS5
+P$PI_POL2AS2vs5 = P$tssr_POL2AS5 / P$body_POL2AS2
+P$body_POL2AS2vsAll = P$body_POL2AS2 / P$body_POL2A
+P$tssr_POL2AS5vsAll = P$tssr_POL2AS5 / P$tssr_POL2A
+
+
+## pausing index calculation
+P[p_match, 'pi_rep2'] = tssr_rpb / body_rpb
+
+ggplot(P, aes(x=log2(tssr_POL2A),y=log2(tssr_POL2AS5))) +
+    geom_point(size=0.1) +
+    geom_point(data=P[ P$class %in% c('not_repressed','repressed','inactive'),],
+               aes(x=log2(tssr_POL2A), y=log2(tssr_POL2AS5), color=class)) + 
+    scale_color_manual(values=COL)
+
+ggplot(P, aes(x=log2(PI_POL2A),y=log2(PI_POL2AS5))) +
+    geom_point(size=0.1) +
+    geom_point(data=P[ P$class %in% c('not_repressed','repressed','inactive'),],
+               aes(x=log2(PI_POL2A), y=log2(PI_POL2AS5), color=class)) + 
+    scale_color_manual(values=COL)
+
+
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+#color vector for plotting:
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_lad = P[P$LAD==1,]
+ggplot(P, aes(x=log2(tssr_POL2A), y=log2(body_POL2A))) + 
+    geom_point(size=0.3,color=COLi) + 
+    geom_point(data=p_lad, aes(color=class), size=0.6) +
+    scale_color_manual(values=COL_class)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(tssr_POL2A))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=ifelse(LAD==1,'LAD','iLAD'))) +
+        labs(color='LAD state')
+
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(tssr_POL2A))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=ifelse(LAD==1,'LAD','iLAD'))) +
+        labs(color='LAD state')
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(tssr_POL2A))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(tssr_POL2A))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(body_POL2A))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(body_POL2A))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(PI_POL2A))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(PI_POL2A))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(tssr_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(tssr_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(body_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(body_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(PI_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(PI_POL2AS2))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(tssr_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(tssr_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(body_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(body_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(PI_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(PI_POL2AS5))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(PI_POL2AS2vs5))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(PI_POL2AS2vs5))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(body_POL2AS2vsAll))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(body_POL2AS2vsAll))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(tssr_POL2AS5vsAll))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(tssr_POL2AS5vsAll))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+```
+
+**conclusion:**
+For the same amount of expression, there seems to be less POL2 measured in the gene body. This could simply be because of a bias in the ChIP that selects for 'open' regions as opposed to more compacted regions. But this should be at least partly be composated by using the control experiments.
+
+
+
+```{r, fig.width=10, fig.height=10}
+h3k9_tssr = read.table('../raw_data/H3K9me1_tssr.txt.gz')
+h3k9_body = read.table('../raw_data/H3K9me1_gene_body.txt.gz')
+
+colnames(h3k9_tssr) = colnames(h3k9_body) = c('seqnames', 'start', 'end', 'length',
+                                                   'count', 'min', 'max', 'mean',
+                                                   'median')
+
+
+tssr_match = match(paste(seqnames(TSSR_gr), start(TSSR_gr),end(TSSR_gr)),
+                   paste(h3k9_tssr$seqnames, h3k9_tssr$start + 1, h3k9_tssr$end))
+body_match = match(paste(seqnames(body_gr), start(body_gr),end(body_gr)),
+                   paste(h3k9_body$seqnames, h3k9_body$start + 1, h3k9_body$end))
+
+
+## pausing index calculation
+P$H3K9me1_tssr_mean = NaN
+P$H3K9me1_tssr_median = NaN
+P$H3K9me1_tssr_max = NaN
+P$H3K9me1_body_mean = NaN
+P$H3K9me1_body_median = NaN
+P$H3K9me1_body_max = NaN
+
+P[p_match, c('H3K9me1_tssr_mean', 'H3K9me1_tssr_median','H3K9me1_tssr_max' )] = h3k9_tssr[tssr_match,c('mean', 'median', 'max')]
+P[p_match, c('H3K9me1_body_mean', 'H3K9me1_body_median','H3K9me1_body_max')] = h3k9_body[body_match,c('mean', 'median', 'max')]
+
+p_lad = P[P$LAD==1,]
+
+p1 = ggplot(P, aes(x=SuRE, y=log2(H3K9me1_body_max))) + 
+        geom_point(size=0.3,color=COLi) +
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+
+p2 = ggplot(P, aes(x=GROcap, y=log2(H3K9me1_body_max))) + 
+        geom_point(size=0.3,color=COLi) + 
+        geom_point(data=p_lad, color=COL_lad[1], size=0.3) +
+        geom_smooth(data=P[P$class!='inactive',],aes(color=class)) +
+        labs(color='LAD state') +
+        scale_color_manual(values=COL_class)
+grid.arrange(p1,p2)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+pol2_chia = import.bed('/media/Data/www/htdocs/JBrowse-hg19/ENCFF001THW.bed')
+
+P$connections = countOverlaps(tss_gr, pol2_chia)
+
+ggplot(P, aes(x=connections, color=class)) + geom_density() + scale_color_manual(values=COL_class)
+```
+
+
+```{r, fig.width=10, fig.height=10, comment=NA}
+tfbs = import.bed('../wgEncodeRegTfbsClusteredV3.bed4')
+h_tfbs = findOverlaps(tss_gr, tfbs)
+tfbs_table = cbind.data.frame(P[from(h_tfbs), c('name', 'class')],
+                              tfbs=tfbs[to(h_tfbs)]$name)
+dim(tfbs_table)
+tfbs_table = unique(tfbs_table)
+dim(tfbs_table)
+
+## let there be at least a POLR2a signal in one of the cell types
+pol2_name_vec = tfbs_table[which(tfbs_table$tfbs=='POLR2A'),'name']
+pol2_tfbs_table = pol2_tfbs_table[pol2_tfbs_table$name %in% pol2_name_vec, ]
+
+## but now POLR2a is not usable anymore
+pol2_tfbs_table = pol2_tfbs_table[which(pol2_tfbs_table$tfbs!='POLR2A'),]
+class_table = unique(pol2_tfbs_table[,c('name','class')])
+
+count_table=table(pol2_tfbs_table[,c('class','tfbs')])
+rel_table = count_table/as.vector(table(class_table$class))
+drange = apply(rel_table,2,function(x){diff(range(x))})
+selection = names(drange)[order(drange, decreasing=T)[1:20]]
+
+selection_melt = melt(rel_table[,selection])
+selection_melt$class = factor(selection_melt$class, levels=c('iLAD', 'not_repressed',
+                                                             'repressed', 'inactive',
+                                                             'boundary'))
+ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+    geom_bar(stat='identity', position='dodge') +
+    guides(fill=F) + ylim(0,1) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=COL_class) 
+
+plot_list=list()
+dif_table = t(t(rel_table)/colSums(rel_table))
+for (class in c('not_repressed', 'repressed', 'inactive')){
+    selection = colnames(dif_table)[order(dif_table[class,], decreasing=T)[1:30]]
+    selection_melt = melt(rel_table[, selection])
+    n_lab = paste0('n = ', length(unique(selection$name)))
+    selection_melt$class = factor(selection_melt$class, levels=c('iLAD', 'not_repressed',
+                                                             'repressed', 'inactive',
+                                                             'boundary'))
+    plot_list[[class]] = ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+                                geom_bar(stat='identity', position='dodge') +
+                                ggtitle(paste(class, n_lab)) +
+                                guides(fill=F) + ylim(0,1) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+                                scale_fill_manual(values=COL_class) 
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+dif_vec = rel_table['not_repressed',] / colSums(rel_table[c('iLAD','not_repressed'),])
+selection = colnames(dif_table)[order(dif_vec, decreasing=T)[1:30]]
+selection_melt = melt(rel_table[, selection])
+selection_melt$class = factor(selection_melt$class, levels=c('iLAD', 'not_repressed',
+                                                         'repressed', 'inactive',
+                                                         'boundary'))
+p1 = ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+        geom_bar(stat='identity', position='dodge') +
+        guides(fill=F) + ylim(0,1) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_fill_manual(values=COL_class) 
+
+selection = colnames(dif_table)[order(dif_vec, decreasing=F)[1:30]]
+selection_melt = melt(rel_table[, selection])
+selection_melt$class = factor(selection_melt$class, levels=c('iLAD', 'not_repressed',
+                                                         'repressed', 'inactive',
+                                                         'boundary'))
+p2 = ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+        geom_bar(stat='identity', position='dodge') +
+        guides(fill=F) + ylim(0,1) +
+        theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+        scale_fill_manual(values=COL_class) 
+grid.arrange(p1, p2, ncol=1)
+
+count_table=table(pol2_tfbs_table[pol2_tfbs_table$class %in% c('not_repressed',
+                                                      'repressed',
+                                                      'inactive'),
+                             c('class','tfbs')])
+rel_table = count_table/as.vector(table(P[P$class %in% c('not_repressed',
+                                                                  'repressed',
+                                                                  'inactive'),
+                                          'class']))
+drange = apply(rel_table,2,function(x){diff(range(x))})
+selection = names(drange)[order(drange, decreasing=T)[1:20]]
+
+
+selection_melt = melt(rel_table[, selection])
+selection_melt$class = factor(selection_melt$class, levels=c('not_repressed',
+                                                             'repressed', 'inactive'))
+ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+    geom_bar(stat='identity', position='dodge') +
+    guides(fill=F) + ylim(0,1) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_fill_manual(values=COL_class) 
+
+plot_list=list()
+dif_table = t(t(rel_table)/colSums(rel_table))
+for (class in c('not_repressed', 'repressed', 'inactive')){
+    selection = colnames(dif_table)[order(dif_table[class,], decreasing=T)[1:30]]
+    selection_melt = melt(rel_table[, selection])
+    selection_melt$class = factor(selection_melt$class, levels=c('not_repressed',
+                                                                 'repressed', 'inactive'))
+    
+
+    plot_list[[class]] = ggplot(selection_melt, aes(x=tfbs, y=value, fill=class)) + 
+                                geom_bar(stat='identity', position='dodge') +
+                                ggtitle(class) +
+                                guides(fill=F) + ylim(0,1) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+                                scale_fill_manual(values=COL_class) 
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+count_table=table(pol2_tfbs_table[,c('class','tfbs')])
+rel_table = count_table/rowSums(count_table)
+rel_one = apply(rel_table,2,function(x){x/max(x)})
+drange = apply(rel_one,2,function(x){diff(range(x))})
+selection = names(drange)[order(drange, decreasing=T)[1:20]]
+
+selection_melt = melt(rel_one[,selection])
+selection_melt$class = factor(selection_melt$class, levels=c('iLAD', 'not_repressed',
+                                                             'repressed', 'inactive',
+                                                             'boundary'))
+
+subset = selection_melt[selection_melt$tfbs%in%selection[1:10],]
+subset$class = factor(subset$class)
+p1 = ggplot(subset, aes(x=tfbs, y=value + 0.00001, fill=class)) + 
+            geom_bar(stat='identity', position='dodge') +
+            guides(fill=F)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+            scale_fill_manual(values=COL_class) +
+            geom_text(aes(x=as.numeric(tfbs) + as.numeric(class)/5.5-0.5, y=value + 0.00001, label = class), angle=90, vjust = -0.25)
+
+subset = selection_melt[selection_melt$tfbs%in%selection[10:20],]
+p2 = ggplot(subset, aes(x=tfbs, y=value + 0.00001, fill=class)) + 
+            geom_bar(stat='identity', position='dodge') +
+            guides(fill=F)+
+            theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+            scale_fill_manual(values=COL_class) +
+            geom_text(aes(x=as.numeric(tfbs) + as.numeric(class)/5.5-9.5, y=value + 0.00001, label = class), angle=90, vjust = -0.25)
+grid.arrange(p1,p2,ncol=1)
+
+plot_list = list()
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    subset = selection_melt[which(selection_melt$class==class),]
+    n_lab = paste('n =', nrow(subset))
+    plot_list[[class]] = ggplot(subset, aes(x=tfbs, y=value, fill=class)) + 
+                                geom_bar(stat='identity', position='dodge') +
+                                ggtitle(paste(class, n_lab)) +
+                                guides(fill=F) + ylim(0,1) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+data(go.sets.hs)
+data(go.subs.hs)
+humanMart = useMart(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+bm_eg = getBM(attributes=c('entrezgene','hgnc_symbol'),
+              filters='hgnc_symbol', values=unique(tfbs$name), mart=humanMart)
+
+
+rel_table = count_table/as.vector(table(class_table$class))
+dif_table = t(t(rel_table)/colSums(rel_table))
+for (root in c('MF', 'BP', 'CC'))
+    for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+        stats = dif_table[class,]
+        names(stats) = bm_eg[colnames(dif_table)%in%bm_eg$hgnc_symbol,'entrezgene']
+        test = fgsea(go.sets.hs[go.subs.hs[[root]]],stats, nperm=1000)
+        test = test[test$size > 2]
+        go_list = aggregate(1:nrow(test), list(paste0(test$leadingEdge)), function(x){
+                subset = test[x,, drop=F]
+                subset = subset[subset$padj==max(subset$padj), ,drop=F]
+                if (nrow(subset) > 1){
+                    go = subset$pathway
+                    l = unlist(lapply(go.sets.hs[go], length))
+                    subset = subset[which(l==min(l))[1],]
+                }
+                return(subset)
+            })
+        subtest = data.frame(go_list$x, stringsAsFactors=F)
+        subtest = data.frame(pathway=unlist(subtest$pathway),
+                             pval=unlist(subtest$pval),
+                             padj=unlist(subtest$padj),
+                             ES=unlist(subtest$ES),
+                             size=unlist(subtest$size),
+                             stringsAsFactors=F)
+        
+        sign = subtest$ES>0
+        pos = subtest[which(sign),]
+        neg = subtest[-which(sign),]
+        subtest = rbind.data.frame(pos[order(pos$padj), ],
+                                   neg[order(neg$padj, decreasing=T), ])
+        n = nrow(subtest)
+        kable(subtest[c(1:10, (n-10):n),])
+
+    }
+}
+
+
+go_count = lapply(go.sets.hs[go.subs.hs$MF], function(x){length(which(x%in%bm_eg[,'entrezgene']))})
+go_count = do.call(c,go_count)
+go_count[order(go_count)]
+
+
+go_vec = c('GO:0000981', 'GO:0003705', 'GO:0001228', 'GO:0001047', 'GO:0070491', 'GO:0035257', 'GO:0033613', 'GO:0019213', 'GO:0032129', 'GO:0017136', 'GO:0008301', 'GO:0042054', 'GO:0004407', 'GO:0008134', 'GO:0003712', 'GO:0003713', 'GO:0003714', 'GO:0001104', 'GO:0051090', 'GO:0051091', 'GO:0010468', 'GO:0010629', 'GO:0010628', 'GO:0043425', 'GO:0031058', 'GO:2001252', 'GO:0031057', 'GO:2001252', 'GO:2001251', 'GO:0005669', 'GO:0000123', 'GO:0005719')
+
+prom_count = table(unique(tfbs_table[,c('name','class')])$class)
+count_table=table(tfbs_table[,c('class','tfbs')])
+rel_table = t(count_table/as.vector(prom_count))
+pdf('go_test.pdf')
+for (go_id in go_vec){
+    go_name = grep(go_id, names(go.sets.hs), value=T)
+
+    tf_vec = bm_eg[bm_eg$entrezgene%in%go.sets.hs[[go_name]],'hgnc_symbol']
+    rel_subset = rel_table[rownames(rel_table)%in%tf_vec,]
+    rel_subset = rel_subset[order(rel_subset[,'iLAD'], decreasing=T),]
+    plot_list = list()
+    for (i in seq(1,length(tf_vec)-1, 20)){
+        j = min(i+20, length(tf_vec))
+        d = data.frame(rel_subset[i:j,])
+        d$class = factor(d$class, levels=c('iLAD', 'not_repressed', 'repressed', 'inactive', 'boundary'))
+        name = as.character(i)
+        plot_list[[name]] = ggplot(d, aes(x=tfbs, y=Freq, fill=class)) + 
+                                geom_bar(stat='identity', position='dodge') +
+                                scale_fill_manual(values=COL_class) +
+                                theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    }
+    do.call(grid.arrange, c(plot_list, ncol=1, top = go_name))
+}
+
+
+for (go_id in go_vec){
+    go_name = grep(go_id, names(go.sets.hs), value=T)
+
+    tf_vec = bm_eg[bm_eg$entrezgene%in%go.sets.hs[[go_name]],'hgnc_symbol']
+    tfbs_subset = tfbs_table[tfbs_table$tfbs %in% tf_vec,]
+    tfbs_per_prom = ddply(tfbs_subset[,c('name', 'class')], .(name), function(x){return(cbind.data.frame(x[1,], count=nrow(x)))})
+    percent_table = ddply(tfbs_per_prom[,c('class', 'count')], .(class, count),
+                          function(x){
+                              percent = nrow(x) / as.numeric(prom_count[x[1,1]])
+                              return(c(percent=percent))})
+
+    grid.arrange(ggplot(percent_table, aes(x=count,y=as.numeric(percent), fill=class)) +
+        geom_bar(stat='identity',position='dodge') +
+        ggtitle(go_name) +
+        scale_fill_manual(values=COL_class))
+}
+dev.off()
+```
+
+
+
+
+
+## PROseq
+
+```shell
+bwtool ex -tabs bed raw_data/gene_body.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw raw_data/gene_body_proseq_plus.txt
+bwtool ex -tabs bed raw_data/gene_body.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw raw_data/gene_body_proseq_minus.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/gene_body_proseq_plus.txt > raw_data/gene_body_proseq_plus_sparse.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/gene_body_proseq_minus.txt > raw_data/gene_body_proseq_minus_sparse.txt
+```
+
+```r
+
+
+body_proseq_plus = readLines('../raw_data/gene_body_proseq_plus_sparse.txt')
+body_proseq_plus_split = strsplit(body_proseq_plus, '\t')
+i_list = lapply(seq(1, length(body_proseq_plus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=body_proseq_plus_split)
+
+j_list = lapply(seq(2, length(body_proseq_plus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=body_proseq_plus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(body_proseq_plus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=body_proseq_plus_split)
+val_vec = unlist(val_list)
+plus_matrix = sparseMatrix(i=i_vec[!is.na(i_vec)], j=j_vec[!is.na(i_vec)], x=val_vec[!is.na(val_vec)])
+
+location_list = lapply(seq(1, length(body_proseq_plus_split), 2),
+                       function(x, split){
+                          c(seqnames=split[[x]][1],
+                            start=as.numeric(split[[x]][2]),
+                            end=as.numeric(split[[x]][3]),
+                            strand=split[[x]][4],
+                            length=as.numeric(split[[x]][7]))
+                       }, split=body_proseq_plus_split)
+location_data = do.call(rbind.data.frame, location_list)
+colnames(location_data) = c('seqnames', 'start', 'end', 'strand', 'length')
+body_proseq_minus = readLines('../raw_data/gene_body_proseq_minus_sparse.txt')
+body_proseq_minus_split = strsplit(body_proseq_minus, '\t')
+i_list = lapply(seq(1, length(body_proseq_minus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=body_proseq_minus_split)
+
+j_list = lapply(seq(2, length(body_proseq_minus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=body_proseq_minus_split)
+
+i_vec = unlist(i_list)
+j_vec = unlist(j_list)
+
+val_list = lapply(seq(2, length(body_proseq_minus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=body_proseq_minus_split)
+val_vec = unlist(val_list)
+minus_matrix = sparseMatrix(i=i_vec[!is.na(i_vec)], j=j_vec[!is.na(i_vec)], x=val_vec[!is.na(val_vec)])
+save(minus_matrix, plus_matrix, location_data, file='../raw_data/gene_body_proseq.rdata')
+```
+
+```{r, fig.width=10, fig.height=10}
+# F_tss<-1000
+
+
+Egr.p = gene_gr
+egr.p_match = match(Egr.p$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = P[egr.p_match, 'tss'] - F_tss
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[egr.p_match, 'tss'] + F_tss
+ranges(Egr.p) = IRanges(P_start, P_end)
+export.bed(Egr.p, '../raw_data/prom_0.bed')
+```
+
+```shell
+bwtool ex -tabs bed raw_data/prom_22000.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw raw_data/prom_22000_proseq_plus.txt
+bwtool ex -tabs bed raw_data/prom_22000.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw raw_data/prom_22000_proseq_minus.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_22000_proseq_plus.txt > raw_data/prom_22000_proseq_plus_sparse.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_22000_proseq_minus.txt > raw_data/prom_22000_proseq_minus_sparse.txt
+
+bwtool ex -tabs bed raw_data/prom_0.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw raw_data/prom_0_proseq_plus.txt
+bwtool ex -tabs bed raw_data/prom_0.bed ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw raw_data/prom_0_proseq_minus.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_0_proseq_plus.txt > raw_data/prom_0_proseq_plus_sparse.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_0_proseq_minus.txt > raw_data/prom_0_proseq_minus_sparse.txt
+```
+
+
+
+
+
+```{r, fig.width=10, fig.height=10}
+
+library(Matrix)
+prom_22000_proseq_plus = readLines('../raw_data/prom_22000_proseq_plus_sparse.txt')
+prom_22000_proseq_plus_split = strsplit(prom_22000_proseq_plus, '\t')
+j_list = lapply(seq(1, length(prom_22000_proseq_plus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_proseq_plus_split)
+
+i_list = lapply(seq(2, length(prom_22000_proseq_plus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_proseq_plus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_proseq_plus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_proseq_plus_split)
+val_vec = unlist(val_list)
+plus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+
+location_list = lapply(seq(1, length(prom_22000_proseq_plus_split), 2),
+                       function(x, split){
+                          c(seqnames=split[[x]][1],
+                            start=as.numeric(split[[x]][2]),
+                            end=as.numeric(split[[x]][3]),
+                            strand=split[[x]][4],
+                            length=as.numeric(split[[x]][7]))
+                       }, split=prom_22000_proseq_plus_split)
+location_data = do.call(rbind.data.frame, location_list)
+colnames(location_data) = c('seqnames', 'start', 'end', 'strand', 'length')
+prom_22000_proseq_minus = readLines('../raw_data/prom_22000_proseq_minus_sparse.txt')
+prom_22000_proseq_minus_split = strsplit(prom_22000_proseq_minus, '\t')
+j_list = lapply(seq(1, length(prom_22000_proseq_minus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_proseq_minus_split)
+
+i_list = lapply(seq(2, length(prom_22000_proseq_minus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_proseq_minus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_proseq_minus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_proseq_minus_split)
+val_vec = unlist(val_list)
+minus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+save(minus_matrix, plus_matrix, location_data, file='../raw_data/prom_22000_proseq.rdata')
+```
+
+```{r, fig.width=10, fig.height=10}
+
+library(Matrix)
+prom_22000_proseq_plus = readLines('../raw_data/prom_22000_proseq_plus_sparse.txt')
+prom_22000_proseq_plus_split = strsplit(prom_22000_proseq_plus, '\t')
+j_list = lapply(seq(1, length(prom_22000_proseq_plus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_proseq_plus_split)
+
+i_list = lapply(seq(2, length(prom_22000_proseq_plus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_proseq_plus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_proseq_plus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_proseq_plus_split)
+val_vec = unlist(val_list)
+plus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+
+location_list = lapply(seq(1, length(prom_22000_proseq_plus_split), 2),
+                       function(x, split){
+                          c(seqnames=split[[x]][1],
+                            start=as.numeric(split[[x]][2]),
+                            end=as.numeric(split[[x]][3]),
+                            strand=split[[x]][4],
+                            length=as.numeric(split[[x]][7]))
+                       }, split=prom_22000_proseq_plus_split)
+location_data = do.call(rbind.data.frame, location_list)
+colnames(location_data) = c('seqnames', 'start', 'end', 'strand', 'length')
+prom_22000_proseq_minus = readLines('../raw_data/prom_22000_proseq_minus_sparse.txt')
+prom_22000_proseq_minus_split = strsplit(prom_22000_proseq_minus, '\t')
+j_list = lapply(seq(1, length(prom_22000_proseq_minus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_proseq_minus_split)
+
+i_list = lapply(seq(2, length(prom_22000_proseq_minus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_proseq_minus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_proseq_minus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_proseq_minus_split)
+val_vec = unlist(val_list)
+minus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+save(minus_matrix, plus_matrix, location_data, file='../raw_data/prom_22000_proseq.rdata')
+```
+
+
+
+```{r, fig.width=10, fig.height=10}
+load('../raw_data/prom_22000_proseq.rdata')
+
+
+
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[egr.p_match, 'class']==i)
+    s = sample(s, 129, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[egr.p_match, 'class']==i)
+    s = sample(s, 129, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    plus = plus[,21000:23001]
+    mean_list = lapply(seq(1,2001), function(x){
+                           c(x, sum(plus[,x])/length(s)*10)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 1000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-1000,1001)*0.9,ylim=c(0,200),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-1000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+ par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {s = which(P[egr.p_match, 'class']==i)
+    s = sample(s, 129, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+s_not_repressed = which(P[egr.p_match, 'class']=='not_repressed')
+gro_order = order(P[egr.p_match,'GROcap'])
+gro_not_repressed = which(gro_order %in% s_not_repressed)
+
+gro_ilad = gro_order[c(gro_not_repressed + 1, gro_not_repressed - 1)]
+s_ilad = gro_ilad[P[egr.p_match,'class'][gro_ilad] == 'iLAD']
+
+s_list = list(iLAD=s_ilad, not_repressed=s_not_repressed)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[,i]
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+P$tss_proseq = P$body_proseq = NaN
+strand = P[egr.p_match,'strand']
+P[egr.p_match[which(strand=='+')], 'tss_proseq'] = rowSums(as.matrix(plus_matrix[which(strand=='+'),22000:22100]))
+P[egr.p_match[which(strand=='-')], 'tss_proseq'] = rowSums(as.matrix(minus_matrix[which(strand=='-'),22000:22100])) * -1
+
+
+P[egr.p_match[which(strand=='+')], 'body_proseq'] = rowSums(as.matrix(plus_matrix[which(strand=='+'),22100:24001]))
+P[egr.p_match[which(strand=='-')], 'body_proseq'] = rowSums(as.matrix(minus_matrix[which(strand=='-'),22100:24001])) * -1
+
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=log10(tss_proseq))) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) +
+    scale_color_manual(values=COL_class)
+
+
+p_lad = P[P$LAD==1,]
+ggplot(P, aes(x=SuRE, y=log10(tss_proseq))) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_lad, aes(color=ifelse(LAD==1, 'LAD', 'iLAD')), size=0.6) +
+    scale_color_manual(values=COL_lad)
+
+p_active = P[egr.p_match,]
+plus_active = plus_matrix[p_active$class%in%c('not_repressed', 'iLAD'), ]
+minus_active = minus_matrix[p_active$class%in%c('not_repressed', 'iLAD'), ]
+p_active = p_active[p_active$class%in%c('not_repressed', 'iLAD'), ]
+# plus_active = plus_matrix[p_active$distance.to.previous.tss > 1000, ]
+# p_active = p_active[p_active$distance.to.previous.tss > 1000,]
+s_not_repressed = which(p_active$class=='not_repressed')
+pro_order = order(p_active$tss_proseq)
+pro_not_repressed = which(pro_order %in% s_not_repressed)
+
+pro_ilad = pro_order[c(pro_not_repressed + 1, pro_not_repressed - 1)]
+s_ilad = pro_ilad[p_active[pro_ilad,'class'] == 'iLAD']
+
+s_list = list(iLAD=s_ilad, not_repressed=s_not_repressed)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_active[s, 'strand']
+
+    plus = rbind(plus_active[s[which(strand=='+')], ],
+                 minus_active[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,400),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_active[s, 'strand']
+    minus = rbind(plus_active[s[which(strand=='-')], ] * -1,
+                  minus_active[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+
+```
+
+
+```{r}
+
+
+p_active = P[egr.p_match,]
+p_active = p_active[p_active$class%in%c('not_repressed', 'iLAD'), ]
+s_not_repressed = which(p_active$class=='not_repressed')
+pro_order = order(p_active$tss_proseq)
+pro_not_repressed = which(pro_order %in% s_not_repressed)
+
+pro_ilad = pro_order[c(pro_not_repressed + 1, pro_not_repressed - 1)]
+s_ilad = pro_ilad[p_active[pro_ilad,'class'] == 'iLAD']
+
+pro_norm_exp = p_active[c(s_ilad, s_not_repressed),]
+
+ggplot(pro_norm_exp, aes(y=K562_fpm, x=log10(tss_proseq), color=class)) +  geom_point(alpha=0.3) + scale_colour_manual(values=COL_class) + geom_smooth()
+
+ggplot(p_active, aes(y=K562_fpm, x=log10(tss_proseq), color=class)) +  geom_point(alpha=0.3) + scale_colour_manual(values=COL_class) + geom_smooth()
+
+ggplot(P[egr.p_match,], aes(y=K562_fpm, x=log10(tss_proseq), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+
+ggplot(P, aes(y=K562_fpm, x=GROcap, color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+
+ggplot(P, aes(y=K562_fpm, x=GROcap, color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+ggplot(P, aes(y=K562_fpm, x=log10(tssr_POL2A), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+ggplot(P, aes(y=K562_fpm, x=log10(body_POL2A), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+ggplot(P, aes(y=K562_fpm, x=log10(tssr_POL2AS5), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+ggplot(P, aes(y=K562_fpm, x=log10(tssr_POL2AS2), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+ggplot(P, aes(y=K562_fpm, x=log10(body_POL2AS2), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+ggplot(P, aes(y=K562_fpm, x=log10(body_proseq), color=ifelse(LAD==1, 'LAD', 'iLAD'))) +  geom_point(aes(cex=0.3+LAD*0.3), alpha=0.8, size=0.3) + scale_colour_manual(values=COL_lad) + geom_smooth()
+
+
+
+```
+
+
+
+```shell
+bwtool ex -tabs bed raw_data/prom_22000.bed ~/data/tracks/hg19/GSM1480325_K562_GROseq_plus.bigWig raw_data/prom_22000_groseq_plus.txt
+bwtool ex -tabs bed raw_data/prom_22000.bed ~/data/tracks/hg19/GSM1480325_K562_GROseq_minus.bigWig raw_data/prom_22000_groseq_minus.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_22000_groseq_plus.txt > raw_data/prom_22000_groseq_plus_sparse.txt
+
+
+awk '{
+    start="";
+    valLine="";
+    iLine="";
+    for (i=1;i<=7;i++){
+        start= start $(i) "\t"
+    } 
+    for(i=8;i<=NF;i++){
+        if ($(i)!="NA"){
+            iLine=iLine (i-7) "\t";
+            valLine=valLine $(i) "\t"
+        }
+    }
+    print start iLine;
+    print start valLine
+}' raw_data/prom_22000_groseq_minus.txt > raw_data/prom_22000_groseq_minus_sparse.txt
+```
+
+
+```{r, fig.width=10, fig.height=10}
+F_tss<-22000
+
+
+Egr.p = gene_gr[width(gene_gr)>F_tss]
+egr.p_match = match(Egr.p$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = P[egr.p_match, 'tss'] - F_tss
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[egr.p_match, 'tss'] + F_tss
+ranges(Egr.p) = IRanges(P_start, P_end)
+export.bed(Egr.p, '../raw_data/prom_22000.bed')
+```
+
+
+
+```{r, fig.width=10, fig.height=10}
+
+library(Matrix)
+prom_22000_groseq_plus = readLines('../raw_data/prom_22000_groseq_plus_sparse.txt')
+prom_22000_groseq_plus_split = strsplit(prom_22000_groseq_plus, '\t')
+j_list = lapply(seq(1, length(prom_22000_groseq_plus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_groseq_plus_split)
+
+i_list = lapply(seq(2, length(prom_22000_groseq_plus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_groseq_plus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_groseq_plus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_groseq_plus_split)
+val_vec = unlist(val_list)
+plus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+
+location_list = lapply(seq(1, length(prom_22000_groseq_plus_split), 2),
+                       function(x, split){
+                          c(seqnames=split[[x]][1],
+                            start=as.numeric(split[[x]][2]),
+                            end=as.numeric(split[[x]][3]),
+                            strand=split[[x]][4],
+                            length=as.numeric(split[[x]][7]))
+                       }, split=prom_22000_groseq_plus_split)
+location_data = do.call(rbind.data.frame, location_list)
+colnames(location_data) = c('seqnames', 'start', 'end', 'strand', 'length')
+prom_22000_groseq_minus = readLines('../raw_data/prom_22000_groseq_minus_sparse.txt')
+prom_22000_groseq_minus_split = strsplit(prom_22000_groseq_minus, '\t')
+j_list = lapply(seq(1, length(prom_22000_groseq_minus_split), 2),
+                function(x, split){
+                    as.numeric(split[[x]][8:length(split[[x]])])
+                }, split=prom_22000_groseq_minus_split)
+
+i_list = lapply(seq(2, length(prom_22000_groseq_minus_split), 2),
+                function(x, split){
+                    rep(x/2, length(split[[x]][8:length(split[[x]])]))
+                }, split=prom_22000_groseq_minus_split)
+
+j_vec = unlist(j_list)
+i_vec = unlist(i_list)
+
+val_list = lapply(seq(2, length(prom_22000_groseq_minus_split), 2), 
+                  function(x, split){
+                      as.numeric(split[[x]][8:length(split[[x]])])
+                  }, split=prom_22000_groseq_minus_split)
+val_vec = unlist(val_list)
+minus_matrix = sparseMatrix(i=i_vec[!is.na(j_vec)], j=j_vec[!is.na(j_vec)], x=val_vec[!is.na(val_vec)])
+save(minus_matrix, plus_matrix, location_data, file='../raw_data/prom_22000_groseq.rdata')
+```
+
+
+
+```{r, fig.width=10, fig.height=10}
+load('../raw_data/prom_22000_groseq.rdata')
+#plot:
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {s = which(P[egr.p_match, 'class']==i)
+    plus = plus_matrix[s,]
+    subPOS = plus@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #determine runmed k:
+    wsize<-floor(length(subPOS)/50) #2% of all datapoints in the set
+    if(!wsize %% 2) {wsize<-wsize+1} #must be odd
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(subPOS, runmean(Rle(subVAL) , endrule='constant', k=wsize) * 100, col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {
+
+    s = which(P[egr.p_match, 'class']==i)
+    s = sample(s, 129, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,500), function(x){
+                           c(x+250, sum(plus[,x:(x+500)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+ par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {s = which(P[egr.p_match, 'class']==i)
+    s = sample(s, 129, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43801,500), function(x){
+                           c(x+250, sum(minus[,x:(x+500)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+s_not_repressed = which(P[egr.p_match, 'class']=='not_repressed')
+gro_order = order(P[egr.p_match,'GROcap'])
+gro_not_repressed = which(gro_order %in% s_not_repressed)
+
+gro_ilad = gro_order[c(gro_not_repressed + 1, gro_not_repressed - 1)]
+s_ilad = gro_ilad[P[egr.p_match,'class'][gro_ilad] == 'iLAD']
+
+s_matrix = cbind(iLAD=s_ilad, not_repressed=s_not_repressed)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_matrix[,i]
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43801,500), function(x){
+                           c(x+250, sum(plus[,x:(x+500)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_matrix[,i]
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43801,500), function(x){
+                           c(x+250, sum(minus[,x:(x+500)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+```
+
+```{r}
+
+count_rep1 = read.table('../raw_data/expression/K562_rep1ReadsPerGene.out.tab')
+count_rep2 = read.table('../raw_data/expression/K562_rep2ReadsPerGene.out.tab')
+
+count_table = cbind(count_rep1[,4], rep2=count_rep2[,4])
+rownames(count_table) = count_rep1[,1]
+colnames(count_table) = c('rep1', 'rep2')
+
+gff_ranges = import.gff('../../../data/GRCh37/Homo_sapiens.GRCh37.85.gff3')
+## let's focus on genes located on actual chromosomes
+gff_ranges = gff_ranges[seqnames(gff_ranges) %in% seqlevels(gff_ranges)[1:25]]
+seqlevels(gff_ranges) = paste0('chr',seqlevels(gff_ranges)[1:25])
+seqlevels(gff_ranges)[25] = 'chrM'
+
+ens_gene_ranges = gff_ranges[gff_ranges$gene_id %in% rownames(count_table)]
+exp = SummarizedExperiment(assays = list(counts=count_table[-(1:4), ]), rowRanges=ens_gene_ranges)
+dds = DESeqDataSet(exp, design= ~ 1)
+fpm = fpm(dds)
+fpm = log10(fpm + min(fpm[fpm!=0])/2)
+P$K562_fpm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpm))
+P$K562_fpm = rowMeans(fpm[g_match,])
+
+
+#then calculate running mean for iLAD promoters:
+P<-P[order(P$SuRE,sample(c(1:nrow(P)))),] #sort by SuRE and then random for ties
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), K562_fpm.lad=rep(NA,n), K562_fpm.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$K562_fpm.lad[i]<-mean(t$K562_fpm[t$LAD==1], na.rm=TRUE)
+   RM$K562_fpm.ilad[i]<-mean(t$K562_fpm[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$K562_fpm[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$K562_fpm[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS_rnaseq <- P$K562_fpm - approx(x=RM$SuRE.mean, y=RM$K562_fpm.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$K562_fpm< -0 #inactive
+NREP<- P$SuRE>0 & P$LRS_rnaseq> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS_rnaseq< -1 & P$LAD==1  & P$K562_fpm< 0 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$class_rnaseq<-NA
+P$class_rnaseq[P$LAD==0]<-"iLAD"
+P$class_rnaseq[INACT]<-"inactive"
+P$class_rnaseq[NREP]<-"not_repressed"
+P$class_rnaseq[REP]<-"repressed"
+P$class_rnaseq[BND] <- "boundary"
+
+
+COLi<-"#00BBFF11" #dot color for iLAD promoters
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+
+#color vector for plotting:
+COL_class<-c("#A020F0", "#FFA500", "#006400", "#7e7e7e", "#0077FF")
+names(COL_class)<-c("repressed", "not_repressed", "inactive", 'boundary', 'iLAD')
+
+ggplot(P, aes(x=SuRE, y=K562_fpm, color=ifelse(LAD==1, 'LAD', 'iLAD'))) +
+    geom_point(data=P[P$LAD==0, ], size=0.5, alpha=0.1) + 
+    geom_point(data=P[P$LAD==1, ], size=0.5, alpha=0.2) + 
+    geom_smooth() + scale_color_manual(values=COL_lad)
+
+
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = P[P$class_rnaseq %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=K562_fpm)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_rnaseq), size=0.6) +
+    scale_color_manual(values=COL_class)
+
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_classes = P[P$class_rnaseq %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=GROcap, y=K562_fpm)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class_rnaseq), size=0.6) +
+    scale_color_manual(values=COL_class)
+```
+
+```{r}
+
+#genes as Granges object
+gene_gr <-makeGRangesFromDataFrame(data.frame(seqnames=P$chr,
+                                              start=P$txStart,
+                                              end=P$txEnd,
+                                              strand=P$strand,
+                                              tss=P$tss,
+                                              ensembl_gene_id=P$ensembl_gene_id,
+                                              ensembl_transcript_id=P$ensembl_transcript_id),
+                                              keep.extra.columns=TRUE) 
+
+F_tss<-22000
+
+
+Egr.p = gene_gr[width(gene_gr)>F_tss]
+egr.p_match = match(Egr.p$ensembl_transcript_id, P$ensembl_transcript_id)
+P_start = P[egr.p_match, 'tss'] - F_tss
+P_start = ifelse(P_start<1,1,P_start)
+P_end = P[egr.p_match, 'tss'] + F_tss
+ranges(Egr.p) = IRanges(P_start, P_end)
+export.bed(Egr.p, '../raw_data/prom_22000.bed')
+
+load('../raw_data/prom_22000_proseq.rdata')
+
+
+
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[egr.p_match, 'class_rnaseq']==i)
+    s = sample(s, 121, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {
+    s = which(P[egr.p_match, 'class_rnaseq']==i)
+    s = sample(s, 121, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    plus = plus[,21000:23001]
+    mean_list = lapply(seq(1,2001), function(x){
+                           c(x, sum(plus[,x])/length(s)*10)
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 1000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-1000,1001)*0.9,ylim=c(0,200),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-1000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+ par(mfrow=c(1,4))
+for(i in c('iLAD', 'not_repressed', 'repressed', 'inactive')) #for the three gene classes
+   {s = which(P[egr.p_match, 'class_rnaseq']==i)
+    s = sample(s, 121, replace=F)
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+s_not_repressed = which(P[egr.p_match, 'class_rnaseq']=='not_repressed')
+gro_order = order(P[egr.p_match,'GROcap'])
+gro_not_repressed = which(gro_order %in% s_not_repressed)
+
+gro_ilad = gro_order[c(gro_not_repressed + 1, gro_not_repressed - 1)]
+s_ilad = gro_ilad[which(P[egr.p_match,'class_rnaseq'][gro_ilad] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, not_repressed=s_not_repressed)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = P[egr.p_match,'strand'][s]
+    plus = rbind(plus_matrix[s[which(strand=='+')], ],
+                 minus_matrix[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,300),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = P[egr.p_match,'strand'][s]
+    minus = rbind(plus_matrix[s[which(strand=='-')], ] * -1,
+                  minus_matrix[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+P$tss_proseq = P$body_proseq = NaN
+strand = P[egr.p_match,'strand']
+P[egr.p_match[which(strand=='+')], 'tss_proseq'] = rowSums(as.matrix(plus_matrix[which(strand=='+'),22000:22100]))
+P[egr.p_match[which(strand=='-')], 'tss_proseq'] = rowSums(as.matrix(minus_matrix[which(strand=='-'),22000:22100])) * -1
+
+
+P[egr.p_match[which(strand=='+')], 'body_proseq'] = rowSums(as.matrix(plus_matrix[which(strand=='+'),22100:24001]))
+P[egr.p_match[which(strand=='-')], 'body_proseq'] = rowSums(as.matrix(minus_matrix[which(strand=='-'),22100:24001])) * -1
+
+p_classes = P[P$class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=log10(tss_proseq))) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_classes, aes(color=class), size=0.6) +
+    scale_color_manual(values=COL_class)
+
+
+p_lad = P[P$LAD==1,]
+ggplot(P, aes(x=SuRE, y=log10(tss_proseq))) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_lad, aes(color=ifelse(LAD==1, 'LAD', 'iLAD')), size=0.6) +
+    scale_color_manual(values=COL_lad)
+
+p_active = P[egr.p_match,]
+plus_active = plus_matrix[p_active$class%in%c('not_repressed', 'iLAD'), ]
+minus_active = minus_matrix[p_active$class%in%c('not_repressed', 'iLAD'), ]
+p_active = p_active[p_active$class%in%c('not_repressed', 'iLAD'), ]
+# plus_active = plus_matrix[p_active$distance.to.previous.tss > 1000, ]
+# p_active = p_active[p_active$distance.to.previous.tss > 1000,]
+s_not_repressed = which(p_active$class=='not_repressed')
+pro_order = order(p_active$tss_proseq)
+pro_not_repressed = which(pro_order %in% s_not_repressed)
+
+pro_ilad = pro_order[c(pro_not_repressed + 1, pro_not_repressed - 1)]
+s_ilad = pro_ilad[which(p_active[pro_ilad,'class_rnaseq'] == 'iLAD')]
+
+s_list = list(iLAD=s_ilad, not_repressed=s_not_repressed)
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_active[s, 'strand']
+
+    plus = rbind(plus_active[s[which(strand=='+')], ],
+                 minus_active[s[which(strand=='-')],] * -1)
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(plus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(plus)@i - 22000
+    subVAL = plus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(0,400),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+par(mfrow=c(1,2))
+for(i in c('iLAD', 'not_repressed')) #for the three gene classes
+   {s = s_list[[i]]
+    strand = p_active[s, 'strand']
+    minus = rbind(plus_active[s[which(strand=='-')], ] * -1,
+                  minus_active[s[which(strand=='+')],])
+    mean_list = lapply(seq(1,43901,100), function(x){
+                           c(x+50, sum(minus[,x:(x+100)])/length(s))
+                       })
+    mean = do.call(rbind.data.frame, mean_list)
+    subPOS = t(minus)@i - 22000
+    subVAL = minus@x
+    o = order(subPOS)
+    subPOS = subPOS[o]
+    subVAL = subVAL[o]
+    #plot:
+    plot(subPOS, subVAL, pch=".", col="#00000033", xlim=c(-F_tss,F_tss)*0.9,ylim=c(-300,0),
+         main=paste(i, length(s), sep=" "), xlab="position relative to gene start (bp)", ylab="DamID logratio")
+    lines(mean[,1]-22000, mean[,2], col=COL_class[i], lwd=2)
+    abline(v=0, lty="dotted")
+}
+
+
+P$fpm_grocap_ratio = log10((10^P$K562_fpm / sum(10^P$K562_fpm, na.rm=T)) /
+                         (10^P$GROcap / sum(10^P$GROcap, na.rm=T)))
+
+
+
+P$fpm_cage_ratio = log10((10^P$K562_fpm / sum(10^P$K562_fpm, na.rm=T)) /
+                         (10^P$CAGE / sum(10^P$CAGE, na.rm=T)))
+P$fpm_tssr_POL2AS_ratio = log10((10^P$K562_fpm / sum(10^P$K562_fpm, na.rm=T)) /
+                                (P$tssr_POL2A / sum(P$tssr_POL2A, na.rm=T)))
+P$fpm_tssr_POL2AS5_ratio = log10((10^P$K562_fpm / sum(10^P$K562_fpm, na.rm=T)) /
+                                 (P$tssr_POL2AS5 / sum(P$tssr_POL2AS5, na.rm=T)))
+
+ggplot(P,aes(y=fpm_grocap_ratio,x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+
+ggplot(P,aes(y=fpm_cage_ratio,x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_tssr_POL2AS5_ratio,x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_tssr_POL2AS_ratio,x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+```
+**conclusions:**
+
+bias in cage data???
+
+
+
+
+nice -19 bwtool summary -with-sum -skip-median -header \
+                  raw_data/tssr.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw \
+                  raw_data/tssr_PROseq_plus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header \
+                  raw_data/tssr.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw \
+                  raw_data/tssr_PROseq_minus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header \
+                  raw_data/gene_body.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_plus.bw \
+                  raw_data/gene_body_PROseq_plus.count.txt &
+nice -19 bwtool summary -with-sum -skip-median -header \
+                  raw_data/gene_body.bed \
+                  ~/data/tracks/hg19/GSM1480327_K562_PROseq_minus.bw \
+                  raw_data/gene_body_PROseq_minus.count.txt &
+
+
+```{r}
+
+tssr_proseq = read.table('../raw_data/tssr_PROseq_plus.count.txt')
+body_proseq = read.table('../raw_data/gene_body_PROseq_plus.count.txt')
+colnames(tssr_proseq) = colnames(body_proseq) = c('chrom', 'start', 'end', 'size', 'num_data', 'min', 'max', 'mean', 'sum')
+
+P$tssr_proseq = log10(tssr_proseq$sum / tssr_proseq$size)
+P$body_proseq = log10(body_proseq$sum / body_proseq$size)
+
+
+ggplot(P,aes(y=tssr_proseq,x=body_proseq, color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+
+ggplot(P,aes(y=body_proseq,x=GROcap, color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=tssr_proseq,x=CAGE, color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=log10(10^K562_fpm/10^tssr_proseq),x=tssr_proseq, color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=log10(10^K562_fpm/10^tssr_proseq),x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=log10(10^K562_fpm/10^body_proseq),x=log10(txEnd-txStart), color=class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+
+P$log_size = log10(P$txEnd - P$txStart)
+size_quant = quantile(P$log_size, c(0.025, 0.975), na.rm=T)
+size_cut = P$log_size>size_quant[1] &  P$log_size<size_quant[2]
+
+n<-60 #number of windows
+w<-501 #window width (number of datapoints); if n*w > nrow(P) then windows overlap
+s<-round(seq(from=w/2+0.0001, to=nrow(P)-w/2, length.out=n))
+RM<-data.frame(SuRE.low=rep(NA,n), SuRE.mean=rep(NA,n), SuRE.hi=rep(NA,n), CAGE.lad=rep(NA,n), CAGE.ilad=rep(NA,n))
+RM$SuRE.low=P$SuRE[s-floor(w/2)]
+for(i in 1:n){RM$SuRE.mean[i]=mean(P$SuRE[(s[i]-floor(w/2)):(s[i]+floor(w/2))], na.rm=TRUE)}
+RM$SuRE.hi=P$SuRE[s+floor(w/2)]
+for(i in 1:n)
+  {t<-P[(s[i]-floor(w/2)):(s[i]+floor(w/2)),]
+   RM$CAGE.lad[i]<-mean(t$CAGE[t$LAD==1], na.rm=TRUE)
+   RM$CAGE.ilad[i]<-mean(t$CAGE[t$LAD==0], na.rm=TRUE)
+  }
+#add first datapoint (SuRE equals pseudocount)
+RM1<-RM[0,] #empty df
+RM1[1,]<-c(rep(log10(Pseud),3), mean(P$CAGE[P$SuRE==log10(Pseud) & P$LAD==1]), mean(P$CAGE[P$SuRE==log10(Pseud) & P$LAD==0]))
+RM<-rbind(RM1, RM)
+rm(RM1)
+
+#finally calculate LRS for all promoters:
+P$LRS_CAGE<- P$CAGE - approx(x=RM$SuRE.mean, y=RM$CAGE.ilad, xout=P$SuRE, rule=2)$y
+#so the more negative the score, the more 'repressed' is the promoter by its chromatin/LAD context
+
+
+#(arbitrary) cutoffs to define three groups of promoters:
+INACT<- P$SuRE< -0.3 & P$LAD==1 & P$CAGE< 0 #inactive
+NREP<- P$SuRE>0 & P$LRS_CAGE> 0 & P$LAD==1 #not repressed
+REP<- P$SuRE>0.3 & P$LRS_CAGE< -1 & P$LAD==1  & P$CAGE< 0 #repressed
+Pcnts<-c(length(which(REP)), length(which(NREP)), length(which(INACT)))
+names(Pcnts)<-c("repressed", "not_repressed", "inactive")
+BND <- P$LAD==1 & !INACT & !NREP & !REP
+
+#add class annotation column to P:
+P$cage_class<-NA
+P$cage_class[P$LAD==0]<-"iLAD"
+P$cage_class[INACT]<-"inactive"
+P$cage_class[NREP]<-"not_repressed"
+P$cage_class[REP]<-"repressed"
+P$cage_class[BND] <- "boundary"
+
+
+COL<-c("#A020F0", "#FFA500", "#006400")
+names(COL)<-c("repressed", "not_repressed", "inactive")
+p_cage_classes = P[P$cage_class %in% c('inactive', 'not_repressed', 'repressed'),]
+ggplot(P, aes(x=SuRE, y=CAGE)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=p_cage_classes, aes(color=cage_class), size=0.6) +
+    scale_color_manual(values=COL_class)
+
+
+ggplot(P[size_cut, ],aes(y=fpm_cage_ratio,x=log_size, color=cage_class)) + geom_point(size=0.3,alpha=0.3) + scale_color_manual(values=COL_class) + geom_smooth(method='lm')
+
+P$cage_lad <- NA
+P$cage_lad[P$LAD==0 & P$CAGE < -1 ] <- "inactive iLAD"
+P$cage_lad[P$LAD==0 & P$CAGE > 0 ] <- "active iLAD"
+P$cage_lad[P$LAD==0 & P$CAGE <= 0 & P$CAGE >= -1] <- "middle iLAD"
+
+P$cage_lad[P$LAD==1 & P$CAGE < -1 ] <- "inactive LAD"
+P$cage_lad[P$LAD==1 & P$CAGE > 0 ] <- "active LAD"
+P$cage_lad[P$LAD==1 & P$CAGE <= 0 & P$CAGE >= -1] <- "middle LAD"
+
+
+ggplot(P[size_cut, ], aes(x=SuRE, y=CAGE)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[!is.na(P$cage_lad) & size_cut,], aes(color=cage_lad), size=0.6)
+
+ggplot(P[size_cut, ],aes(y=fpm_cage_ratio,x=log10(txEnd-txStart), color=cage_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_cage_ratio,x=log10(txEnd-txStart), color=cage_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth()
+
+ggplot(P, aes(x=log10(txEnd-txStart)))+ geom_density()
+
+ggplot(P,aes(y=fpm_tssr_POL2AS_ratio,x=log10(txEnd-txStart), color=cage_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_cage_ratio,x=CAGE, color=class)) + geom_point(size=0.3,alpha=0.3)
+
+
+P$grocap_lad <- NA
+P$grocap_lad[P$LAD==0 & P$GROcap < -1 ] <- "inactive iLAD"
+P$grocap_lad[P$LAD==0 & P$GROcap > -0.5 ] <- "active iLAD"
+P$grocap_lad[P$LAD==0 & P$GROcap <= -0.5 & P$GROcap >= -1] <- "middle iLAD"
+
+P$grocap_lad[P$LAD==1 & P$GROcap < -1 ] <- "inactive LAD"
+P$grocap_lad[P$LAD==1 & P$GROcap > -0.5 ] <- "active LAD"
+P$grocap_lad[P$LAD==1 & P$GROcap <= -0.5 & P$GROcap >= -1] <- "middle LAD"
+
+
+ggplot(P, aes(x=SuRE, y=GROcap)) + 
+    geom_point(size=0.1,color=COLi) + 
+    geom_point(data=P[!is.na(P$grocap_lad),], aes(color=grocap_lad), size=0.6)
+
+ggplot(P,aes(y=fpm_cage_ratio,x=log10(txEnd-txStart), color=grocap_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_grocap_ratio,x=log10(txEnd-txStart), color=grocap_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_tssr_POL2AS_ratio,x=log10(txEnd-txStart), color=grocap_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth(method='lm')
+
+ggplot(P,aes(y=fpm_tssr_POL2AS_ratio,x=log10(txEnd-txStart), color=grocap_lad)) + geom_point(size=0.3,alpha=0.3) + geom_smooth()
+
+
+ggplot(P,aes(y=fpm_cage_ratio,x=CAGE, color=class)) + geom_point(size=0.3,alpha=0.3)
+``
+
+
+test_table = matrix(nrow=4,ncol=4, dimnames=list(c('iLAD', 'not_repressed', 'repressed', 'inactive'), c('grocap_ratio', 'cage_ratio', 'tssr_POL2A_ratio', 'tssr_POL2AS5_ratio')))
+
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    sub_p = P[P$class==class,]
+    sub_p = sub_p[which(!is.na(sub_p$fpm_grocap_ratio)),]
+    test_table[class, 'grocap_ratio'] = p.adjust(cor.test(sub_p$fpm_grocap_ratio, 
+                                                     log10(sub_p$txEnd - 
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                                 n=12)
+    test_table[class, 'cage_ratio'] = p.adjust(cor.test(sub_p$fpm_cage_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2A_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2AS5_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS5_ratio, 
+                                                           log10(sub_p$txEnd -
+                                                                 sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+
+}
+
+for (class in c('iLAD', 'not_repressed', 'repressed', 'inactive')){
+    sub_p = P[P$cage_class==class,]
+    sub_p = sub_p[which(!is.na(sub_p$fpm_grocap_ratio)),]
+    test_table[class, 'grocap_ratio'] = p.adjust(cor.test(sub_p$fpm_grocap_ratio, 
+                                                     log10(sub_p$txEnd - 
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                                 n=12)
+    test_table[class, 'cage_ratio'] = p.adjust(cor.test(sub_p$fpm_cage_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2A_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2AS5_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS5_ratio, 
+                                                           log10(sub_p$txEnd -
+                                                                 sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+}
+
+test_table = matrix(nrow=4,ncol=4, dimnames=list(c("inactive iLAD", "inactive LAD", 'active LAD', 'active iLAD'), c('grocap_ratio', 'cage_ratio', 'tssr_POL2A_ratio', 'tssr_POL2AS5_ratio')))
+
+
+for (class in c("inactive iLAD", "inactive LAD", 'active LAD', 'active iLAD')){
+    sub_p = P[P$grocap_lad==class,]
+    sub_p = sub_p[which(!is.na(sub_p$fpm_grocap_ratio)),]
+    test_table[class, 'grocap_ratio'] = p.adjust(cor.test(sub_p$fpm_grocap_ratio, 
+                                                     log10(sub_p$txEnd - 
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                                 n=12)
+    test_table[class, 'cage_ratio'] = p.adjust(cor.test(sub_p$fpm_cage_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2A_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2AS5_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS5_ratio, 
+                                                           log10(sub_p$txEnd -
+                                                                 sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+}
+for (class in c("inactive iLAD", "inactive LAD", 'active LAD', 'active iLAD')){
+    sub_p = P[P$cage_lad==class,]
+    sub_p = sub_p[which(!is.na(sub_p$fpm_grocap_ratio)),]
+    test_table[class, 'grocap_ratio'] = p.adjust(cor.test(sub_p$fpm_grocap_ratio, 
+                                                     log10(sub_p$txEnd - 
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                                 n=12)
+    test_table[class, 'cage_ratio'] = p.adjust(cor.test(sub_p$fpm_cage_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2A_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS_ratio, 
+                                                     log10(sub_p$txEnd -
+                                                           sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+    test_table[class, 'tssr_POL2AS5_ratio'] = p.adjust(cor.test(sub_p$fpm_tssr_POL2AS5_ratio, 
+                                                           log10(sub_p$txEnd -
+                                                                 sub_p$txStart),
+                                                     method='spearman',
+                                                     alternative='l')$p.value,
+                                               n=12)
+}
+
+fpm = log10(fpm(dds))
+P$fpm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpm))
+P$fpm = rowMeans(fpm[g_match,])
+
+p_active = P[P$CAGE>0, ]
+p_active = p_active[which(is.finite(p_active$fpm)), ]
+p_active = p_active[!is.na(p_active$fpm), ]
+
+size_order = order(p_active$log_size)
+p_active = p_active[size_order,]
+lad_index_vec = which(p_active$LAD == 1)
+ilad_index_vec = c(lad_index_vec + 1, lad_index_vec - 1)
+ilad_index_vec = ilad_index_vec[which(p_active[ilad_index_vec, 'LAD'] == 0)]
+
+fit = lm(fpm ~ CAGE * factor(LAD) * log_size, p_active )
+summary(fit)
+fit = lm(fpm ~ CAGE + factor(LAD) + log_size + CAGE:factor(LAD) + CAGE:factor(log_size) + log_size:factor(LAD), p_active)
+
+summary(fit)
+
+p_active$LADxLog_size = p_active$LAD * p_active$log_size
+p_active$LADxCAGE = p_active$LAD * p_active$CAGE
+p_active$CAGExLog_size = p_active$CAGE * p_active$log_size
+x = as.matrix(p_active[,c('CAGE', 'LAD', 'log_size', 'LADxCAGE', 'LADxLog_size', 'CAGExLog_size')])
+
+
+for (a in 1:10){
+    fit=glmnet(x, p_active$fpm, alpha=a/10)
+    print(coef(fit, s=cv.glmnet(x, p_active$fpm)$lambda.1se))
+}
+
+
+p_active = P[P$GROcap>0, ]
+p_active = p_active[!is.infinite(p_active$fpm), ]
+p_active = p_active[!is.na(p_active$fpm), ]
+
+size_order = order(p_active$log_size)
+p_active = p_active[size_order,]
+lad_index_vec = which(p_active$factor(LAD) == 1)
+ilad_index_vec = c(lad_index_vec + 1, lad_index_vec - 1)
+ilad_index_vec = ilad_index_vec[which(p_active[ilad_index_vec, 'LAD'] == 0)]
+
+
+
+p_active$LADxLog_size = p_active$LAD * p_active$log_size
+p_active$LADxGROcap = p_active$LAD * p_active$GROcap
+p_active$GROcapxLog_size = p_active$GROcap * p_active$log_size
+x = as.matrix(p_active[,c('GROcap', 'LAD', 'log_size', 'LADxGROcap', 'LADxLog_size', 'GROcapxLog_size')])
+
+
+for (a in 1:10){
+    fit=glmnet(x, p_active$fpm, alpha=a/10)
+    print(coef(fit, s=cv.glmnet(x, p_active$fpm)$lambda.1se))
+}
+
+
+fit = lm(fpm ~ GROcap * factor(LAD) * log_size, p_active )
+summary(fit)
+fit = lm(fpm ~ GROcap + factor(LAD) + log_size + GROcap:factor(LAD) + GROcap:log_size + log_size:factor(LAD), p_active)
+summary(fit)
+
+
+fpkm = log10(fpkm(dds))
+P$fpkm = NaN
+g_match = match(P$ensembl_gene_id, rownames(fpkm))
+P$fpkm = rowMeans(fpkm[g_match,])
+
+p_active = P[P$CAGE>0, ]
+p_active = p_active[which(is.finite(p_active$fpkm)), ]
+p_active = p_active[!is.na(p_active$fpkm), ]
+
+size_order = order(p_active$log_size)
+p_active = p_active[size_order,]
+lad_index_vec = which(p_active$LAD == 1)
+ilad_index_vec = c(lad_index_vec + 1, lad_index_vec - 1)
+ilad_index_vec = ilad_index_vec[which(p_active[ilad_index_vec, 'LAD'] == 0)]
+
+fit = lm(fpkm ~ CAGE * factor(LAD) * log_size, p_active )
+summary(fit)
+fit = lm(fpkm ~ CAGE + factor(LAD) + log_size + CAGE:factor(LAD) + CAGE:log_size + log_size:factor(LAD), p_active)
+
+summary(fit)
+
+p_active$LADxLog_size = p_active$LAD * p_active$log_size
+p_active$LADxCAGE = p_active$LAD * p_active$CAGE
+p_active$CAGExLog_size = p_active$CAGE * p_active$log_size
+x = as.matrix(p_active[,c('CAGE', 'LAD', 'log_size', 'LADxCAGE', 'LADxLog_size', 'CAGExLog_size')])
+
+
+for (a in 1:10){
+    fit=glmnet(x, p_active$fpkm, alpha=a/10)
+    print(coef(fit, s=cv.glmnet(x, p_active$fpkm)$lambda.1se))
+}
+
+
+p_active = P[P$GROcap>0, ]
+p_active = p_active[!is.infinite(p_active$fpkm), ]
+p_active = p_active[!is.na(p_active$fpkm), ]
+
+size_order = order(p_active$log_size)
+p_active = p_active[size_order,]
+lad_index_vec = which(p_active$factor(LAD) == 1)
+ilad_index_vec = c(lad_index_vec + 1, lad_index_vec - 1)
+ilad_index_vec = ilad_index_vec[which(p_active[ilad_index_vec, 'LAD'] == 0)]
+
+
+
+p_active$LADxLog_size = p_active$LAD * p_active$log_size
+p_active$LADxGROcap = p_active$LAD * p_active$GROcap
+p_active$GROcapxLog_size = p_active$GROcap * p_active$log_size
+x = as.matrix(p_active[,c('GROcap', 'LAD', 'log_size', 'LADxGROcap', 'LADxLog_size', 'GROcapxLog_size')])
+
+
+for (a in 1:10){
+    fit=glmnet(x, p_active$fpkm, alpha=a/10)
+    print(coef(fit, s=cv.glmnet(x, p_active$fpkm)$lambda.1se))
+}
+
+
+fit = lm(fpkm ~ GROcap * factor(LAD) * log_size, p_active )
+summary(fit)
+fit = lm(fpkm ~ GROcap + factor(LAD) + log_size + GROcap:factor(LAD) + GROcap:log_size + log_size:factor(LAD), p_active)
+summary(fit)
+
+```
+
+
+```
