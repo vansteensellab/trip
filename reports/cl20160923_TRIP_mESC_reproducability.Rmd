@@ -1,0 +1,403 @@
+# knitr document van Steensel lab
+
+# Thethered TRIP data reproducability with Wasseem's data
+## Christ Leemans, 17-08-2016 - to date 
+
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r}
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+correlate <- function(xy_table, title, condition1, condition2){
+    fit = lm(xy_table$y ~ xy_table$x)
+    coef = summary(fit)$coefficients
+    spearman = cor.test(xy_table$x, xy_table$y, method='spearman')
+    pearson = cor.test(xy_table$x, xy_table$y, method='pearson')
+    test_text = sprintf("    Spearman's rank correlation rho
+ data:  %s and %s
+ S = %.0f, p-value = %0.4f
+ alternative hypothesis: 
+ true rho is not equal to 0
+ sample estimates:
+       rho 
+ %0.7f 
+ 
+    Pearson's product-moment correlation
+ data:  %s and %s
+ t = %.04f, df = %.0f, p-value = %0.4f
+ alternative hypothesis: 
+ true correlation is not equal to 0
+ 95 percent confidence interval:
+  %0.8f  %0.8f
+ sample estimates:
+       cor 
+ %0.7f ", condition1, condition2, spearman$statistic, spearman$p.value, spearman$estimate,
+ condition1, condition2, pearson$statistic, pearson$parameter, pearson$p.value, pearson$conf.int[1],
+ pearson$conf.int[2], pearson$estimate)
+    test_table = tableGrob(rbind(title,test_text),rows=NULL, theme=ttheme_default(core=list(fg_params=list(fontsize=c(12,10), fontface=c(2L,1L)))))
+    spearman_p = spearman$p.value
+    pearson_p = pearson$p.value
+
+    label = sprintf('y = %0.3f + %0.3fx\nn=%i; P=%0.3f; S=%0.3f',  coef[1,'Estimate'], coef[2,'Estimate'], nrow(xy_table), pearson_p, spearman_p)
+    return(list(test_table, label))
+}
+
+```
+
+## read the data
+I really want to know here if the mouse ESC TRIP experiment performed by laura is correlating well with Wasseem's earlier experiments in the same cell pool.
+
+```{r preperation, cache=T}
+counts_without_bc = read.table('/media/HPC_Home/projects/trip/cl20160817_trip_mESC/bc_count.txt', stringsAsFactors=F, header=T, row.names=1)
+
+## some files were named ..._2.fq, while others had no such suffix. yet from every experiment there was only 1 .fq file. Let's remove this _2 from the names
+colnames(counts_without_bc) = gsub('_2.fq','.fq',colnames(counts_without_bc))
+## some filenames contained SUV39H2 while others SUV39H
+colnames(counts_without_bc) = gsub('SUV39H2','SUV39H',colnames(counts_without_bc))
+## also let's shorten the names
+colnames(counts_without_bc) = gsub('X[0-9]+_1_BarcodedPool_NoIndex_[0-9]+_','',colnames(counts_without_bc))
+mapping = read.table('/media/HPC_Home/projects/trip/raw_data/tet-Off-D_BC-Pos-Exp.txt', stringsAsFactors=F, header=T, row.names=2)
+
+## see if there we mapped the same reads with our methods
+new_mapping = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/final_mapping.txt', header=TRUE, row.names=1)
+
+```
+
+## overlap between barcodes
+First let's see if, with the new data and script 
+
+```{r, fig.width = 10, fig.height=20}
+# starcode might have assigned some barcodes to a different 
+not_in_new = rownames(mapping)[which(!rownames(mapping)%in%rownames(counts_without_bc))]
+
+# so how many are not in our new analysis
+print(lenght(not_in_new))
+
+# but they maybe some are just handled differently and are in fact shorter/longer
+i = 0
+for (barcode in not_in_new){
+    test = grep(barcode, rownames(counts_without_bc))
+    if (length(test) > 0){
+        i = i + 1
+        print(sprintf('old barcode: %s', barcode))
+        print(sprintf('new barcode: %s', rownames(counts_without_bc)[test]))
+        rownames(counts_without_bc)[test] = barcode
+        not_in_new = not_in_new[-which(not_in_new==barcode)]
+    }
+}
+print(sprintf('%i cases with different length',i))
+
+# are they also missing from the new mapping?
+length(which(!not_in_new%in%rownames(new_mapping)))
+
+```
+**conclusion:**
+Mapping data has the same barcodes, maybe some barcodes are missing from gDNA reads due to thresholds.
+TODO: find out where these barcodes are in normalization reads
+
+
+## direct correlation
+
+let's see if the individual barcodes show a good correlation. I used the replicates of day 2 GAL4 and one replicate of day 10 GAL4. Might be that day 10 GAL4 shows more correlation, because there might be an effect of bringing in the plasmid which dissapates over time.
+
+```{r}
+barcode_set = rownames(mapping)[rownames(mapping) %in% rownames(counts_without_bc)]
+
+new_counts = counts_without_bc[barcode_set, grep('Gal4_D', colnames(counts_without_bc)) ]
+old_counts = mapping[barcode_set,grep('counts', colnames(mapping))]
+
+old_cpm = t(t(old_counts) / colSums(old_counts) * 1000000)
+new_cpm = t(t(new_counts) / colSums(new_counts) * 1000000)
+
+new_exp_D2_r1 = new_cpm[,'r1_Gal4_D2_cDNA.fq'] / new_cpm[,'r1_Gal4_D2_gDNA.fq']
+new_exp_D2_r2 = new_cpm[,'r2_Gal4_D2_cDNA.fq'] / new_cpm[,'r2_Gal4_D2_gDNA.fq']
+
+# it was previously shown that of day 10, only replicate 2 had meaningfull data
+new_exp_D10 = new_cpm[,'r2_Gal4_D10_cDNA.fq'] / new_cpm[,'r2_Gal4_D10_gDNA.fq']
+
+old_exp = do.call(cbind, lapply(1:(ncol(old_cpm)/2)*2,function(x, old_cpm){print(x);return(old_cpm[,x]/old_cpm[,x-1])}, old_cpm))
+colnames(old_exp) = colnames(old_cpm)[1:(ncol(old_cpm)/2)*2]
+
+
+old_mean_exp = (old_exp[,1:4] + old_exp[,5:8]) / 2
+
+new_mean_exp = (new_exp_D2_r1 + new_exp_D2_r2) / 2
+
+# remove  counts < 5
+
+below_gDNA_1 = new_counts[,'r1_Gal4_D2_gDNA.fq'] < 5
+below_gDNA_2 = new_counts[,'r2_Gal4_D2_gDNA.fq'] < 5
+below_gDNA_10 = new_counts[,'r2_Gal4_D10_gDNA.fq'] < 5
+new_mean_exp = new_mean_exp[!(below_gDNA_1 | below_gDNA_2 | below_gDNA_10)]
+old_mean_exp = old_mean_exp[!(below_gDNA_1 | below_gDNA_2 | below_gDNA_10), ]
+new_exp_D10 = new_exp_D10[!(below_gDNA_1 | below_gDNA_2 | below_gDNA_10)]
+
+```
+
+```{r, fig.width=10, fig.height=15}
+for (old_condition in colnames(old_mean_exp)){
+    xy_table = cbind.data.frame(old_mean_exp[,old_condition], new_mean_exp)
+    colnames(xy_table) = c('x','y')
+    dox = strsplit(old_condition, '_')[[1]][3]
+    title = sprintf('GAL4 D2 replicates vs %s dox', dox)
+    corr_list = correlate(xy_table, title, dox, 'D2')
+    g = ggplot(xy_table, aes(x=log2(x+0.1),y=log2(y+0.1))) +
+        theme(panel.background = element_rect(fill = "lavender"))+
+        theme(strip.text.x = element_text(size = 10)) +
+        geom_point(shape=19, size =0.9, position=position_jitter(width=.2))  +
+        theme(legend.position="none") +
+        theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+        theme(axis.title = element_text(size=20)) +
+        theme(text = element_text(size = 10)) +
+        geom_hline(yintercept=0, colour = "grey30") +
+        geom_text(aes(x=x,y=y,label=corr_list[[2]]),data=data.frame(x=Inf,y=Inf), vjust=1, hjust=1, size=5) +
+        ggtitle('P=Pearson; S=Spearman') +
+        ylab('Gal4 D2') + xlab(dox) + stat_smooth(method = "lm")
+    grid.arrange(corr_list[[1]], g, heights=c(2,5))
+}
+
+for (old_condition in colnames(old_mean_exp)){
+    xy_table = cbind.data.frame(old_mean_exp[,old_condition], new_exp_D10)
+    colnames(xy_table) = c('x','y')
+    dox = strsplit(old_condition, '_')[[1]][3]
+    title = sprintf('GAL4 D10 replicate 2 vs %s dox', dox)
+    corr_list = correlate(xy_table, title, dox, 'D2')
+    g = ggplot(xy_table, aes(x=log2(x+0.1),y=log2(y+0.1))) +
+        theme(panel.background = element_rect(fill = "lavender"))+
+        theme(strip.text.x = element_text(size = 10)) +
+        geom_point(shape=19, size =0.9, position=position_jitter(width=.2))  +
+        theme(legend.position="none") +
+        theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+        theme(axis.title = element_text(size=20)) +
+        theme(text = element_text(size = 10)) +
+        geom_hline(yintercept=0, colour = "grey30") +
+        geom_text(aes(x=x,y=y,label=corr_list[[2]]),data=data.frame(x=Inf,y=Inf), vjust=1, hjust=1, size=5) +
+        ggtitle('P=Pearson; S=Spearman') +
+        ylab('Gal4 D2') + xlab(dox) + stat_smooth(method = "lm")
+    grid.arrange(corr_list[[1]], g, heights=c(2,5))
+}
+```
+
+**conclusion:**
+The most correlation is as expected with the 0ng Dox. But unfortunately the correlation is not as high as expected. Maybe for future experiments it would be nice to add an experiment at day 0, to see the expression in the cell pool just before transfection.
+
+
+## reproducibility of classifications.
+```{r}
+## let's take the complete dataset as I use it now to check if the difference's between the different classifications are still the same
+
+
+lad_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_LAD_state.txt', header=T, stringsAsFactors=F)
+## at least 30 reads have to be alligned to the state and 90% of total reads have to be aligned against that state for it to be a unique match between barcode and state
+lad_table = lad_table[lad_table$count>30&lad_table$count/lad_table$total>0.9,]
+rownames(lad_table) = lad_table$barcode
+lad_table$barcode = NULL
+
+chrom_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_chrom_15state.txt', header=T, stringsAsFactors=F)
+## at least 30 reads have to be alligned to the state and 90% of total reads have to be aligned against that state for it to be a unique match between barcode and state
+chrom_table = chrom_table[chrom_table$count>30&chrom_table$count/chrom_table$total>0.9,]
+## some barcodes were mapped on the border of two states, let's remove these
+chrom_table = chrom_table[!chrom_table$barcode%in%names(which(table(chrom_table$barcode)>1)),]
+rownames(chrom_table) = chrom_table$barcode
+chrom_table$barcode = NULL
+
+chrom_levels = unique(chrom_table[,'chrom_state'])
+# sort on the number in the state name
+chrom_levels = chrom_levels[order(sapply(chrom_levels,function(x){
+    # if the state is unknown, return a high number so that it ends up at the end of the sort
+    if (x!='-'){
+        return(as.numeric(str_split(x,'_')[[1]][1]))
+    } else{
+        return(Inf)
+    }}))]
+
+repeat_table = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/barcode_repeats.txt', header=T)
+unique_name = repeat_table$count > 30 & repeat_table$count/repeat_table$total > 0.9
+## had one occasion where there were two different SINE elements annotated at the same position, let's just remove this
+multiple = names(which(table(repeat_table$barcode[unique_name])>1))
+in_multiple = repeat_table$barcode%in%multiple
+repeat_table = repeat_table[!in_multiple,]
+rep_fam_table = ddply(repeat_table, .(barcode, class, family, total), summarize, count=sum(count))
+rep_fam_table= rep_fam_table[rep_fam_table$count > 30 & rep_fam_table$count/rep_fam_table$total > 0.9, ]
+
+rep_class_table = ddply(repeat_table, .(barcode, class, total), summarize, count=sum(count))
+rep_class_table = rep_class_table[rep_class_table$count > 30 & rep_class_table$count/rep_class_table$total > 0.9, ]
+
+repeat_table = repeat_table[unique_name[!in_multiple],]
+
+rownames(repeat_table) = repeat_table$barcode
+rownames(rep_fam_table) = rep_fam_table$barcode
+rownames(rep_class_table) = rep_class_table$barcode
+repeat_table$barcode = rep_fam_table$barcode = rep_class_table$barcode = NULL
+
+
+timing_table_1 = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/replication_rep1.txt', header=T, stringsAsFactors=F)
+timing_table_1$timing = as.numeric(timing_table_1$timing)
+timing_table_1 = timing_table_1[timing_table_1$count>30&timing_table_1$count/timing_table_1$total>0.9,]
+rownames(timing_table_1) = timing_table_1$barcode
+timing_table_1$barcode = NULL
+
+timing_table_2 = read.table('/media/HPC_Home/projects/trip/cl20160825_trip_mESC_nobc/replication_rep2.txt', header=T, stringsAsFactors=F)
+timing_table_2 = timing_table_2[timing_table_2$count>30&timing_table_2$count/timing_table_2$total>0.9,]
+timing_table_2$timing = as.numeric(timing_table_2$timing)
+rownames(timing_table_2) = timing_table_2$barcode
+timing_table_2$barcode = NULL
+
+
+timing_table = timing_table_1
+timing_table$timing = rowMeans(cbind(timing_table_1$timing, timing_table_2$timing))
+
+## apply same mapping thresholds as in paper.
+isUnique = new_mapping$t_reads_f>3 & new_mapping$t_reads_r>3 & new_mapping$freq1_f>0.7 &new_mapping$freq1_r>0.9 & new_mapping$freq2_f<0.05 & new_mapping$freq2_r<0.025
+new_mapping = new_mapping[isUnique, ]
+
+
+norm_exp = lapply(grep('cDNA', colnames(counts_without_bc), value=T), function(x, counts){
+    y = str_replace(x, 'cDNA', 'gDNA')
+    above_x = paste0(x,'_above_norm')
+    ## normalize counts by total reads
+    exp = counts[,x] / sum(counts[,x])
+    norm = counts[,y] / sum(counts[,y])
+
+    ## apply cut-off of 100 reads
+    above_norm = counts[,y] > 100
+    result = cbind.data.frame(exp/norm, above_norm)
+    colnames(result) = c(x, above_x)
+    return(result)
+}, counts_without_bc)
+norm_exp = do.call(cbind.data.frame, norm_exp)
+rownames(norm_exp) = rownames(counts_without_bc)
+
+```
+
+## correlation between replicates
+
+Thought it might be nice to show the correlations between replicates in laura's data again.
+There were only two samples with replicates, these were the GAL4 day 2 and 10 samples.
+
+```{r replicates1, fig.width=10, fig.height=10, cache=T}
+Gal4_D2 = norm_exp[norm_exp[,'r1_Gal4_D2_cDNA.fq_above_norm'] & norm_exp[,'r2_Gal4_D2_cDNA.fq_above_norm'] & rownames(norm_exp)%in%rownames(new_mapping),c('r1_Gal4_D2_cDNA.fq','r2_Gal4_D2_cDNA.fq')]
+
+print (head(Gal4_D2))
+
+cor_line = paste("r(p)=",signif(cor(x=Gal4_D2[,'r2_Gal4_D2_cDNA.fq'], y=Gal4_D2[, 'r1_Gal4_D2_cDNA.fq'],method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=Gal4_D2[,'r2_Gal4_D2_cDNA.fq'], y=Gal4_D2[, 'r1_Gal4_D2_cDNA.fq'],method = "spearman",use="pairwise.complete.obs"),digits=3))
+
+title = 'GAL4 Day 2 rep 1 vs 2'
+
+lims = c(min(log2(Gal4_D2[Gal4_D2>0]), na.rm=T), max(log2(Gal4_D2), na.rm=T))
+
+ggplot(Gal4_D2, aes(x=log2(r1_Gal4_D2_cDNA.fq), y = log2(r2_Gal4_D2_cDNA.fq)))+geom_point() + ggtitle(paste(title, cor_line, sep='\n')) + theme(aspect.ratio=1) + xlim(lims) + ylim(lims)
+
+
+Gal4_D10 = norm_exp[norm_exp[,'r1_Gal4_D10_cDNA.fq_above_norm'] & norm_exp[,'r2_Gal4_D10_cDNA.fq_above_norm'] & rownames(norm_exp)%in%rownames(new_mapping),c('r1_Gal4_D10_cDNA.fq','r2_Gal4_D10_cDNA.fq')]
+
+title = 'GAL4 Day 10 rep 1 vs 2'
+cor_line = paste("r(p)=",signif(cor(x=Gal4_D10[,'r2_Gal4_D10_cDNA.fq'], y=Gal4_D10[, 'r1_Gal4_D10_cDNA.fq'],method = "pearson",use="pairwise.complete.obs"),digits=3),"\n","r(s)=",signif(cor(x=Gal4_D10[,'r2_Gal4_D10_cDNA.fq'], y=Gal4_D10[, 'r1_Gal4_D10_cDNA.fq'],method = "spearman",use="pairwise.complete.obs"),digits=3))
+
+lims = c(min(log2(Gal4_D10[Gal4_D10>0]), na.rm=T), max(log2(Gal4_D10), na.rm=T))
+
+ggplot(Gal4_D10, aes(x=log2(r1_Gal4_D10_cDNA.fq), y = log2(r2_Gal4_D10_cDNA.fq))) + geom_point() + ggtitle(paste(title, cor_line, sep='\n')) + xlim(lims) + ylim(lims) + theme(panel.border = element_rect(colour = "red", fill=NA, size=5))
+
+```
+**conclusion:**
+
+the reproducability appears to be very low, especially in the D10 sample. One of the replicates on day 10 shows a weird distribution of read counts as shown previously. Laura also experienced challanges with doing PCR in this replicate and had to go through an unusually high amount of cycles.
+
+
+
+### deal with replicates
+```{r replicates2}
+## take the mean between replicates
+norm_exp$Gal4_D2_cDNA.fq = rowMeans(norm_exp[,c('r1_Gal4_D2_cDNA.fq', 'r2_Gal4_D2_cDNA.fq')])
+norm_exp$Gal4_D2_cDNA.fq_above_norm = norm_exp$r1_Gal4_D2_cDNA.fq_above_norm & norm_exp$r2_Gal4_D2_cDNA.fq_above_norm
+
+
+## because there was something wrong with replicate 1, let's only take replicate 2
+norm_exp$Gal4_D10_cDNA.fq = norm_exp$r2_Gal4_D10_cDNA.fq 
+norm_exp$Gal4_D10_cDNA.fq_above_norm = norm_exp$r2_Gal4_D10_cDNA.fq_above_norm
+
+## lets also take the complete set of barcodes for wasseem's data
+old_mean_exp = (old_exp[,1:4] + old_exp[,5:8]) / 2
+
+```
+
+
+### LAD-states.
+
+because the lad-states are not in the materials, I just use the new lad-track.
+
+```shell
+bedtools intersect -a raw_data/tet-Off-D_BC-Pos-Exp.bed -b ~/data/tracks/mm9/LAD_mES_continuous_cl160823.bed -wb | awk '{print $4"\t"$8}' > cl20160923_tet-Off-D_BC-Pos-Exp.lad 
+
+```
+
+```{r lad_states, fig.width=10, fig.height=10}
+old_lad = read.table('../cl20160923_tet-Off-D_BC-Pos-Exp.lad', stringsAsFactors=F, row.names=1)
+
+old_match_vec = match(rownames(old_mean_exp), rownames(old_lad))
+
+old_xy_table = cbind.data.frame(old_lad[old_match_vec[!is.na(old_match_vec)],], old_mean_exp[!is.na(old_match_vec),'expression_counts_0ng_1'], stringsAsFactors=F)
+colnames(old_xy_table) = c('x', 'y')
+
+old_xy_2state = old_xy_table
+old_xy_2state$x[old_xy_2state$x %in% c('cLAD', 'fLAD')] = 'LAD'
+old_xy_2state$x[old_xy_2state$x %in% c('ciLAD', 'fiLAD')] = 'iLAD'
+
+old_plot = ggplot(old_xy_2state, aes(x=factor(x, levels = c('LAD', 'iLAD')), y=log2(y + 0.1), colour=factor(x, levels=c('LAD', 'iLAD')))) + geom_boxplot() + geom_point(pch=19,position=position_jitter(width=1), alpha=0.4) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) + ggtitle("Wasseem's\n0ng Dox\nexpression") + ylab('log2("fold-change")') + xlab('lad state') + ylim(-5,5)
+
+norm_exp_D2 = norm_exp[norm_exp$r1_Gal4_D2_cDNA.fq_above_norm & norm_exp$r2_Gal4_D2_cDNA.fq_above_norm,]
+new_match_vec_D2 = match(rownames(norm_exp_D2), rownames(lad_table))
+
+new_xy_table_D2 = cbind.data.frame(lad_table[new_match_vec_D2[!is.na(new_match_vec_D2)],'lad_state'], norm_exp_D2[!is.na(new_match_vec_D2),'Gal4_D2_cDNA.fq'], stringsAsFactors=F)
+colnames(new_xy_table_D2) = c('x', 'y')
+
+new_xy_2state_D2 = new_xy_table_D2
+new_xy_2state_D2$x[new_xy_2state_D2$x %in% c('cLAD', 'fLAD')] = 'LAD'
+new_xy_2state_D2$x[new_xy_2state_D2$x %in% c('ciLAD', 'fiLAD')] = 'iLAD'
+
+new_plot_D2 = ggplot(new_xy_2state_D2, aes(x=factor(x, levels = c('LAD', 'iLAD')), y=log2(y + 0.1), colour=factor(x, levels=c('LAD', 'iLAD')))) + geom_boxplot() + geom_point(pch=19,position=position_jitter(width=1), alpha=0.4) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) + ggtitle("Laura's Gal4\nday 2\nexpression") + ylab('log2("fold-change")') + xlab('lad state') + ylim(-5,5)
+norm_exp_D10 = norm_exp[norm_exp$r2_Gal4_D10_cDNA.fq_above_norm,]
+
+new_match_vec_D10 = match(rownames(norm_exp_D10), rownames(lad_table))
+
+new_xy_table_D10 = cbind.data.frame(lad_table[new_match_vec_D10[which(!is.na(new_match_vec_D10))],'lad_state'], norm_exp_D10[which(!is.na(new_match_vec_D10)),'Gal4_D10_cDNA.fq'], stringsAsFactors=F)
+colnames(new_xy_table_D10) = c('x', 'y')
+
+new_xy_2state_D10 = new_xy_table_D10
+new_xy_2state_D10$x[new_xy_2state_D10$x %in% c('cLAD', 'fLAD')] = 'LAD'
+new_xy_2state_D10$x[new_xy_2state_D10$x %in% c('ciLAD', 'fiLAD')] = 'iLAD'
+
+new_plot_D10 = ggplot(new_xy_2state_D10, aes(x=factor(x, levels = c('LAD', 'iLAD')), y=log2(y + 0.1), colour=factor(x, levels=c('LAD', 'iLAD')))) + geom_boxplot() + geom_point(pch=19,position=position_jitter(width=1), alpha=0.4) +
+            theme(legend.position="none") +
+            theme(axis.title = element_text(size = 28)) +
+            theme(title = element_text(size=28)) +
+            theme(axis.text.x = element_text(hjust = 1, angle = 90, size = 10)) +
+            theme(axis.text = element_text(size = 15)) + ggtitle("Laura's Gal4\nday 10\nexpression") + ylab('log2("fold-change")') + xlab('lad state') + ylim(-5,5)
+grid.arrange(new_plot_D2, old_plot, new_plot_D10, ncol=3)
+```
+
+**conclusions:**
+In general there is still the same distribution of relative expression between the two LAD-states. Because the new data is more noisy, the difference's are a little bit less profound. Except on day 10 there seems to be a dropout.

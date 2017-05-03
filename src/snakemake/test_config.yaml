@@ -1,0 +1,9 @@
+normalization:
+  KRAB_GAL4.POI_14_2: /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_74_r2_D14_cDNA.fq
+  KRAB_POI_14_1: /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r1_D14_cDNA.fq
+  KRAB_POI_14_2: /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r2_D14_cDNA.fq
+
+mapping:
+  pool1_rep1: [/home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq, /home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq]
+  pool1_rep2: [/home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_10.fastq, /home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_10.fastq]
+  pool1_rep3: [/home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_11.fastq, /home/NFS/users/c.leemans/projects/trip/raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_11.fastq]

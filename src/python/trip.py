@@ -6,7 +6,6 @@ import gzip
 from Bio.Data import IUPACData
 from Bio import SeqIO
 from Bio import Seq
-import warnings
 import os
 import pysam
 import argparse
@@ -301,8 +300,7 @@ def config_parse(file_name, map_style):
                              ('map_fwd_index_length', 0),
                              ('barcode_length', 16),
                              ('lev_dist', 2),
-                             ('min_counts', 5),
-                             ('cores', 1)]:
+                             ('min_counts', 5)]:
         check_integer(integer, default)
 
     if map_style != 'n':
@@ -329,7 +327,6 @@ def top_map(map_dict_in, max_dist):
         return (map_dict_in[key][0])
 
     map_dict_out = {}
-    print(map_dict_in['ATAGCCTATCTTCCGA'])
     for bc in map_dict_in:
         this_map_dict = map_dict_in[bc]
         if len(this_map_dict) == 1:
@@ -345,19 +342,11 @@ def top_map(map_dict_in, max_dist):
                                      key=lambda elem: sort_keys(elem,
                                                                 this_map_dict),
                                      reverse=True)
-            if bc == 'ATAGCCTATCTTCCGA':
-                print(sorted_key_list)
-                print(this_map_dict)
             top_key, \
                 top_reads, \
                 top_mapq, \
                 sorted_key_list = refine_map(this_map_dict, sorted_key_list,
                                              max_dist)
-            if bc == 'ATAGCCTATCTTCCGA':
-                print(sorted_key_list)
-                print(top_key)
-                print(top_reads)
-                print(top_mapq)
             reference_name, ori, start_pos = top_key
             av_mapq = top_mapq / top_reads
             freq1 = top_reads / total_reads
@@ -516,6 +505,8 @@ def get_arg_options():
                                   'otherwise (b or r) both  --mapFor and '
                                   '--mapRev needs to be specified.'
                                   'The default value is both.'))
+    cmd_parser.add_argument('-t', '--threads', dest='threads', default=1,
+                            type=int, help="amount of cores (default=1)")
     cmd_parser.add_argument('-u', '--useMagic', action='store_true',
                             dest='useMagic',
                             help=("use [] fields to specify multiple files. "
@@ -585,8 +576,6 @@ def get_arg_options():
                          'GTACGTCACAATATGATTATCTTTCTAGGGTTAA\n'
                          '                       # constant part of reverse '
                          'mapping read\n'
-                         'cores          = 2     # the number of processors '
-                         'to be used for Bowtie2 alignments\n'
                          'bowtie_base    = '
                          '/Users/wa/CoolShit/bowtie2-2.1.0/mm9\n'
                          '                       # the index of the genome to'
@@ -1203,7 +1192,9 @@ def extract_multi_hits(sam_in, fastq_out):
 
 if __name__ == '__main__':
     options = get_arg_options()
+    print(options.map_style)
     config_file = options.configuration_file
+    threads = options.threads
     if options.map_style is not None:
         map_style = options.map_style
     else:
@@ -1323,7 +1314,7 @@ if __name__ == '__main__':
             if map_style != 'f':
                 debug_file.write('map_pat_rev:\t%s\n'
                                  % config_dict['map_pat_rev'])
-            debug_file.write('cores:\t%i\n' % config_dict['cores'])
+            debug_file.write('cores:\t%i\n' % threads)
             debug_file.write('bowtie_base:\t%s\n' % config_dict['bowtie_base'])
             debug_file.write('max_dist_for:\t%i\n' %
                              config_dict['max_dist_for'])
@@ -1332,7 +1323,7 @@ if __name__ == '__main__':
                                  % config_dict['max_dist_rev'])
         debug_file.write('min_counts:\t%i' % config_dict['min_counts'])
     runner = parsing_runner(config_dict['barcode_length'], out_dir,
-                            config_dict['cores'])
+                            threads)
     if (len(norm_file_list) + len(exp_file_list)) > 0:
         if verbose:
             print 'parsing normalization and expression reads'
@@ -1366,12 +1357,12 @@ if __name__ == '__main__':
         bc_set = norm_and_exp(exp_out, norm_file_list, bc_set, out_dir,
                               config_dict['min_counts'],
                               config_dict['lev_dist'], count_mutated,
-                              config_dict['cores'], verbose)
+                              threads, verbose)
     if map_out is not None:
         print 'analysing mapping reads...'
         map_fwd_rev(map_out, bc_set, config_dict['max_dist_for'],
                     config_dict['max_dist_rev'], config_dict['lev_dist'],
                     count_mutated, config_dict['bowtie_base'], out_dir,
-                    config_dict['cores'])
+                    threads)
     if options.debug:
         debug_file.close()

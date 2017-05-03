@@ -67,6 +67,9 @@ tail -n+2 cl20160815_trip_without_bc_list/bc_count.txt | awk '{print NR"\t"$1}' 
 ## find the intergration sites
 nice -19 ~/python/bin/python src/python/trip.py -o cl20160815_trip_without_bc_list -c cl20160816_config_K562_TTRIP.txt -b cl20160815_trip_without_bc_list/bc_table.txt -l cl20160816_mapping_file_list.lst -m b -u -v -d 2>&1 | tee cl20160815_trip_without_bc_list/mapping.stdout.stderr.txt
 
+## sort the bed file of all mapping locations
+bedtools sort -i cl20160906_TTRIP_K562/mapping/rev_mapping.bed > cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed 
+
 ## combine the two sam files with reverse reads so that remapped reads are replaced in samRev.sam
 nice -15 awk 'FNR==NR{if ($1 ~ /^@/) {print $0; next} else {arr[$1]=$0};next}{if ($1 in arr){print arr[$1]}else{print $0}}' cl20160815_trip_without_bc_list/samRev2.sam cl20160815_trip_without_bc_list/samRev.sam | samtools view -Sb - > cl20160815_trip_without_bc_list/samRev_combined.bam
 
@@ -114,6 +117,7 @@ print "barcode\tclass\tfamily\tname\tcount\ttotal"
 
 ```
 
+
 ## Linking barcodes to LAD states
 I found an rData file of Caroline with LAD states for different cell types from microarray experiments. In this rdata file is a table with binarized LAD information (1 for iLAD, 2 for cLAD) called 'allHumanStateHg19'. There is also a table called 'allHumanAvHg19' with raw peaks and a table called cLADhs where constitutive LAD states are defined.
 
@@ -121,13 +125,29 @@ For now I am using only the allHumanStateHg19 table. 4 different 'states' can be
 
 ```r
 
-load('CdG140714humanLmnb1wK562.rData')
-allHumanStateHg19$LAD = 'ciLAD'
-allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])==24] = 'cLAD'
-allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])<24&rowSums(allHumanStateHg19[,5:16])>12&allHumanStateHg19$K6==2] = 'K562_fLAD'
-allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,5:16])<24&rowSums(allHumanStateHg19[,5:16])>12&allHumanStateHg19$K6!=2] = 'other_fLAD'
+load('/home/NFS/users/ca.d.graaf/projects/analyses/CdG121011humanLmnb1Atlas/CdG140714humanLmnb1wK562.rData')
+## the average probe signal can also be used
+write.table(allHumanAvHg19[,c('seqname', 'start', 'end', 'K5')], file='cl20161017_LAD_avg_probe_K562.bed',col.names=F,quote=F,row.names=F, sep='\t')
 
-write.table(allHumanStateHg19[,c('seqname', 'start','end','LAD')],file = 'LAD_K562_cl160629.bed', col.names = F, quote=F,row.names=F) 
+lad_2state = allHumanStateHg19$K6
+lad_2state[lad_2state==1] = 'interLAD'
+lad_2state[lad_2state==2] = 'LAD'
+write.table(cbind(allHumanStateHg19[,c('seqname', 'start', 'end')], lad_2state), file='cl20161019_LAD_2state_K562.bed',col.names=F,quote=F,row.names=F, sep='\t')
+
+## let's not select the down syndrome data and the TIG3 that was done on another array
+cell_type = colnames(allHumanStateHg19)[5:16]
+cell_type = cell_type[!cell_type%in%c('DS', 'FB', 'TN')]
+
+ciLAD = length(cell_type)
+cLAD = ciLAD * 2
+
+allHumanStateHg19$LAD = 'ciLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type])==cLAD] = 'cLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type])<cLAD&rowSums(allHumanStateHg19[,cell_type])>ciLAD&allHumanStateHg19$K6==2] = 'fLAD'
+allHumanStateHg19$LAD[rowSums(allHumanStateHg19[,cell_type])<cLAD&rowSums(allHumanStateHg19[,cell_type])>ciLAD&allHumanStateHg19$K6!=2] = 'fiLAD'
+
+
+write.table(allHumanStateHg19[,c('seqname', 'start','end','LAD')],file = 'cl20161017_LAD_4state_K562.bed', col.names = F, quote=F,row.names=F) 
 
 ## count probes linked to each state
 table(allHumanStateHg19$LAD)
@@ -135,31 +155,43 @@ table(allHumanStateHg19$LAD)
 ```
 **probe counts for each state:**
 
-|  ciLAD |   cLAD | K562_fLAD | other_fLAD |
+|  ciLAD |   cLAD |      fLAD |      fiLAD |
 |:------:|:------:|:---------:|:----------:|
-| 218851 | 306059 |    600094 |    1009375 |
+| 434601 | 431384 |    474769 |    793625  |
 
 Now that we have the probe locations with states in a bed file, we need to translate this to regions for each state. Otherwise we can only match insertions that took place at the exact probe sites.
 
 ```
+## 2-state
+cat cl20161019_LAD_2state_K562.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > cl20161019_LAD_continuous_2state_K562.bed 
 
-cat LAD_K562_cl160629.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > LAD_K562_continuous_cl160629.bed 
+## LAD-borders
+awk '{
+if (NR!=1&&chr==$1){
+  print chr"\t"start"\t"$2
+}
+start=$3
+chr=$1
+}' cl20161019_LAD_continuous_2state_K562.bed > cl20161019_LAD_borders_K562.bed
+
+## 4-state
+cat cl20161017_LAD_4state_K562.bed | awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' > cl20161017_LAD_continuous_4state_K562.bed 
 
 ## count number of regions linked to each state
-cat LAD_K562_continuous_cl160629.bed | sort -k4,4 | uniq -c -f 3 | awk '{print $5"\t"$1}'
+cat cl20161017_LAD_continuous_4state_K562.bed | sort -k4,4 | uniq -c -f 3 | awk '{print $5"\t"$1}'
 
 ```
 **number of regions for each state:**
 
-|  ciLAD |   cLAD | K562_fLAD | other_fLAD |
+|  ciLAD |   cLAD |      fLAD |      fiLAD |
 |:------:|:------:|:---------:|:----------:|
-|   2656 |   2607 |      5208 |       5456 |
+|   2371 |   3250 |      5491 |       5052 |
 
 With this file, the barcodes can be linked:
 
 ```
 
-awk '{if ($1!="*") {print $0}}' cl20160815_trip_without_bc_list/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/carolineLADs/LAD_K562_continuous_cl160714.bed -wa -wb | awk 'BEGIN {
+awk '{if ($1!="*") {print $0}}' cl20160815_trip_without_bc_list/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161017_LAD_continuous_4state_K562.bed -wa -wb | awk 'BEGIN {
 print "barcode\tlad\tcount\ttotal"
 }{
   count[$4"\t"$10] += $5
@@ -170,6 +202,27 @@ print "barcode\tlad\tcount\ttotal"
   }
 }' > cl20160815_trip_without_bc_list/barcode_LAD_state.txt
 
+nice -18 bedtools intersect -a cl20160906_TTRIP_K562/mapping/rev_mapping.bed -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161019_LAD_continuous_2state_K562.bed -wa -wb | awk 'BEGIN {
+print "barcode\tlad\tlad_size\tcount\ttotal"
+}{
+  count[$4"\t"$10"\t"$9-$8] += $5
+  total[$4"\t"$10"\t"$9-$8] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_lad_2state.txt
+
+bedtools closest -io -t all -d -a cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161019_LAD_borders_K562.bed | awk 'BEGIN {
+print "barcode\tdistance\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_lad_border.txt
 ```
 
 
@@ -189,6 +242,26 @@ print "barcode\tchrom\tcount\ttotal"
 }' > cl20160815_trip_without_bc_list/barcode_chrom_state.txt
 
 ```
+
+## linking barcodes to HiC compartments
+I used GM12878 compartment calls from the [Rao et al. 2014 cell](http://dx.doi.org/10.1016/j.cell.2014.11.021) paper.
+It would be too cumbersome to repeat this compartment calling on K562 cells, although the HiC data was also published in the same paper.
+But both GM12878 as well as K562 cell lines originated from blood cells and the data should be highly similar.
+
+```
+bedtools intersect -a cl20160906_TTRIP_K562/mapping/rev_mapping.bed -b ~/data/tracks/hg19/GSE63525_GM12878_subcompartments.bed -wa -wb | awk '
+BEGIN {
+print "barcode\tcompartment\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' >  cl20160906_TTRIP_K562/bc_subcompartments.txt
+```
+
 ## linking barcodes to replication timing
 
 ```
@@ -208,6 +281,52 @@ do
   }' > 'cl20160815_trip_without_bc_list/replication_'$state'.txt' &
 done
 
+
+awk '{if ($1!="*") {print $0}}' cl20160815_trip_without_bc_list/rev_mapping.bed | nice -18 bedtools intersect -a - -b /home/NFS/users/c.leemans/data/tracks/hg19/GSE53984_GSM923448_K562_Rep1_segments.bed -wa -wb | awk 'BEGIN {
+print "barcode\tsegment\tcount\ttotal"
+}{
+  count[$4"\t"$10] += $5
+  total[$4"\t"$10] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160815_trip_without_bc_list/barcode_rep_segments.txt
+
+
+bedtools sort -i cl20160906_TTRIP_K562/mapping/rev_mapping.bed | bedtools window -c -w 2000 -a - -b ~/data/tracks/hg19/K562_CBX8_CHIP_ENCFF001SYX.bed | awk 'BEGIN {
+  print "barcode\tin_region\tcount\ttotal"
+}{
+  count[$4"\t"$7] += $5
+  total[$4"\t"$7] = $6
+}END{
+  for (i in count){
+     print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_CBX8.txt
+
+bedtools sort -i cl20160906_TTRIP_K562/mapping/rev_mapping.bed | bedtools window -c -w 5000 -a - -b ~/data/tracks/hg19/K562_CBX5_ENCFF507SAT.bed | awk 'BEGIN {
+  print "barcode\tin_region\tcount\ttotal"
+}{
+  count[$4"\t"$7] += $5
+  total[$4"\t"$7] = $6
+}END{
+  for (i in count){
+     print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_CBX5.txt
+
+bedtools sort -i cl20160906_TTRIP_K562/mapping/rev_mapping.bed | bedtools window -c -w 5000 -a - -b ~/data/tracks/hg19/K562_CBX1_CHIP_ENCFF182ALR.bed | awk 'BEGIN {
+  print "barcode\tin_region\tcount\ttotal"
+}{
+  count[$4"\t"$7] += $5
+  total[$4"\t"$7] = $6
+}END{
+  for (i in count){
+     print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_CBX1.txt
+
 ```
 
 ## finding nearest CpG island
@@ -225,6 +344,117 @@ print "barcode\tCpG_name\tdistance\tcount\ttotal"
 }' > cl20160815_trip_without_bc_list/cpg_distance.txt
 
 ```
+
+## finding nearest CTCF
+
+```
+
+
+bedtools sort -i /home/NFS/users/c.leemans/data/tracks/hg19/K562_CTCF_CHIP_ENCFF002CLT.bed | bedtools closest -t all -D a -a cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed -b - | awk 'BEGIN {
+print "barcode\tCTCF\tdistance\tcount\ttotal"
+}{
+  count[$4"\t"$10"\t"$11] += $5
+  total[$4"\t"$10"\t"$11] = $6
+}END{
+  for (i in count){
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_ctcf_distance.txt
+
+
+```
+
+## distance to telomere
+
+```
+bedtools closest -t all -D a -a cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161004_telomere.bed | awk 'BEGIN {
+print "barcode\tdistance\tcount\ttotal"                     
+}{
+  count[$4"\t"$11] += $5                                       
+  total[$4"\t"$11] = $6                                        
+}END{                                                                 
+  for (i in count){                                                   
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_telomere_distance.txt
+
+
+```
+
+
+## distance to centromere
+
+```
+bedtools closest -t all -D a -a cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161004_centromere.bed | awk 'BEGIN {
+print "barcode\tdistance\tcount\ttotal"                     
+}{
+  count[$4"\t"$11] += $5                                       
+  total[$4"\t"$11] = $6                                        
+}END{                                                                 
+  for (i in count){                                                   
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_centromere_distance.txt
+
+
+```
+
+
+## distance to centromere
+
+```
+bedtools closest -t all -D a -a cl20160906_TTRIP_K562/mapping/rev_mapping_sorted.bed -b /home/NFS/users/c.leemans/data/tracks/hg19/cl20161004_UCSC_knownGene_20130630.bed | awk 'BEGIN {
+print "barcode\tdistance\tcount\ttotal"                     
+}{
+  count[$4"\t"$11] += $5                                       
+  total[$4"\t"$11] = $6                                        
+}END{                                                                 
+  for (i in count){                                                   
+    print i"\t"count[i]"\t"total[i]
+  }
+}' > cl20160906_TTRIP_K562/bc_gene_distance.txt
+
+
+```
+
+## average signals 50kb around integration
+hg19.chrom.sizes was obtained using the fetchChromSizes script from the UCSC browser
+
+```
+awk '
+FNR==NR {
+  sizes[$1] = $2
+}
+FNR!=NR {
+  start=$2-25000
+  if (start<0){
+    start=0
+  }
+  end=$3+25000
+  if (end > sizes[$1]){
+    end=sizes[$1]
+  }
+  print $1"\t"start"\t"end"\t"$4"\t"$5"\t"$6
+}' ~/data/hg19/hg19.chrom.sizes cl20160906_TTRIP_K562/mapping/rev_mapping.bed > cl20160906_TTRIP_K562/mapping/rev_mapping_50kb.bed
+
+
+bedtools intersect -a cl20160906_TTRIP_K562/mapping/rev_mapping_50kb.bed -b ~/data/tracks/hg19/cl20161017_LAD_avg_probe_K562.bed -wa -wb | awk '
+BEGIN {
+print "barcode\tavg_signal\tcount\ttotal"
+}{
+  i=($4"\t%s\t"$5"\t"$6"\n")
+  sum_signal[i] += $10
+  probe_count[i] += 1
+} END {
+  for (i in sum_signal){
+    printf i, sum_signal[i]/probe_count[i]
+  }
+}'  > cl20160906_TTRIP_K562/bc_avg_probe_signal.txt
+
+~/python3.4/bin/python src/snakemake/scripts/AT_richness.py cl20160906_TTRIP_K562/mapping/rev_mapping_50kb.bed ~/data/hg19/genome.fa > cl20160906_TTRIP_K562/bc_lad_avg_probe.txt
+
+```
+
 
 # R analysis
 Now that we have barcodes linked to gDNA and cDNA counts and barcodes linked to repetitive element annotations, LAD states and chromatin states, we can combine this in R to calculate expression values and fold changes and produce some nice plots.
@@ -268,7 +498,11 @@ mapping = read.table('../cl20160906_TTRIP_K562/mapping/final_mapping.txt', heade
 bc_repeats = read.table('../cl20160906_TTRIP_K562/bc_repeat.tmp', stringsAsFactors=F, header=T)
 
 bc_lad = read.table('../cl20160906_TTRIP_K562/bc_lad.txt',stringsAsFactors=F, header=T)
+bc_lad_2state = read.table('../cl20160906_TTRIP_K562/bc_lad_2state.txt',stringsAsFactors=F, header=T)
+bc_lad_border = read.table('../cl20160906_TTRIP_K562/bc_lad_border.txt',stringsAsFactors=F, header=T)
+bc_subcompartments = read.table('../cl20160906_TTRIP_K562/bc_subcompartments.txt',stringsAsFactors=F, header=T)
 
+bc_rep_segments = read.table('../cl20160906_TTRIP_K562/bc_rep_segments.txt',stringsAsFactors=F, header=T)
 
 bc_chromatin = read.table('../cl20160906_TTRIP_K562/bc_chrom.txt', stringsAsFactors=F, header=T)
 timing_fases = c('G1', 'S1', 'S2', 'S3', 'S4', 'G2')
@@ -281,8 +515,18 @@ bc_timing = lapply(timing_fases,
 })
 names(bc_timing) = timing_fases
 bc_cpg_distance = read.table('../cl20160906_TTRIP_K562/bc_cpg_distance.txt', stringsAsFactors=F, header=T)
+bc_ctcf_distance = read.table('../cl20160906_TTRIP_K562/bc_ctcf_distance.txt', stringsAsFactors=F, header=T)
+bc_centromere_distance = read.table('../cl20160906_TTRIP_K562/bc_centromere_distance.txt', stringsAsFactors=F, header=T)
+bc_telomere_distance = read.table('../cl20160906_TTRIP_K562/bc_telomere_distance.txt', stringsAsFactors=F, header=T)
+bc_gene_distance = read.table('../cl20160906_TTRIP_K562/bc_gene_distance.txt', stringsAsFactors=F, header=T)
+bc_at_ratio = read.table('../cl20160906_TTRIP_K562/bc_at_ratio.txt', stringsAsFactors=F, header=T)
+bc_lad_avg_probe = read.table('../cl20160906_TTRIP_K562/bc_lad_avg_probe.txt', stringsAsFactors=F, header=T)
 
-
+bc_CBX1 = read.table('../cl20160906_TTRIP_K562/bc_CBX1.txt',stringsAsFactors=F, header=T)
+bc_CBX5 = read.table('../cl20160906_TTRIP_K562/bc_CBX5.txt',stringsAsFactors=F, header=T)
+bc_CBX8 = read.table('../cl20160906_TTRIP_K562/bc_CBX8.txt',stringsAsFactors=F, header=T)
+bc_CBX3_000 = read.table('../cl20160906_TTRIP_K562/bc_CBX3_000.txt',stringsAsFactors=F, header=T)
+bc_CBX3_163 = read.table('../cl20160906_TTRIP_K562/bc_CBX3_163.txt',stringsAsFactors=F, header=T)
 
 info = data.frame(POI=rep(c(rep(c('G9a','CBX','KRAB'), each=12), rep(c('CBX', 'KRAB'), each=6)), 2),
                   condition=rep(c(rep(c('GAL4', 'GAL4.POI', 'POI'),4), rep(c('GAL4.POI', 'GAL4', 'POI'),4),rep(c('GAL4','GAL4.POI',  'POI'),4),rep(c('GAL4.POI', 'GAL4', 'POI'),each=2), rep(c('GAL4', 'GAL4.POI','POI'), each=2)),2),
@@ -295,7 +539,7 @@ colnames(counts_without_bc) = do.call(sprintf, c('%s_%s_%s_D%s_r%s', info))
 colnames(spike_counts) = do.call(sprintf, c('%s_%s_%s_D%s_r%s',info[info$type=='exp',]))
 ```
 
-## distribution of the reads accros the different barcodes.
+<!-- ## distribution of the reads accros the different barcodes.
 Let's see how the barcode counts are distributed in each of the datasets.
 
 ```{r hist_count, fig.width=10, fig.height=80}
@@ -342,7 +586,7 @@ for (poi in unique(info$POI)){
 
 ```
 
-## Some data pre-processing
+## Some data pre-processing -->
 
 We have to link each barcode to a unique LAD/chromatin state and repetitive element and need to normalize expression values by the total amount of spike-in reads for each sample.
 
@@ -356,7 +600,7 @@ plot1 = ggplot(as.data.frame(table(bc_repeats$barcode)),aes(x=Freq)) + geom_hist
 plot2 = ggplot(as.data.frame(table(bc_lad$barcode)),aes(x=Freq)) + geom_histogram(binwidth = 1) + xlim(0,10) + xlab('number of unique lad states')
 plot3 = ggplot(as.data.frame(table(bc_chromatin$barcode)),aes(x=Freq)) + geom_histogram(binwidth = 1) + xlim(0,10) + xlab('number of unique\nchromatin states')
 
-grid.arrange(plot1, plot2,plot3,top = "count of barcodes linked to each number of states",nrow=1)
+# grid.arrange(plot1, plot2,plot3,top = "count of barcodes linked to each number of states",nrow=1)
 
 stat_bc_link = data.frame('ratio'=c('barcodes linked to repeats'=length(table(bc_repeats$barcode)), 'barcodes linked to lads'=length(table(bc_lad$barcode)), 'barcodes linked to chromatin states'=length(table(bc_chromatin$barcode))))
 
@@ -428,9 +672,38 @@ bc_rep_class = aggregate(list(count=bc_repeats$count), bc_repeats[, c('barcode',
 single_bc_rep_class = ddply(bc_rep_class, .(barcode, total),single_bc_link, 'rep_class', .parallel=F)
 
 single_bc_lad = ddply(bc_lad, .(barcode, total),single_bc_link, 'lad', .parallel=F)
+single_bc_lad_2state = ddply(bc_lad_2state, .(barcode, total),single_bc_link, 'lad', .parallel=F)
+single_bc_lad_size = ddply(bc_lad_2state, .(barcode, total),single_bc_link, 'size', .parallel=F)
+single_bc_lad_border = ddply(bc_lad_border, .(barcode, total),single_bc_link, 'distance', .parallel=F)
+single_bc_subcompartments = ddply(bc_subcompartments, .(barcode, total),single_bc_link, 'compartment', .parallel=F)
+
+
+single_bc_rep_segments = ddply(bc_rep_segments, .(barcode, total),single_bc_link, 'segment', .parallel=F)
+
 single_bc_chrom = ddply(bc_chromatin, .(barcode, total),single_bc_link, 'chrom', .parallel=F)
 
 single_bc_cpg_distance = ddply(bc_cpg_distance, .(barcode, total),single_bc_link, 'cpg_distance', .parallel=F)
+single_bc_ctcf_distance = ddply(bc_ctcf_distance, .(barcode, total),single_bc_link, 'ctcf_distance', .parallel=F)
+
+single_bc_centromere_distance = ddply(bc_centromere_distance, .(barcode, total),single_bc_link, 'centromere_distance', .parallel=F)
+single_bc_telomere_distance = ddply(bc_telomere_distance, .(barcode, total),single_bc_link, 'telomere_distance', .parallel=F)
+single_bc_gene_distance = ddply(bc_gene_distance, .(barcode, total),single_bc_link, 'gene_distance', .parallel=F)
+single_bc_at_ratio = ddply(bc_at_ratio, .(barcode, total),single_bc_link, 'AT_ratio', .parallel=F)
+single_bc_lad_avg_probe = ddply(bc_lad_avg_probe, .(barcode, total),single_bc_link, 'avg_signal', .parallel=F)
+
+single_bc_CBX1 = ddply(bc_CBX1, .(barcode, total),single_bc_link, 'CBX1', .parallel=F)
+single_bc_CBX5 = ddply(bc_CBX5, .(barcode, total),single_bc_link, 'CBX5', .parallel=F)
+single_bc_CBX8 = ddply(bc_CBX8, .(barcode, total),single_bc_link, 'CBX8', .parallel=F)
+single_bc_CBX3_000 = ddply(bc_CBX3_000, .(barcode, total),single_bc_link, 'CBX3_000', .parallel=F)
+single_bc_CBX3_163 = ddply(bc_CBX3_163, .(barcode, total),single_bc_link, 'CBX3_163', .parallel=F)
+
+colnames(single_bc_CBX1)[2] = 'CBX1'
+colnames(single_bc_CBX5)[2] = 'CBX5'
+colnames(single_bc_CBX8)[2] = 'CBX8'
+colnames(single_bc_CBX3_000)[2] = 'CBX3_000'
+colnames(single_bc_CBX3_163)[2] = 'CBX3_163'
+
+
 
 single_bc_timing = list()
 for (i in 1:length(bc_timing)){
@@ -441,8 +714,22 @@ unique_repeat_name_count = ddply(single_bc_rep_name, .(unique_rep_name), nrow)
 unique_repeat_fam_count = ddply(single_bc_rep_family, .(unique_rep_family), nrow)
 unique_repeat_class_count = ddply(single_bc_rep_class, .(unique_rep_class), nrow)
 unique_lad_count = ddply(single_bc_lad, .(unique_lad), nrow)
+unique_lad_2state_count = ddply(single_bc_lad_2state, .(unique_lad_2state), nrow)
+unique_rep_segment = ddply(single_bc_rep_segments, .(unique_segment), nrow)
 unique_chrom_count = ddply(single_bc_chrom, .(unique_chrom), nrow)
 unique_cpg_count = ddply(single_bc_cpg_distance, .(unique_cpg_distance), nrow)
+unique_ctcf_count = ddply(single_bc_ctcf_distance, .(unique_ctcf_distance), nrow)
+unique_telomere_count = ddply(single_bc_telomere_distance, .(unique_telomere_distance), nrow)
+unique_centromere_count = ddply(single_bc_centromere_distance, .(unique_centromere_distance), nrow)
+unique_gene_count = ddply(single_bc_gene_distance, .(unique_gene_distance), nrow)
+unique_bc_at_ratio = ddply(single_bc_at_ratio, .(unique_AT_ratio), nrow)
+unique_bc_avg_probe = ddply(single_bc_lad_avg_probe, .(unique_avg_signal), nrow)
+unique_CBX1_count = ddply(single_bc_CBX1, .(unique_CBX1), nrow)
+unique_CBX5_count = ddply(single_bc_CBX5, .(unique_CBX5), nrow)
+unique_CBX8_count = ddply(single_bc_CBX8, .(unique_CBX8), nrow)
+unique_CBX3_000_count = ddply(single_bc_CBX3_000, .(unique_CBX3_000), nrow)
+unique_CBX3_163_count = ddply(single_bc_CBX3_163, .(unique_CBX3_163), nrow)
+
 unique_timing = list()
 for (i in 1:length(bc_timing)){
   name = timing_fases[i]
@@ -499,46 +786,46 @@ norm_cpm =  do.call(cbind,lapply(unique(info$POI), poi_cpm, counts_without_bc[,i
 exp_gDNA = exp_norm_counts/norm_cpm
 
 
-for (poi in unique(exp_info$POI)){
-  for (day in unique(exp_info$day[exp_info$POI==poi])){
-    for (condition in unique(exp_info$condition)){
-      plot_list = list()
-      for (type in unique(exp_info$type)){
-        for (rep in unique(exp_info$replicate)){
-          name = colnames(exp_gDNA)[exp_info$POI==poi & exp_info$day == day &
-                                             exp_info$condition == condition &
-                                             exp_info$type == type &
-                                             exp_info$replicate == rep]
-          selection = exp_gDNA[,name]>5
-          data = data.frame(exp_gDNA[selection, ])
-          plot_list[[name]] = ggplot(data, aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
-        }
-      }
-      do.call(grid.arrange, c(plot_list, ncol=2))
-    }
-  }
-}
+# for (poi in unique(exp_info$POI)){
+#   for (day in unique(exp_info$day[exp_info$POI==poi])){
+#     for (condition in unique(exp_info$condition)){
+#       plot_list = list()
+#       for (type in unique(exp_info$type)){
+#         for (rep in unique(exp_info$replicate)){
+#           name = colnames(exp_gDNA)[exp_info$POI==poi & exp_info$day == day &
+#                                              exp_info$condition == condition &
+#                                              exp_info$type == type &
+#                                              exp_info$replicate == rep]
+#           selection = exp_gDNA[,name]>5
+#           data = data.frame(exp_gDNA[selection, ])
+#           plot_list[[name]] = ggplot(data, aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
+#         }
+#       }
+#       do.call(grid.arrange, c(plot_list, ncol=2))
+#     }
+#   }
+# }
 
-plot_list = list()
-for (poi in unique(exp_info$POI)){
-  for (day in unique(exp_info$day[exp_info$POI==poi])){
-    for (condition in unique(exp_info$condition)){
-      plot_list = list()
-      for (type in unique(exp_info$type)){
-        for (rep in unique(exp_info$replicate)){
-          name = colnames(exp_gDNA)[exp_info$POI==poi & exp_info$day == day &
-                                             exp_info$condition == condition &
-                                             exp_info$type == type &
-                                             exp_info$replicate == rep]
-          selection = exp_gDNA[,name]>5 & rownames(counts) %in% rownames(mapping)
-          data = data.frame(exp_gDNA[selection, ])
-          plot_list[[name]] = ggplot(exp_gDNA[selection, ], aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
-        }
-      }
-      do.call(grid.arrange, c(plot_list, ncol=2))
-    }
-  }
-}
+# plot_list = list()
+# for (poi in unique(exp_info$POI)){
+#   for (day in unique(exp_info$day[exp_info$POI==poi])){
+#     for (condition in unique(exp_info$condition)){
+#       plot_list = list()
+#       for (type in unique(exp_info$type)){
+#         for (rep in unique(exp_info$replicate)){
+#           name = colnames(exp_gDNA)[exp_info$POI==poi & exp_info$day == day &
+#                                              exp_info$condition == condition &
+#                                              exp_info$type == type &
+#                                              exp_info$replicate == rep]
+#           selection = exp_gDNA[,name]>5 & rownames(counts) %in% rownames(mapping)
+#           data = data.frame(exp_gDNA[selection, ])
+#           plot_list[[name]] = ggplot(exp_gDNA[selection, ], aes_string(paste0('log2(', name, ')')))+geom_histogram(binwidth=0.1)
+#         }
+#       }
+#       do.call(grid.arrange, c(plot_list, ncol=2))
+#     }
+#   }
+# }
 
 ```
 
@@ -638,24 +925,24 @@ plot_replicates <- function(poi, exp_matrix, exp_info){
 
 ```
 ```{r, fig.width=15, fig.height=19}
-do.call(grid.arrange, c(plot_replicates('KRAB', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+# do.call(grid.arrange, c(plot_replicates('KRAB', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
 ```
 ```{r, fig.width=15, fig.height=15}
-do.call(grid.arrange, c(plot_replicates('G9a', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+# do.call(grid.arrange, c(plot_replicates('G9a', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
 ```
 ```{r, fig.width=15, fig.height=19}
-do.call(grid.arrange, c(plot_replicates('CBX', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+# do.call(grid.arrange, c(plot_replicates('CBX', exp_gDNA, exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
 ```
 
 ```{r, fig.width=15, fig.height=19}
-do.call(grid.arrange, c(plot_vs('KRAB', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+# do.call(grid.arrange, c(plot_vs('KRAB', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
 ```
 ```{r, fig.width=15, fig.height=15}
-do.call(grid.arrange, c(plot_vs('G9a', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+# do.call(grid.arrange, c(plot_vs('G9a', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
 ```
 ```{r, fig.width=15, fig.height=19}
-do.call(grid.arrange, c(plot_vs('CBX', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
-```
+# do.call(grid.arrange, c(plot_vs('CBX', mean_exp, mean_exp_info), top = "normalized mean expression (Christ's data)", ncol=3))
+``` 
 
 **conclusion:**
 the samples from day 2 clearly show an effect of thethering any of the protein of interests,
@@ -670,7 +957,7 @@ Now that we have expression values we can calculate fold changes and link these 
 ## calculate foldchange
 ## but leave out BCDs with zero reads
 foldch <- function(exp_vec) {
-  if (all(!is.na(exp_vec)) & all(as.numeric(exp_vec) > 0)) {
+  if (all(!is.na(exp_vec))) {
     calc <- as.numeric(exp_vec[1]) / as.numeric(exp_vec[2])
   }
   else {
@@ -717,26 +1004,72 @@ fc_table = cbind(fc_table, above_norm_cut)
 map_match = match(rownames(fc_table), rownames(mapping))
 fc_table = cbind(fc_table, mapping[map_match,])
 
-fc_table[['chrom']] = fc_table[['lad']] = fc_table[['rep_class']] = fc_table[['rep_family']] = fc_table[['cpg_distance']] = '-'
-fc_table[['unique_chrom']] = fc_table[['unique_lad']] = fc_table[['unique_rep_family']] = fc_table[['unique_rep_class']] = fc_table[['unique_cpg_distance']] = NA
+discrete_types = c('chrom', 'lad', 'lad_2state', 'compartment', 'segment',
+                   'rep_class', 'rep_family')
+continuous_types = c('lad_size', 'lad_border_distance', 'cpg_distance', 'ctcf_distance', 'centromere_distance', 'telomere_distance', 'gene_distance', 'AT_ratio', 'lad_avg_probe', 'CBX1', 'CBX5', 'CBX8', 'CBX3_000', 'CBX3_163')
+for (type in discrete_types){
+  fc_table[[type]] = '-'
+  fc_table[[paste0('unique_', type)]] = NA
+}
+for (type in continuous_types){
+  fc_table[[type]] = NaN
+  fc_table[[paste0('unique_', type)]] = NA
+}
 
 fam_match = match(rownames(fc_table), single_bc_rep_family$barcode)
 class_match = match(rownames(fc_table), single_bc_rep_class$barcode)
 lad_match = match(rownames(fc_table), single_bc_lad$barcode)
+lad_2state_match = match(rownames(fc_table), single_bc_lad_2state$barcode)
+lad_size_match = match(rownames(fc_table), single_bc_lad_size$barcode)
+lad_border_match = match(rownames(fc_table), single_bc_lad_border$barcode)
+compartment_match = match(rownames(fc_table), single_bc_subcompartments$barcode)
+
+rep_segment_match = match(rownames(fc_table), single_bc_rep_segments$barcode)
 chrom_match = match(rownames(fc_table), single_bc_chrom$barcode)
 cpg_match = match(rownames(fc_table), single_bc_cpg_distance$barcode)
+ctcf_match = match(rownames(fc_table), single_bc_ctcf_distance$barcode)
+centromere_match = match(rownames(fc_table), single_bc_centromere_distance$barcode)
+telomere_match = match(rownames(fc_table), single_bc_telomere_distance$barcode)
+gene_match = match(rownames(fc_table), single_bc_gene_distance$barcode)
+at_match = match(rownames(fc_table), single_bc_at_ratio$barcode)
+lad_probe_match = match(rownames(fc_table), single_bc_lad_avg_probe$barcode)
+
+CBX1_match = match(rownames(fc_table), single_bc_CBX1$barcode)
+CBX5_match = match(rownames(fc_table), single_bc_CBX5$barcode)
+CBX8_match = match(rownames(fc_table), single_bc_CBX8$barcode)
+CBX3_000_match = match(rownames(fc_table), single_bc_CBX3_000$barcode)
+CBX3_163_match = match(rownames(fc_table), single_bc_CBX3_163$barcode)
 
 
 fc_table[!is.na(fam_match),c('rep_family', 'unique_rep_family')] = single_bc_rep_family[fam_match[!is.na(fam_match)], c('family', 'unique_rep_family')]
 fc_table[!is.na(class_match),c('rep_class', 'unique_rep_class')] = single_bc_rep_class[class_match[!is.na(class_match)], c('class', 'unique_rep_class')]
 fc_table[!is.na(lad_match),c('lad', 'unique_lad')] = single_bc_lad[lad_match[!is.na(lad_match)], c('lad', 'unique_lad')]
+fc_table[!is.na(lad_2state_match),c('lad_2state', 'unique_lad_2state')] = single_bc_lad_2state[lad_2state_match[!is.na(lad_2state_match)], c('lad', 'unique_lad')]
+fc_table[!is.na(lad_size_match),c('lad_size', 'unique_lad_size')] = single_bc_lad_size[lad_size_match[!is.na(lad_size_match)], c('lad_size', 'unique_size')]
+fc_table[!is.na(lad_border_match),c('lad_border_distance', 'unique_lad_border_distance')] = single_bc_lad_border[lad_border_match[!is.na(lad_border_match)], c('distance', 'unique_distance')]
+fc_table[!is.na(compartment_match),c('compartment', 'unique_compartment')] = single_bc_subcompartments[compartment_match[!is.na(compartment_match)], c('compartment', 'unique_compartment')]
+
+fc_table[!is.na(rep_segment_match),c('segment', 'unique_segment')] = single_bc_rep_segments[rep_segment_match[!is.na(rep_segment_match)], c('segment', 'unique_segment')]
 fc_table[!is.na(chrom_match),c('chrom', 'unique_chrom')] = single_bc_chrom[chrom_match[!is.na(chrom_match)], c('chrom', 'unique_chrom')]
 fc_table[!is.na(cpg_match),c('cpg_distance', 'unique_cpg_distance')] = single_bc_cpg_distance[cpg_match[!is.na(cpg_match)], c('distance', 'unique_cpg_distance')]
+fc_table[!is.na(ctcf_match),c('ctcf_distance', 'unique_ctcf_distance')] = single_bc_ctcf_distance[ctcf_match[!is.na(ctcf_match)], c('distance', 'unique_ctcf_distance')]
+fc_table[!is.na(centromere_match),c('centromere_distance', 'unique_centromere_distance')] = single_bc_centromere_distance[centromere_match[!is.na(centromere_match)], c('distance', 'unique_centromere_distance')]
+fc_table[!is.na(telomere_match),c('telomere_distance', 'unique_telomere_distance')] = single_bc_telomere_distance[telomere_match[!is.na(telomere_match)], c('distance', 'unique_telomere_distance')]
+fc_table[!is.na(gene_match),c('gene_distance', 'unique_gene_distance')] = single_bc_gene_distance[gene_match[!is.na(gene_match)], c('distance', 'unique_gene_distance')]
+fc_table[!is.na(at_match),c('AT_ratio', 'unique_AT_ratio')] = single_bc_at_ratio[at_match[!is.na(at_match)], c('AT_ratio', 'unique_AT_ratio')]
+fc_table[!is.na(lad_probe_match),c('lad_avg_probe', 'unique_lad_avg_probe')] = single_bc_lad_avg_probe[lad_probe_match[!is.na(lad_probe_match)], c('avg_signal', 'unique_avg_signal')]
+
+fc_table[!is.na(CBX1_match),c('CBX1', 'unique_CBX1')] = single_bc_CBX1[CBX1_match[!is.na(CBX1_match)], c('CBX1', 'unique_CBX1')]
+fc_table[!is.na(CBX5_match),c('CBX5', 'unique_CBX5')] = single_bc_CBX5[CBX5_match[!is.na(CBX5_match)], c('CBX5', 'unique_CBX5')]
+fc_table[!is.na(CBX8_match),c('CBX8', 'unique_CBX8')] = single_bc_CBX8[CBX8_match[!is.na(CBX8_match)], c('CBX8', 'unique_CBX8')]
+fc_table[!is.na(CBX3_000_match),c('CBX3_000', 'unique_CBX3_000')] = single_bc_CBX3_000[CBX3_000_match[!is.na(CBX3_000_match)], c('CBX3_000', 'unique_CBX3_000')]
+fc_table[!is.na(CBX3_163_match),c('CBX3_163', 'unique_CBX3_163')] = single_bc_CBX3_163[CBX3_163_match[!is.na(CBX3_163_match)], c('CBX3_163', 'unique_CBX3_163')]
+
 
 for (fase in timing_fases){
   name = paste0('signal_', fase)
   unique = paste0('unique_', name)
-  fc_table[[name]] = '-'
+  fc_table[[name]] = NaN
   fc_table[[unique]] = NA
   match = match(rownames(fc_table), single_bc_timing[[fase]]$barcode)
   fc_table[!is.na(match),c(name, unique)] = single_bc_timing[[fase]][match[!is.na(match)], c(name, unique)]
@@ -758,9 +1091,9 @@ plot_unique_vs <- function(mean_exp, fc_table, info, top, unique_map=T){
 }
 
 
-plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on  normalization counts (Christ's data)", unique_map=F)
+# plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on  normalization counts (Christ's data)", unique_map=F)
 
-plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on unique mapping and normalization (Christ's data)")
+# plot_unique_vs(mean_exp, fc_table, mean_exp_info, "normalized mean expression filtered on unique mapping and normalization (Christ's data)")
 
 
 ```
@@ -826,13 +1159,13 @@ unique_class$map[!fc_table$unique_map] = 'not unique'
 unique_class$map[fc_table$unique_map] = 'unique location'
 colnames(unique_class) = c('mapping', 'repeat name', 'repeat family', 'repeat class', 'LAD-state', 'Chromatin-state', 'cpg distance', paste('Replication timing', timing_fases))
 
-unique_table = melt(cbind('barcode'=rownames(fc_table),unique_class),id.vars='barcode')
-ggplot(unique_table[!is.na(unique_table$value),], aes(x=factor(variable), fill=factor(value, levels=c('unique location', 'unique family/state', 'not unique')))) + geom_bar() + 
-    ylab('count') +
-    xlab('datatype to which the barcode is linked') + 
-    theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
-    ggtitle('number of barcodes linked to\ndifferent sources of information') +
-    scale_fill_discrete(name = 'unique?') 
+# unique_table = melt(cbind('barcode'=rownames(fc_table),unique_class),id.vars='barcode')
+# ggplot(unique_table[!is.na(unique_table$value),], aes(x=factor(variable), fill=factor(value, levels=c('unique location', 'unique family/state', 'not unique')))) + geom_bar() + 
+#     ylab('count') +
+#     xlab('datatype to which the barcode is linked') + 
+#     theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+#     ggtitle('number of barcodes linked to\ndifferent sources of information') +
+#     scale_fill_discrete(name = 'unique?') 
 
 ```
 
@@ -848,6 +1181,7 @@ The barcodes mapped at different locations however show a lot more multiple loca
 
 
 ```{r}
+
 f_name = '../results/TTRIP_K562_FC_exp.rData'
 fc_table = cbind(exp_gDNA, mean_exp, fc_table)
 save(fc_table, mean_exp_info, file=f_name)

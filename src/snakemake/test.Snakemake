@@ -1,0 +1,169 @@
+import getpass
+import datetime
+import inspect
+import os
+
+filename = inspect.getframeinfo(inspect.currentframe()).filename
+path = os.path.dirname(os.path.abspath(filename))
+
+
+configfile: "%s/config.yaml" % path
+
+user = getpass.getuser()
+date = datetime.datetime.now()
+date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
+OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
+
+TIMING = glob_wildcards(config["extract"]["timing"])[0]
+TYPE_LIST = ['mapping', 'normalization', 'expression', 'spike']
+TYPE_LIST = [read_type for read_type in TYPE_LIST if read_type in config]
+
+
+
+
+rule all:
+    input:
+        expand('{outdir}/mapping/{map}.barcode.count', outdir=OUTDIR, map=config['mapping'].keys()),
+        expand('{outdir}/normalization/{norm}.statistics.txt', outdir=OUTDIR, norm=config['normalization'].keys()),
+        expand('{outdir}/spike/{spike}.statistics.txt', outdir=OUTDIR, spike=config['expression'].keys())
+
+rule count_barcode:
+    input:
+        expand('{outdir}/{read_type}/{{name}}.barcode.txt.gz', outdir='test', read_type='mapping')
+    output:
+        '{outdir}/{read_type}/{name}.barcode.count'
+    shell:
+        "gunzip -cf - | awk '{{print $2}}' | sort | uniq -c < {input} > {output}"
+
+
+if 'normalization' in config:
+    THIS_DIR = '%s/normalization' % (OUTDIR)
+    if not os.path.exists(THIS_DIR):
+        os.makedirs(THIS_DIR)
+    for NAME in config['normalization']:
+        if NAME not in config['expression']:
+            raise KeyError('normalization file missing for %s' % NAME)
+    rule parse_normalization:
+        input:
+            lambda wildcards: config['normalization'][wildcards.name][0]
+        output:
+            '%s/{name}.barcode.txt.gz' % (THIS_DIR),
+            '%s/{name}.statistics.txt' % (THIS_DIR),
+            structure = temp('%s/{name}.structure.txt' % (THIS_DIR))
+        log:
+            '%s/{name}_parser.log' % (THIS_DIR)
+        params:
+            structure= config['structure']['normalization'],
+            type_dict= config['normalization'],
+            outdir = THIS_DIR,
+            name= '{name}'
+        run:
+            structure = params.structure % params.type_dict[params.name][1]
+            with open(output.structure, 'w') as f:
+                f.write(params.structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b {wildcards.name} {input} {output.structure} {params.outdir}')
+
+if 'expression' in config:
+    THIS_DIR = '%s/expression' % (OUTDIR)
+    if not os.path.exists(THIS_DIR):
+        os.makedirs(THIS_DIR)
+    for NAME in config['expression']:
+        if NAME not in config['normalization']:
+            raise KeyError('expression file missing for %s' % NAME)
+    rule parse_expression:
+        input:
+            lambda wildcards: config['expression'][wildcards.name][0]
+        output:
+            '%s/{name}.barcode.txt.gz' % (THIS_DIR),
+            '%s/{name}.statistics.txt' % (THIS_DIR),
+            structure = temp('%s/{name}.structure.txt' % (THIS_DIR))
+        log:
+            '%s/{name}_parser.log' % (THIS_DIR)
+        params:
+            structure= config['structure']['expression'],
+            type_dict= config['expression'],
+            outdir = THIS_DIR
+        run:
+            structure = params.structure % params.type_dict[wildcards.name]
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b {wildcards.name} {input} {output.structure} {params.outdir}')
+
+
+if 'spike' in config:
+    THIS_DIR = '%s/spike' % OUTDIR
+    if not os.path.exists(THIS_DIR):
+        os.makedirs(THIS_DIR)
+    rule parse_spike_pool:
+        input:
+            config['spike'][0]
+        output:
+            '%s/pool.barcode.txt.gz' % (THIS_DIR),
+            '%s/pool.statistics.txt' % (THIS_DIR),
+            structure = temp('%s/pool.structure.txt' % (THIS_DIR))
+        log:
+            '%s/pool_parser.log' % (THIS_DIR)
+        params:
+            structure = config['structure']['spike'] % config['spike'][1],
+            type_dict= config['expression'],
+            name = 'pool',
+            outdir = THIS_DIR
+        run:
+            structure = params.structure % params.type_dict[wildcard.name][1]
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b {params.name} {input} %s {params.outdir}' % output.structure)
+
+    rule parse_spike_sample:
+        input:
+            lambda wildcards: config['expression'][wildcards.name][0]
+        output:
+            '%s/{name}.barcode.txt.gz' % (THIS_DIR),
+            '%s/{name}.statistics.txt' % (THIS_DIR),
+            structure = temp('%s/{name}.structure.txt' % (THIS_DIR))
+        log:
+            '%s/{name}_parser.log' % (THIS_DIR)
+        params:
+            structure= config['structure']['spike'],
+            type_dict= config['expression'],
+            outdir = THIS_DIR,
+            name= '{name}'
+        run:
+            structure = params.structure % params.type_dict[params.name][1]
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            print('{output.structure}')
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b {wildcards.name} {input} %s {params.outdir}' % output.structure)
+
+
+if 'mapping' in config:
+    THIS_DIR = 'test/mapping'
+    if not os.path.exists(THIS_DIR):
+        os.makedirs(THIS_DIR)
+    rule parse_mapping:
+        input:
+            lambda wildcards: config['mapping'][wildcards.name][0]
+        output:
+            '%s/{name}.barcode.txt.gz' % (THIS_DIR),
+            '%s/{name}.1.fastq.gz' % (THIS_DIR),
+            '%s/{name}.2.fastq.gz' % (THIS_DIR),
+            '%s/{name}.statistics.txt' % (THIS_DIR),
+            structure = temp('%s/{name}.structure.txt' % (THIS_DIR))
+        log:
+            '%s/{name}_parser.log' % (THIS_DIR)
+        params:
+            structure= config['structure']['mapping'],
+            type_dict= config['mapping'],
+            outdir = THIS_DIR,
+            name= '{name}'
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            print('{output.structure}')
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} -p {input[1]} '
+                  '-b {wildcards.name} {input[0]} {output.structure} {params.outdir}')

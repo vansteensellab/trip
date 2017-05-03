@@ -1,0 +1,1166 @@
+# knitr document van Steensel lab
+
+# Thethered TRIP
+## Christ Leemans, 31-05-2016 - to date 
+
+## Introduction
+Laura performed a thetered-TRIP experiment on a K562 cell pool. She transiently transfected the cell pool with GAL4 thetered to 3 different "proteins of interest"(POI), namely G9a, the KRAB domain and CBX5. She took measurements after day 2 to see the initial effect of the thetering and after 12, 11 and 9 days respectively to see if there was any memory of the silencing on day 2. Besides the thetered GAL4-POI, two seperate controlls were taken using unthetered GAL4 and unthethered POI.
+
+## Experimental setup
+At this moment Laura has data for 3 different tethering experiments using KRAB, G9a and CBX5. For each protein of interest (POI) there are 12 expression and 12 gDNA files: 3 conditions * 2 different days after induction * 2 replicates. One condition uses an unthethered POI, the second uses only GAL4 and the third condition uses the POI thethered to GAL4 (GAL4-POI). Expression and gDNA data was obtained on day 2 and day 9. With each sequencing run, spikeins were added to normalize across different experiments. There is a different config file to extract the expression values of the spikeins.
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r functions}
+days = list(KRAB=c(11,14), G9a=12 ,CBX=c(9,12))
+opts_chunk$set(out.width='750px', dpi=200)
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+load('../results/TTRIP_K562_FC_exp.rData')
+
+fc_table[fc_table$segment %in% c('UTZ', 'DTZ'), 'segment'] = 'TZ'
+
+filter_data <- function(fc_table, conditionx, conditiony, poi, day, xtype, ytype, state=NA, unique_map=F){
+    # Filter the data for a specific experiment (e.g. GAL4-KRAB vs GAL4 on day 2)
+    # Check the data preperation script for a more in depth look on the different
+    # selection criteria.
+    #
+    # Args:
+    #   fc_table: the big data-frame with all data.
+    #   conditionx: the column name with the classification/expression/fold change that should be on the x-axis
+    #   conditiony: the column name with the classification/expression/fold change that should be on the y-axis
+    #   poi: the protein of interest in this experiment
+    #   day: the day of the experiment
+    #   xtype: what is the type of data for the x column?
+    #          Used to transform the data correctly [value, factor or log2]
+    #   ytype: what is the type of data for the y column?
+    #          Used to transform the data correctly [value, factor or log2]
+    #   state: optional value to add a state definition as a third column.
+    # Returns:
+    #   A filtered data frame with an x and y column, the x column contains a factor with
+    #   the classification, the y column contains log2 transformed values of the experiment.
+    total = nrow(fc_table)
+    # check if the normalization counts are above 50 for each sample
+    above_norm = sprintf('%s_D%i_above_norm_cut', poi, day)
+    if (length(above_norm)>1){
+        fc_table = fc_table[apply(fc_table[,above_norm],1, all),]
+
+    } else{
+        fc_table = fc_table[fc_table[,above_norm], ]
+    }
+    
+    summary_table = data.frame(cutoff=rep(NA, 5),
+                               removed=rep(0, 5),
+                               left=rep(0, 5),
+                               stringsAsFactors=F)
+    summary_table[1,] = list('above norm-count of 50', 
+                             total - nrow(fc_table),
+                             nrow(fc_table))
+    # is the barcode uniquely linked to a single classification for clasifications used
+    
+    if (!is.na(state)){
+        col_names = c('x','y','state')
+        cd_matrix = cbind(c(xtype,ytype, 'factor'),c(conditionx,conditiony, state))
+    } else {
+        col_names = c('x','y')
+        cd_matrix = cbind(c(xtype,ytype),c(conditionx,conditiony))
+    }
+    if (unique_map){
+        cd_matrix = rbind(cd_matrix, c('map', 'map'))
+    }
+    for (i in 1:nrow(cd_matrix)){
+        type = cd_matrix[i,1]
+        if (type == 'factor'){
+            state = cd_matrix[i,2]
+            unique_name = paste0('unique_',state)
+            fc_table = fc_table[fc_table[,unique_name] | fc_table[,state]=='-',]
+        }
+        else if(type == 'map'){
+            fc_table = fc_table[fc_table[,'unique_map'],]
+        }
+    }
+    summary_table[2, ] = list('unique barcode-state link',
+                              summary_table[1,'left'] - nrow(fc_table),
+                              nrow(fc_table))
+
+    # check if the log2 expression for the barcode of the GAL4 control > 0
+    base_exp = sprintf('%s_GAL4_exp_%s',poi, day)
+    above_exp_cut = log2(fc_table[,base_exp])>0
+    if (length(base_exp)>1){
+        fc_table = fc_table[apply(above_exp_cut,1, all),]
+    } else{
+        fc_table = fc_table[above_exp_cut, ]
+    }
+    summary_table[3, ] = list('log2 base expression > 0', 
+                              summary_table[2,'left'] - nrow(fc_table),
+                              nrow(fc_table))
+    
+
+    # create a factor column x with the classification
+    # the order can be important for the order in which the data is later represented in a plot.
+    xy_list = list()
+    for (i in 1:nrow(cd_matrix)){
+        type = cd_matrix[i,1]
+        condition = cd_matrix[i,2]
+        if (type == 'factor'){
+            if (condition == 'lad'){
+                new_values = factor(fc_table[,condition], levels=c('cLAD','fLAD', 'fiLAD', 'ciLAD', '-'))
+            } else if(condition=='chrom'){
+                chrom_levels = unique(fc_table[,condition])
+                chrom_levels = chrom_levels[!is.na(chrom_levels)]
+                # sort on the number in the state name
+                chrom_levels = chrom_levels[order(sapply(chrom_levels,function(x){
+                    # if the state is unknown, return a high number so that it ends up at the end of the sort
+                    if (x!='-'){
+                        return(as.numeric(str_split(x,'_')[[1]][1]))
+                    } else{
+                        return(Inf)
+                    }}))]
+                new_values = factor(fc_table[,condition], levels=chrom_levels)
+
+            } else if (condition == 'segment'){
+                new_values = factor(fc_table[,condition], levels=c('ERD', 'TZ', 'LRD', '-'))
+            } else if (condition == 'replication_lad'){
+                new_values = factor(fc_table[,condition], levels=c('LAD/ERD', 'LAD/TZ', 'LAD/LRD', 'iLAD/ERD', 'iLAD/TZ', 'iLAD/LRD'))
+            } else if (str_detect(condition, 'CBX')) {
+                new_values = fc_table[, condition]
+                new_values[new_values > 0] = 'YES'
+                new_values[new_values == 0] = 'NO'
+                new_values = factor(new_values, levels=c('YES', 'NO'))
+            }
+            } else {
+                new_values = factor(fc_table[,condition])
+            }
+            
+        } else if (type=='log2'){
+
+            new_values = log2(fc_table[,condition] + 0.001)
+        } else if (type != 'map'){
+            new_values = fc_table[,condition]
+        }
+        if (type != 'map'){
+            xy_list[[i]] = new_values
+        }
+    }
+    xy_table=data.frame(xy_list)
+    colnames(xy_table) = col_names
+    rownames(xy_table) = rownames(fc_table)
+    xy_table = data.frame(xy_table)
+    xy_table = xy_table[!is.na(xy_table$x), ]
+    xy_table = xy_table[!is.na(xy_table$y), ]
+    summary_table[4, ] = list('not NA', 
+                              summary_table[3,'left'] - nrow(xy_table),
+                              nrow(xy_table))
+
+    xy_table = xy_table[!is.infinite(xy_table$x), ]
+    xy_table = xy_table[!is.infinite(xy_table$y), ]
+    summary_table[5, ] = list('not infinite', 
+                              summary_table[4,'left'] - nrow(xy_table),
+                              nrow(xy_table))
+    return(list(xy_table, summary_table))
+}
+
+plot_wilcox <- function(xy_table, state, poi, day, title, xlab, ylab="log2 (fold change)", text_size=20, p_cut=0.05){
+    # function to perform wilcoxon tests for a certain state (e.g. cLADs), and if significant,
+    # display the results and plot the log2 fold change that state against the values of the
+    # other states.
+    # Args:
+    #   xy_table: table with filtered x and y values and a state linked to each barcode
+    #   title: title of the plot
+    #   xlab: label on x-axis
+    #   ylab: label on y-axis
+    #   text_size: size of the text on the axis
+    # Return:
+    #   ggplot object with plot and ggplot object with outcome of Wilcoxon-test statistiscs
+    if (length(which(xy_table$x==state)) > 0){
+        wc = wilcox.test(xy_table$y[xy_table$x==state],xy_table$y[xy_table$x!=state], conf.int=T)
+        wc$data.name = sprintf('%s day%i %s vs NOT %s', poi, day, state, state)
+        nlevels = length(levels(xy_table$x))
+        p.value = p.adjust(wc$p.value, method = 'fdr', n = nlevels)
+        if (wc$p.value < p_cut){
+            notx = paste('NOT', state)
+            xy_table$this_x[xy_table$x==state] = state
+            xy_table$this_x[xy_table$x!=state] = notx
+            xy_table$this_x = factor(xy_table$this_x, levels=c(state,notx))
+            t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\nadjusted p-value threshold:\n%0.5g\ndata:%s day%i %s vs NOT %s\nW = %i, p-value = %0.5g\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f',  p_cut, poi, day, state, state, wc$statistic, p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
+            p = ggplot(xy_table,aes(x = this_x, y=y, colour=state)) +
+                theme(panel.background = element_rect(fill = "lavender")) +
+                theme(strip.text.x = element_text(size = 28)) + geom_boxplot(aes(colour=factor(this_x)), outlier.colour=NA) +
+                geom_point(shape=19, position=position_jitter(width=.2))  + ggtitle(title) +
+                stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+                theme(legend.position="none") +
+                theme(axis.title = element_text(size = 28)) +
+                theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+                theme(axis.text = element_text(size = text_size)) +
+                geom_hline(yintercept=0, colour = "grey30") +
+                theme(plot.title = element_text(size=24)) +
+                ylab(ylab) + xlab(xlab)
+            return(list(p,t))
+        } else{
+            return(NA)
+        }
+    } else {
+        return(NA)
+    }
+    
+}
+
+plot_values <- function(xy_table, xlab, ylab, bc_vec = c(), which_state=NA, text_size=20){
+    # function to plot log2 expression or fold changes in column y against classifications in column x
+    # coloured by x
+    # Args:
+    #   xy_table: table with filtered x and y values
+    #   xlab: label on x-axis
+    #   ylab: label on y-axis
+    #   bc_vec: vector for plotting a subset of barcodes as points (boxplot still uses complete range)
+    #   which_state: optional value to plot the expression for a single state
+    #   text_size: size of the text on the axis
+    # Return:
+    #   ggplot object with plot
+    if (!is.na(which_state)){
+        xy_table = xy_table[xy_table$x == which_state, ]
+    }
+    if (length(bc_vec)>0){
+        subset = xy_table[bc_vec,]
+        points = geom_boxplot() + geom_point(data=subset,aes(y=y), shape=19, size =0.9, position=position_jitter(width=.2))
+    } else {
+        points = geom_point(shape=19, size =0.9, position=position_jitter(width=.2))
+    }
+    ggplot(xy_table,aes(x = x, y=y, colour=x)) +
+        theme(panel.background = element_rect(fill = "lavender")) +
+        theme(strip.text.x = element_text(size = 28)) +
+        points +
+        stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+        theme(legend.position="none") +
+        theme(axis.title = element_text(size = 20, face='bold')) +
+        theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+        theme(axis.text = element_text(size = text_size)) +
+        geom_hline(yintercept=0, colour = "grey30") +
+        theme(plot.title = element_text(size=38))+
+        ylab(ylab) + xlab(xlab)
+}
+
+correlate <- function(xy_table, title, day1, day2){
+    fit = lm(xy_table$y ~ xy_table$x)
+    coef = summary(fit)$coefficients
+    spearman = cor.test(xy_table$x, xy_table$y, method='spearman')
+    pearson = cor.test(xy_table$x, xy_table$y, method='pearson')
+    test_text = sprintf("    Spearman's rank correlation rho
+ data:  day %.0f and day %.0f
+ S = %.0f, p-value = %0.4f
+ alternative hypothesis: 
+ true rho is not equal to 0
+ sample estimates:
+       rho 
+ %0.7f 
+ 
+    Pearson's product-moment correlation
+ data:  day %.0f and day %.0f
+ t = %.04f, df = %.0f, p-value = %0.4f
+ alternative hypothesis: 
+ true correlation is not equal to 0
+ 95 percent confidence interval:
+  %0.8f  %0.8f
+ sample estimates:
+       cor 
+ %0.7f ", day1, day2, spearman$statistic, spearman$p.value, spearman$estimate,
+ day1, day2, pearson$statistic, pearson$parameter, pearson$p.value, pearson$conf.int[1],
+ pearson$conf.int[2], pearson$estimate)
+    test_table = tableGrob(rbind(title,test_text),rows=NULL, theme=ttheme_default(core=list(fg_params=list(fontsize=c(12,10), fontface=c(2L,1L)))))
+    spearman_p = spearman$p.value
+    pearson_p = pearson$p.value
+
+    label = sprintf('y = %0.3f + %0.3fx\nn=%i; P=%0.3f; S=%0.3f',  coef[1,'Estimate'], coef[2,'Estimate'], nrow(xy_table), pearson_p, spearman_p)
+    return(list(test_table, label))
+}
+
+plot_2vs9 <- function(xy_table, xlab, ylab, day1, day2, y_lim = ylim(-7.5,2.5), x_lim=xlim(-10,2), nCol=NULL, label_size=20, text_size=10){
+    # function to plot fold change of day 2 against fold change after day 9, 11 or12
+    # seperated by state
+    # Args:
+    #   xy_table: table with filtered x and y values and a state linked to each barcode
+    #   title: title of the plot
+    #   xlab: label on x-axis
+    #   ylab: label on y-axis
+    #   mem_day: day of the memory experiment (e.g. 9)
+    #   text_size: size of the text on the axis
+    # Return:
+    #   ggplot object with plot and list of ggplot objects with pearon and spearman results
+    state_vec = names(which(table(xy_table$state)>1))
+    grob_list = list()
+    fit_table = data.frame(state=state_vec, x=Inf, y=Inf, label=NA)
+    for (state in state_vec){
+        this_xy = xy_table[which(xy_table$state==state), ]
+        if (nrow(this_xy)>3){
+            test = correlate(this_xy, state, day1, day2)
+            grob_list[[state]] = test[[1]]
+            fit_table[fit_table$state==state,'label'] = test[[2]]
+        }
+    }
+    
+    aes = aes(x = x, y=y, colour=state)
+    cat('\n\n')
+    g = ggplot(xy_table, aes) +
+        theme(panel.background = element_rect(fill = "lavender"))+
+        theme(strip.text.x = element_text(size = 10)) +
+        geom_point(shape=19, size =0.9, position=position_jitter(width=.2))  +
+        theme(legend.position="none") +
+        theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+        theme(axis.title = element_text(size=label_size)) +
+        theme(text = element_text(size = text_size)) +
+        geom_hline(yintercept=0, colour = "grey30") +
+        geom_text(aes(x=x,y=y,label=label), data=fit_table, vjust=1, hjust=1, size=5) +
+        ggtitle('P=Pearson; S=Spearman') + y_lim + x_lim +
+        ylab(ylab) + xlab(xlab) + stat_smooth(method = "lm") + facet_wrap(~ state, ncol=nCol)
+    return(list(g, grob_list))
+}
+
+```
+
+```{r}
+class_vec = c('signal_G1', 'signal_S1', 'signal_S2', 'signal_S3', 'signal_S4', 'signal_G2')
+
+for (class in class_vec){
+    fc_table[,class] = as.numeric(fc_table[,class])
+}
+
+
+
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (class in class_vec){
+        xlab = 'read count'
+        text_size = 20
+        ncol = 3
+        xtype = 'value'
+        # the column name of the fold-change on day 2
+        condition_2 = paste0(poi, '_GPvsG_day2')
+        # filter the data and get table with x and y values and a statistics table
+        # x and y value table:
+        #   x: a factor of the classification
+        #   y: the log2 transformed fold changes
+        # statistics table:
+        #   for each selection criteria how many barcodes were kicked out and how many were left.
+        fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, xtype, 'log2')
+        xy_table_2= fc_2[[1]]
+        # create a grob for plotting the statistics and a plot for the fold-changes
+        stats_2[[class]][[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+        plots_2[[class]][[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                              text_size=text_size)
+        fc_9 = list()
+        condition_9 = list()
+        # do the same for later day
+        stats_9[[class]][[poi]] = list()
+        plots_9[[class]][[poi]] = list()
+        for (day in days[[poi]]){
+            d = as.character(day)
+            condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+            fc_9[[d]] = filter_data(fc_table, class,  condition_9[[d]], poi, day, xtype, 'log2')
+            xy_table_9 = fc_9[[d]][[1]]
+            stats_9[[class]][[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+            plots_9[[class]][[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                       'log2(fold change)', 
+                                                       text_size=text_size)
+
+        }
+        
+        # and for the expression at day 2
+        condition_exp = paste0(poi,'_GAL4_exp_2')
+        fc = filter_data(fc_table, class, condition_exp, poi, 2, xtype, 'log2')
+        xy_table = fc[[1]]
+        
+        stats_exp[[class]][[poi]] = tableGrob(fc[[2]], rows=NULL)
+        plots_exp[[class]][[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                                  text_size=text_size)
+        
+
+        stats_expVs9[[class]][[poi]] = list()
+        plots_expVs9[[class]][[poi]] = list()
+        corr_expVs9[[class]][[poi]] = list()
+        stats_2vs9[[class]][[poi]] = list()
+        plots_2vs9[[class]][[poi]] = list()
+        corr_2vs9[[class]][[poi]] = list()
+        lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+        lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+        for (day in days[[poi]]){
+            d = as.character(day)
+            # and plots of base expression vs fold change on day 9
+            fc_expVs9 = filter_data(fc_table, condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+            xy_table = fc_expVs9[[1]]
+            stats_expVs9[[class]][[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+            p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                          day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+            plots_expVs9[[class]][[poi]][[d]] = p[[1]]
+            
+            corr_expVs9[[class]][[poi]][[d]] = p[[2]]
+
+            # and plots of fold change on day 2 vs day 9
+            fc_2vs9 = filter_data(fc_table, condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+            xy_table = fc_2vs9[[1]]
+            stats_2vs9[[class]][[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+            p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                          day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+            plots_2vs9[[class]][[poi]][[d]] = p[[1]]
+            
+            corr_2vs9[[class]][[poi]][[d]] = p[[2]]
+        }
+    
+    }
+    
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (class in class_vec){
+
+        title = sprintf("fold change day %i\n%s",2,poi)
+        grid.arrange(stats_2[[class]][[poi]], plots_2[[class]][[poi]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (class in class_vec){
+        for (day in names(plots_9[[class]][[poi]])){
+            title = sprintf("fold change day %s\n%s %s",day,poi, class)
+            grid.arrange(stats_9[[class]][[poi]][[day]], plots_9[[class]][[poi]][[day]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+        }
+    }
+    
+}
+```
+
+
+```{r}
+class = 'segment'
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = plots_wilcox_2 = plots_wilcox_9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){    
+    xlab = 'replication timing'
+    text_size = 20
+    ncol = 2
+    xtype = 'factor'
+    # the column name of the fold-change on day 2
+    condition_2 = paste0(poi, '_GPvsG_day2')
+    # filter the data and get table with x and y values and a statistics table
+    # x and y value table:
+    #   x: a factor of the classification
+    #   y: the log2 transformed fold changes
+    # statistics table:
+    #   for each selection criteria how many barcodes were kicked out and how many were left.
+    fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, xtype, 'log2')
+    xy_table_2= fc_2[[1]]
+    # create a grob for plotting the statistics and a plot for the fold-changes
+    stats_2[[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+    plots_2[[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                          text_size=text_size)
+    fc_9 = list()
+    condition_9 = list()
+    # do the same for later day
+    stats_9[[poi]] = list()
+    plots_9[[poi]] = list()
+    for (day in days[[poi]]){
+        d = as.character(day)
+        condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+        fc_9[[d]] = filter_data(fc_table, class,  condition_9[[d]], poi, day, xtype, 'log2')
+        xy_table_9 = fc_9[[d]][[1]]
+        stats_9[[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+        plots_9[[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                   'log2(fold change)', 
+                                                   text_size=text_size)
+
+    }
+    
+    # and for the expression at day 2
+    condition_exp = paste0(poi,'_GAL4_exp_2')
+    fc = filter_data(fc_table, class, condition_exp, poi, 2, xtype, 'log2')
+    xy_table = fc[[1]]
+    
+    stats_exp[[poi]] = tableGrob(fc[[2]], rows=NULL)
+    plots_exp[[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                              text_size=text_size)
+
+    
+    plots_wilcox_2[[poi]] = list()
+    plots_wilcox_9[[poi]] = list()
+    # and now the wilcoxon tests for each state in a class
+    for (state in unique(fc_table[,class])){
+        wc=plot_wilcox(fc_2[[1]], state, poi, 2,  xlab, sprintf("fold change day %i\n%s",2,poi), 'log2(fold-change)')
+        if (any(!is.na(wc))){
+            plots_wilcox_2[[poi]][[state]] = wc
+        }
+    }
+    for (day in days[[poi]]){
+        d = as.character(day)
+        plots_wilcox_9[[poi]][[d]] = list()
+        for (state in unique(fc_table[,class])){
+            wc=plot_wilcox(fc_9[[d]][[1]], state, poi, day,  xlab, sprintf("fold change day%i\n%s",day,poi), 'log2(fold-change)')
+            if (any(!is.na(wc))){
+                plots_wilcox_9[[poi]][[d]][[state]] = wc
+            }
+        }
+    }
+    
+
+    stats_expVs9[[poi]] = list()
+    plots_expVs9[[poi]] = list()
+    corr_expVs9[[poi]] = list()
+    stats_2vs9[[poi]] = list()
+    plots_2vs9[[poi]] = list()
+    corr_2vs9[[poi]] = list()
+    lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+    lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+    for (day in days[[poi]]){
+        d = as.character(day)
+        # and plots of base expression vs fold change on day 9
+        fc_expVs9 = filter_data(fc_table, condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_expVs9[[1]]
+        stats_expVs9[[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                      day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+        plots_expVs9[[poi]][[d]] = p[[1]]
+        
+        corr_expVs9[[poi]][[d]] = p[[2]]
+
+        # and plots of fold change on day 2 vs day 9
+        fc_2vs9 = filter_data(fc_table, condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_2vs9[[1]]
+        stats_2vs9[[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                      day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+        plots_2vs9[[poi]][[d]] = p[[1]]
+        
+        corr_2vs9[[poi]][[d]] = p[[2]]
+    }
+
+
+    
+}
+
+
+```
+
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i\n%s",2,poi)
+    grid.arrange(stats_2[[poi]], plots_2[[poi]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i %s",2,poi)
+    for (state in names(plots_wilcox_2[[poi]])){
+        wc = plots_wilcox_2[[poi]][[state]]
+        grid.arrange(wc[[2]], wc[[1]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s\n%s %s",day,poi, class)
+        grid.arrange(stats_9[[poi]][[day]], plots_9[[poi]][[day]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s %s",day,poi)
+        for (state in names(plots_wilcox_9[[day]][[poi]])){
+            wc = plots_wilcox_9[[day]][[poi]][[state]]
+            grid.arrange(wc[[2]], wc[[1]],
+                         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+        }
+    }
+}
+```
+
+```{r}
+class = 'segment'
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = plots_wilcox_2 = plots_wilcox_9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){    
+    xlab = 'replication timing'
+    text_size = 20
+    ncol = 2
+    xtype = 'factor'
+    # the column name of the fold-change on day 2
+    condition_2 = paste0(poi, '_GPvsG_day2')
+    # filter the data and get table with x and y values and a statistics table
+    # x and y value table:
+    #   x: a factor of the classification
+    #   y: the log2 transformed fold changes
+    # statistics table:
+    #   for each selection criteria how many barcodes were kicked out and how many were left.
+    fc_2 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class,  condition_2, poi, 2, xtype, 'log2')
+    xy_table_2= fc_2[[1]]
+    # create a grob for plotting the statistics and a plot for the fold-changes
+    stats_2[[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+    plots_2[[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                          text_size=text_size)
+    fc_9 = list()
+    condition_9 = list()
+    # do the same for later day
+    stats_9[[poi]] = list()
+    plots_9[[poi]] = list()
+    for (day in days[[poi]]){
+        d = as.character(day)
+        condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+        fc_9[[d]] = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class,  condition_9[[d]], poi, day, xtype, 'log2')
+        xy_table_9 = fc_9[[d]][[1]]
+        stats_9[[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+        plots_9[[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                   'log2(fold change)', 
+                                                   text_size=text_size)
+
+    }
+    
+    # and for the expression at day 2
+    condition_exp = paste0(poi,'_GAL4_exp_2')
+    fc = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class, condition_exp, poi, 2, xtype, 'log2')
+    xy_table = fc[[1]]
+    
+    stats_exp[[poi]] = tableGrob(fc[[2]], rows=NULL)
+    plots_exp[[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                              text_size=text_size)
+
+
+    plots_wilcox_2[[poi]] = list()
+    plots_wilcox_9[[poi]] = list()
+    # and now the wilcoxon tests for each state in a class
+    for (state in unique(fc_table[fc_table$chrom=='13_Heterochrom/lo', class])){
+        wc=plot_wilcox(fc_2[[1]], state, poi, 2,  xlab, sprintf("fold change day %i\n%s",2,poi), 'log2(fold-change)')
+        if (any(!is.na(wc))){
+            plots_wilcox_2[[poi]][[state]] = wc
+        }
+    }
+    for (day in days[[poi]]){
+        d = as.character(day)
+        plots_wilcox_9[[poi]][[d]] = list()
+        for (state in unique(fc_table[fc_table$chrom=='13_Heterochrom/lo', class])){
+            wc=plot_wilcox(fc_9[[d]][[1]], state, poi, day,  xlab, sprintf("fold change day%i\n%s",day,poi), 'log2(fold-change)')
+            if (any(!is.na(wc))){
+                plots_wilcox_9[[poi]][[d]][[state]] = wc
+            }
+        }
+    }
+    
+
+    stats_expVs9[[poi]] = list()
+    plots_expVs9[[poi]] = list()
+    corr_expVs9[[poi]] = list()
+    stats_2vs9[[poi]] = list()
+    plots_2vs9[[poi]] = list()
+    corr_2vs9[[poi]] = list()
+    lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+    lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+    for (day in days[[poi]]){
+        d = as.character(day)
+        # and plots of base expression vs fold change on day 9
+        fc_expVs9 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_expVs9[[1]]
+        stats_expVs9[[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                      day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+        plots_expVs9[[poi]][[d]] = p[[1]]
+        
+        corr_expVs9[[poi]][[d]] = p[[2]]
+
+        # and plots of fold change on day 2 vs day 9
+        fc_2vs9 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_2vs9[[1]]
+        stats_2vs9[[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                      day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+        plots_2vs9[[poi]][[d]] = p[[1]]
+        
+        corr_2vs9[[poi]][[d]] = p[[2]]
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i\n%s\nonly chrom_state 13",2,poi)
+    grid.arrange(stats_2[[poi]], plots_2[[poi]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i %s\nonly chrom_state 13",2,poi)
+    for (state in names(plot_wilcox_2[[poi]])){
+        wc = plot_wilcox_2[[poi]][[state]]
+        grid.arrange(wc[[2]], wc[[1]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s\n%s %s\nonly chrom_state 13",day,poi, class)
+        grid.arrange(stats_9[[poi]][[day]], plots_9[[poi]][[day]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s %s\nonly chrom_state 13",day,poi)
+        for (state in names(plots_wilcox_9[[day]][[poi]])){
+            wc = plots_wilcox_9[[day]][[poi]][[state]]
+            print(grid.arrange(wc[[2]], wc[[1]],
+                               top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3)))
+        }
+    }
+}
+```
+
+
+```{r}
+class = 'lad'
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = plots_wilcox_2 = plots_wilcox_9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){    
+    xlab = 'lad state'
+    text_size = 20
+    ncol = 2
+    xtype = 'factor'
+    # the column name of the fold-change on day 2
+    condition_2 = paste0(poi, '_GPvsG_day2')
+    # filter the data and get table with x and y values and a statistics table
+    # x and y value table:
+    #   x: a factor of the classification
+    #   y: the log2 transformed fold changes
+    # statistics table:
+    #   for each selection criteria how many barcodes were kicked out and how many were left.
+    fc_2 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class,  condition_2, poi, 2, xtype, 'log2')
+    xy_table_2= fc_2[[1]]
+    # create a grob for plotting the statistics and a plot for the fold-changes
+    stats_2[[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+    plots_2[[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                          text_size=text_size)
+    fc_9 = list()
+    condition_9 = list()
+    # do the same for later day
+    stats_9[[poi]] = list()
+    plots_9[[poi]] = list()
+    for (day in days[[poi]]){
+        d = as.character(day)
+        condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+        fc_9[[d]] = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class,  condition_9[[d]], poi, day, xtype, 'log2')
+        xy_table_9 = fc_9[[d]][[1]]
+        stats_9[[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+        plots_9[[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                   'log2(fold change)', 
+                                                   text_size=text_size)
+
+    }
+    
+    # and for the expression at day 2
+    condition_exp = paste0(poi,'_GAL4_exp_2')
+    fc = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], class, condition_exp, poi, 2, xtype, 'log2')
+    xy_table = fc[[1]]
+    
+    stats_exp[[poi]] = tableGrob(fc[[2]], rows=NULL)
+    plots_exp[[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                              text_size=text_size)
+
+
+    plots_wilcox_2[[poi]] = list()
+    plots_wilcox_9[[poi]] = list()
+    # and now the wilcoxon tests for each state in a class
+    for (state in unique(fc_table[fc_table$chrom=='13_Heterochrom/lo', class])){
+        wc=plot_wilcox(fc_2[[1]], state, poi, 2,  xlab, sprintf("fold change day %i\n%s",2,poi), 'log2(fold-change)')
+        if (any(!is.na(wc))){
+            plots_wilcox_2[[poi]][[state]] = wc
+        }
+    }
+    for (day in days[[poi]]){
+        d = as.character(day)
+        plots_wilcox_9[[poi]][[d]] = list()
+        for (state in unique(fc_table[fc_table$chrom=='13_Heterochrom/lo', class])){
+            wc=plot_wilcox(fc_9[[d]][[1]], state, poi, day,  xlab, sprintf("fold change day%i\n%s",day,poi), 'log2(fold-change)')
+            if (any(!is.na(wc))){
+                plots_wilcox_9[[poi]][[d]][[state]] = wc
+            }
+        }
+    }
+    
+
+    stats_expVs9[[poi]] = list()
+    plots_expVs9[[poi]] = list()
+    corr_expVs9[[poi]] = list()
+    stats_2vs9[[poi]] = list()
+    plots_2vs9[[poi]] = list()
+    corr_2vs9[[poi]] = list()
+    lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+    lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+    for (day in days[[poi]]){
+        d = as.character(day)
+        # and plots of base expression vs fold change on day 9
+        fc_expVs9 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_expVs9[[1]]
+        stats_expVs9[[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                      day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+        plots_expVs9[[poi]][[d]] = p[[1]]
+        
+        corr_expVs9[[poi]][[d]] = p[[2]]
+
+        # and plots of fold change on day 2 vs day 9
+        fc_2vs9 = filter_data(fc_table[fc_table$chrom=='13_Heterochrom/lo', ], condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_2vs9[[1]]
+        stats_2vs9[[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                      day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+        plots_2vs9[[poi]][[d]] = p[[1]]
+        
+        corr_2vs9[[poi]][[d]] = p[[2]]
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i\n%s\nonly chrom_state 13",2,poi)
+    grid.arrange(stats_2[[poi]], plots_2[[poi]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i %s\nonly chrom_state 13",2,poi)
+    for (state in names(plots_wilcox_2[[poi]])){
+        wc = plots_wilcox_2[[poi]][[state]]
+        grid.arrange(wc[[2]], wc[[1]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s\n%s %s\nonly chrom_state 13",day,poi, class)
+        grid.arrange(stats_9[[poi]][[day]], plots_9[[poi]][[day]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s %s\nonly chrom_state 13",day,poi)
+        for (state in names(plots_wilcox_9[[day]][[poi]])){
+            wc = plots_wilcox_9[[day]][[poi]][[state]]
+            print(grid.arrange(wc[[2]], wc[[1]],
+                               top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3)))
+        }
+    }
+}
+```
+
+
+
+```{r}
+lad_2state = fc_table$lad
+lad_2state[lad_2state == 'cLAD' | lad_2state == 'fLAD'] = 'LAD'
+lad_2state[lad_2state == 'ciLAD' | lad_2state == 'fiLAD'] = 'iLAD'
+fc_table$replication_lad = paste(lad_2state, fc_table$segment, sep='/')
+fc_table$unique_replication_lad = fc_table$unique_lad & fc_table$unique_segment
+class = 'replication_lad'
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = plots_wilcox_2 = plots_wilcox_9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){    
+    xlab = 'LAD/replication timing'
+    text_size = 20
+    ncol = 2
+    xtype = 'factor'
+    # the column name of the fold-change on day 2
+    condition_2 = paste0(poi, '_GPvsG_day2')
+    # filter the data and get table with x and y values and a statistics table
+    # x and y value table:
+    #   x: a factor of the classification
+    #   y: the log2 transformed fold changes
+    # statistics table:
+    #   for each selection criteria how many barcodes were kicked out and how many were left.
+    fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, xtype, 'log2')
+    xy_table_2= fc_2[[1]]
+    # create a grob for plotting the statistics and a plot for the fold-changes
+    stats_2[[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+    plots_2[[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                          text_size=text_size)
+    fc_9 = list()
+    condition_9 = list()
+    # do the same for later day
+    stats_9[[poi]] = list()
+    plots_9[[poi]] = list()
+    for (day in days[[poi]]){
+        d = as.character(day)
+        condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+        fc_9[[d]] = filter_data(fc_table, class,  condition_9[[d]], poi, day, xtype, 'log2')
+        xy_table_9 = fc_9[[d]][[1]]
+        stats_9[[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+        plots_9[[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                   'log2(fold change)', 
+                                                   text_size=text_size)
+
+    }
+    
+    # and for the expression at day 2
+    condition_exp = paste0(poi,'_GAL4_exp_2')
+    fc = filter_data(fc_table, class, condition_exp, poi, 2, xtype, 'log2')
+    xy_table = fc[[1]]
+    
+    stats_exp[[poi]] = tableGrob(fc[[2]], rows=NULL)
+    plots_exp[[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                              text_size=text_size)
+
+
+    plots_wilcox_2[[poi]] = list()
+    plots_wilcox_9[[poi]] = list()
+    # and now the wilcoxon tests for each state in a class
+    for (state in unique(fc_table[, class])){
+        wc=plot_wilcox(fc_2[[1]], state, poi, 2,  xlab, sprintf("fold change day %i\n%s",2,poi), 'log2(fold-change)')
+        if (any(!is.na(wc))){
+            plots_wilcox_2[[poi]][[state]] = wc
+        }
+    }
+    for (day in days[[poi]]){
+        d = as.character(day)
+        plots_wilcox_9[[poi]][[d]] = list()
+        for (state in unique(fc_table[, class])){
+            wc=plot_wilcox(fc_9[[d]][[1]], state, poi, day,  xlab, sprintf("fold change day%i\n%s",day,poi), 'log2(fold-change)')
+            if (any(!is.na(wc))){
+                plots_wilcox_9[[poi]][[d]][[state]] = wc
+            }
+        }
+    }
+    
+
+    stats_expVs9[[poi]] = list()
+    plots_expVs9[[poi]] = list()
+    corr_expVs9[[poi]] = list()
+    stats_2vs9[[poi]] = list()
+    plots_2vs9[[poi]] = list()
+    corr_2vs9[[poi]] = list()
+    lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+    lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+    for (day in days[[poi]]){
+        d = as.character(day)
+        # and plots of base expression vs fold change on day 9
+        fc_expVs9 = filter_data(fc_table[, ], condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_expVs9[[1]]
+        stats_expVs9[[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                      day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+        plots_expVs9[[poi]][[d]] = p[[1]]
+        
+        corr_expVs9[[poi]][[d]] = p[[2]]
+
+        # and plots of fold change on day 2 vs day 9
+        fc_2vs9 = filter_data(fc_table[, ], condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+        xy_table = fc_2vs9[[1]]
+        stats_2vs9[[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+        p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                      day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+        plots_2vs9[[poi]][[d]] = p[[1]]
+        
+        corr_2vs9[[poi]][[d]] = p[[2]]
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i\n%s",2,poi)
+    grid.arrange(stats_2[[poi]], plots_2[[poi]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i %s",2,poi)
+    for (state in names(plots_wilcox_2[[poi]])){
+        wc = plots_wilcox_2[[poi]][[state]]
+        grid.arrange(wc[[2]], wc[[1]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s\n%s %s",day,poi, class)
+        grid.arrange(stats_9[[poi]][[day]], plots_9[[poi]][[day]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s %s",day,poi)
+        for (state in names(plots_wilcox_9[[day]][[poi]])){
+            wc = plots_wilcox_9[[day]][[poi]][[state]]
+            print(grid.arrange(wc[[2]], wc[[1]],
+                               top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3)))
+        }
+    }
+}
+```
+
+
+```{r}
+
+plots_2 = plots_9 = plots_exp = plots_2vs9 = plots_expVs9 = stats_2 = stats_9 = stats_exp = corr_2vs9 = stats_2vs9 = corr_expVs9 = stats_expVs9 = plots_wilcox_2 = plots_wilcox_9 = list()
+for (poi in c('KRAB', 'G9a', 'CBX')){    
+    for (class in c('CBX1', 'CBX3_000', 'CBX3_163', 'CBX_5', 'CBX8')){
+        xlab = class
+        text_size = 20
+        ncol = 2
+        xtype = 'factor'
+        # the column name of the fold-change on day 2
+        condition_2 = paste0(poi, '_GPvsG_day2')
+        # filter the data and get table with x and y values and a statistics table
+        # x and y value table:
+        #   x: a factor of the classification
+        #   y: the log2 transformed fold changes
+        # statistics table:
+        #   for each selection criteria how many barcodes were kicked out and how many were left.
+        fc_2 = filter_data(fc_table, class,  condition_2, poi, 2, xtype, 'log2')
+        xy_table_2= fc_2[[1]]
+        # create a grob for plotting the statistics and a plot for the fold-changes
+        stats_2[[class]][[poi]] = tableGrob(fc_2[[2]], rows=NULL)
+        plots_2[[class]][[poi]] = plot_values(xy_table_2, xlab, 'log2(fold change)', 
+                                              text_size=text_size)
+        fc_9 = list()
+        condition_9 = list()
+        # do the same for later day
+        stats_9[[class]][[poi]] = list()
+        plots_9[[class]][[poi]] = list()
+        for (day in days[[poi]]){
+            d = as.character(day)
+            condition_9[[d]] = sprintf('%s_GPvsG_day%i',poi,day)
+
+            fc_9[[d]] = filter_data(fc_table, class,  condition_9[[d]], poi, day, xtype, 'log2')
+            xy_table_9 = fc_9[[d]][[1]]
+            stats_9[[class]][[poi]][[d]] = tableGrob(fc_9[[d]][[2]], rows=NULL)
+            plots_9[[class]][[poi]][[d]] = plot_values(xy_table_9, xlab, 
+                                                       'log2(fold change)', 
+                                                       text_size=text_size)
+
+        }
+        
+        # and for the expression at day 2
+        condition_exp = paste0(poi,'_GAL4_exp_2')
+        fc = filter_data(fc_table, class, condition_exp, poi, 2, xtype, 'log2')
+        xy_table = fc[[1]]
+        
+        stats_exp[[class]][[poi]] = tableGrob(fc[[2]], rows=NULL)
+        plots_exp[[class]][[poi]] = plot_values(xy_table, xlab, 'log2(expression)', 
+                                                  text_size=text_size)
+
+
+        plots_wilcox_2[[class]][[poi]] = list()
+        plots_wilcox_9[[class]][[poi]] = list()
+        # and now the wilcoxon tests for each state in a class
+        for (state in unique(fc_table[, class])){
+            wc=plot_wilcox(fc_2[[1]], state, poi, 2,  xlab, sprintf("fold change day %i\n%s",2,poi), 'log2(fold-change)')
+            if (any(!is.na(wc))){
+                plots_wilcox_2[[class]][[poi]][[state]] = wc
+            }
+        }
+        for (day in days[[poi]]){
+            d = as.character(day)
+            plots_wilcox_9[[class]][[poi]][[d]] = list()
+            for (state in unique(fc_table[, class])){
+                wc=plot_wilcox(fc_9[[d]][[1]], state, poi, day,  xlab, sprintf("fold change day%i\n%s",day,poi), 'log2(fold-change)')
+                if (any(!is.na(wc))){
+                    plots_wilcox_9[[class]][[poi]][[d]][[state]] = wc
+                }
+            }
+        }
+        
+
+        stats_expVs9[[class]][[poi]] = list()
+        plots_expVs9[[class]][[poi]] = list()
+        corr_expVs9[[class]][[poi]] = list()
+        stats_2vs9[[class]][[poi]] = list()
+        plots_2vs9[[class]][[poi]] = list()
+        corr_2vs9[[class]][[poi]] = list()
+        lim_exp = xlim(min(xy_table$y), max(xy_table$y))
+        lim_2 = xlim(min(xy_table_2$y), max(xy_table_2$y))
+        for (day in days[[poi]]){
+            d = as.character(day)
+            # and plots of base expression vs fold change on day 9
+            fc_expVs9 = filter_data(fc_table[, ], condition_exp,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+            xy_table = fc_expVs9[[1]]
+            stats_expVs9[[class]][[poi]][[d]] = tableGrob(fc_expVs9[[2]], rows=NULL)
+            p = plot_2vs9(xy_table, 'log2(expression)', 'log2(fold change)', 2,
+                          day, x_lim=lim_exp, nCol=ncol, text_size=text_size)
+            plots_expVs9[[class]][[poi]][[d]] = p[[1]]
+            
+            corr_expVs9[[class]][[poi]][[d]] = p[[2]]
+
+            # and plots of fold change on day 2 vs day 9
+            fc_2vs9 = filter_data(fc_table[, ], condition_2,  condition_9[[d]], poi, day, 'log2', 'log2', class)
+            xy_table = fc_2vs9[[1]]
+            stats_2vs9[[class]][[poi]][[d]] = tableGrob(fc_2vs9[[2]], rows=NULL)
+            p = plot_2vs9(xy_table, 'log2(fold change)', 'log2(fold change)', 2,
+                          day,x_lim = lim_2, nCol=ncol, text_size=text_size)
+            plots_2vs9[[class]][[poi]][[d]] = p[[1]]
+            
+            corr_2vs9[[class]][[poi]][[d]] = p[[2]]
+        }
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i\n%s",2,poi)
+    grid.arrange(stats_2[[poi]], plots_2[[poi]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    title = sprintf("fold change day %i %s",2,poi)
+    for (state in names(plots_wilcox_2[[poi]])){
+        wc = plots_wilcox_2[[poi]][[state]]
+        grid.arrange(wc[[2]], wc[[1]],
+                     top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
+    }
+}
+```
+
+```{r, fig.width=10, fig.height=15, eval=T}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s\n%s %s",day,poi, class)
+        grid.arrange(stats_9[[poi]][[day]], plots_9[[poi]][[day]],
+                 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
+    }
+}
+for (poi in c('KRAB', 'G9a', 'CBX')){
+    for (day in names(plots_9[[poi]])){
+        title = sprintf("fold change day %s %s",day,poi)
+        for (state in names(plots_wilcox_9[[day]][[poi]])){
+            wc = plots_wilcox_9[[day]][[poi]][[state]]
+            print(grid.arrange(wc[[2]], wc[[1]],
+                               top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3)))
+        }
+    }
+}
+```

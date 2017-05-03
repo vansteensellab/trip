@@ -1,0 +1,551 @@
+# knitr document van Steensel lab
+
+# Doxicyclin induction efficiency
+## Christ Leemans, 21-10-2016 - to date 
+
+## Introduction
+In the Laura's TTRIP experiments in K562 we saw a group of barcodes that appeared to have memory after the GAL4-fussion protein was no longer detected. These barcodes were predominately in the middle of large LADs with a very late replication time.
+However it is possible these intergrations are very sensitive to repression and there is an undetectable trace of GAL4-fussion protein by which the are affected. It would be nice to see the ballance between induction and repression in relation to the positioning and size of LADs.
+[Akthar et al. 2013](http://dx.doi.org/10.1016/j.cell.2013.07.018) has already published experiments with reporter induction by different concentrations of doxycycline. It would be nice to see if there is a relation between the amount of DOX needed for induction and the positioning inside the LADs.
+
+
+### expression data
+I am using supplementary Data S2 which contains counts for the Dox experiments in the Tet-Off cell pools. I named this file 'tet-Off-AD_BC-Pos-Exp.txt'
+
+### Lamina association.
+I am using Caroline's dataset and select the lamin state calls from the ES cells:
+```r
+load("/home/NFS/users/ca.d.graaf/projects/analyses/CdG130501mouseLmnb1Atlas/CdG140219mouseAtlas10CellType.rData")
+options(scipen=10)
+lad_es = factor(allStates[,'ES'])
+levels(lad_es) = c('interLAD', 'LAD')
+
+# otherwise 30000000 is displayed as 3e+07
+options(scipen=10)
+
+write.table(cbind(annot[,c('seqname', 'start','end')], lad_es), file = 'cl20161021_LAD_2state_mES.bed', col.names=F, row.names=F, quote=F, sep='\t')
+```
+
+```
+awk '{if (NR==1){chr=$1; start=$2; end=$3; lad=$4} else if ($4==lad&&$1==chr){end=$3} else {print chr"\t"start"\t"end"\t"lad; chr=$1; start=$2; end=$3; lad=$4}}END{print chr"\t"start"\t"end"\t"lad}' cl20161021_LAD_2state_mES.bed > cl20161021_LAD_2state_continuous_mES.bed
+
+## LAD-borders
+# there are 2 probes overlapping of which one is LAD, the other is interLAD
+# since before the first probe, there's a series of probes interLAD and after the second probes are called as LAD, there is a big chance this is an actual border.
+awk '{
+if (NR!=1&&chr==$1){
+  if (end < $2){
+    printf line, $2
+    line=chr"\t"end"\t%s\t"$4"\n"
+
+  } else {
+    printf line, end
+    line=chr"\t"$2"\t%s\t"$4"\n"
+  }
+} else {
+    line=$1"\t"$2"\t%s\t"$4"\n"
+}
+end=$3
+chr=$1
+} END {
+printf line, end
+}' cl20161021_LAD_2state_continuous_mES.bed > cl20161021_LAD_borders_mES.bed
+
+```
+
+### link integrations to lamina association
+
+There are some barcodes that occur in multiple pools, to make everything unique, I add the letter of the pool to the end of the barcode.
+
+```
+tail -n+3 raw_data/tet-Off-AD_BC-Pos-Exp.txt | awk '{split($1,a,"-");print $3"\t"$4"\t"$4+1"\t"$2"_"a[3]}' | bedtools sort > raw_data/tet-Off-AD_BC-Pos-Exp.bed
+
+bedtools intersect -wb -a raw_data/tet-Off-AD_BC-Pos-Exp.bed -b ~/data/tracks/mm9/cl20161021_LAD_2state_continuous_mES.bed | awk '
+BEGIN {
+    print "barcode\tlad_state\tsize"
+}{
+    print $4"\t"$8"\t"$7-$6
+}' >  cl20161021_dox_tet-Off/tet-Off-AD_LAD_state.txt
+
+bedtools closest -io -t all -d -a raw_data/tet-Off-AD_BC-Pos-Exp.bed -b ~/data/tracks/mm9/cl20161021_LAD_borders_mES.bed | awk 'BEGIN {
+print "barcode\tdistance"
+}{
+    print $4"\t"$8
+}' > cl20161021_dox_tet-Off/tet-Off-AD_LAD_border.txt
+
+``` 
+
+
+
+# R analysis
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r}
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+```
+
+## read the data
+
+let's first read the data
+
+```{r preperation, cache=T}
+bc_lad_border = read.table('../cl20161021_dox_tet-Off/tet-Off-AD_LAD_border.txt',
+                           stringsAsFactors=F, header=T, row.names=1)
+bc_lad_state = read.table('../cl20161021_dox_tet-Off/tet-Off-AD_LAD_state.txt',
+                          stringsAsFactors=F, header=T, row.names=1)
+tet_off_table = read.table('../raw_data/tet-Off-AD_BC-Pos-Exp.txt',
+                           stringsAsFactors=F, header=T)
+norm = grep('normalization', colnames(tet_off_table))
+exp = grep('expression', colnames(tet_off_table))
+
+norm_relative = t(t(tet_off_table[,norm])/colSums(tet_off_table[,norm]))
+exp_relative = t(t(tet_off_table[,exp])/colSums(tet_off_table[,exp]))
+
+norm_exp = exp_relative / norm_relative
+rownames(norm_exp) = apply(tet_off_table, 1, function(x){paste(x[2],strsplit(x[1],'-')[[1]][[3]],sep='_')})
+norm_exp = data.frame(norm_exp)
+
+mean_exp = (norm_exp[,1:4] + norm_exp[,5:8])/2
+
+state_match = match(rownames(mean_exp), rownames(bc_lad_state))
+border_match = match(rownames(mean_exp), rownames(bc_lad_border))
+
+mean_exp = cbind.data.frame(mean_exp, bc_lad_state[state_match,], border=bc_lad_border[border_match,])
+```
+
+## reproducability
+
+let's double check the reproducability
+
+```{r reproducability, fig.width=10, fig.height=10,  cache=T}
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(norm_exp)[i]
+    col2=colnames(norm_exp)[i + 4]
+    cor_line_1 = paste("r(p)=",signif(cor(x=norm_exp[,col1], y=norm_exp[,col2], method = "pearson", use="pairwise.complete.obs"),digits=3))
+    cor_line_2 = paste0("r(s)=",signif(cor(x=norm_exp[,col1], y=norm_exp[,col2], method = "spearman",use="pairwise.complete.obs"),digits=3))
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+
+    plot_list[[i]] = ggplot(norm_exp, aes_string(x=paste('log2(', col1, '+ 0.01)'), y=paste('log2(', col2, '+ 0.01)'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.8,colour="RED") +
+                      geom_abline()+
+                      xlab(col1)+
+                      ylab(col2) +
+                      ggtitle(bquote(atop(.(title), atop(.(cor_line_1), .(cor_line_2))))) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+
+## 0-values
+for (i in 1:4){
+    print(table(tet_off_table[which(mean_exp[,i]==0),1]))
+}
+
+for (i in 1:4){
+    print(table(mean_exp[which(mean_exp[,i]==0),'lad_state']) /
+          table(mean_exp[,'lad_state']))
+}
+
+```
+
+**conclusions:**
+
+The lower doxicycline concentrations are highly reproducible, unfortunately the higher concentrations are less reproducible. 0 expression values seem to rise with doxicycline induction in all cell pools, but the 0 values are consistently more abundant in C and D pools. There are also consistently more 0 values in LADs.
+
+## LAD-state
+Let's first look at the simple division in 2 states.
+
+```{r lad_state, fig.width=10, fig.height=10,  cache=T}
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title, 'LAD state', sep='\n')
+    not_na = !is.na(mean_exp[,'lad_state'])
+    plot_list[[i]] = ggplot(mean_exp[not_na,], aes_string(x='factor(lad_state)', y=paste('log2(', col1, ')'), colour='factor(lad_state)')) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(position=position_jitter(width=0.9), size=0.6, alpha=0.4, colour='RED') + 
+                      geom_violin(alpha=0.4) +
+                      labs(x='lad-state',y=col1,colour='lad state')+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=2))
+```
+
+**conclusions:**
+Maybe we should leave out the 0 values for now. There might be something interesting in that particular subset, maybe they are unaffected by dox, but they obscure the trends observed in the rest of the data. Besides the 0 values it seems like there is equal fold difference between LADs and interLADs in all samples.
+
+
+```{r lad_size, fig.width=10, fig.height=40,  cache=T}
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title, 'LAD size', sep='\n')
+    selection = which(!is.na(mean_exp[,'size']) & mean_exp[,'lad_state'] == 'LAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(size)', y=paste('log2(', col1, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad size',y=col1)+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title, 'interLAD size', sep='\n')
+    selection = which(!is.na(mean_exp[,'size']) & mean_exp[,'lad_state'] == 'interLAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(size)', y=paste('log2(', col1, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad size',y=col1)+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+```
+
+**conclusion:**
+
+There is a clear relation between the size of the respective LAD or interLAD and the expression in each of the conditions
+
+```{r lad_border, fig.width=10, fig.height=40,  cache=T}
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title, 'LAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'size']) & mean_exp[,'lad_state'] == 'LAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1)+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+plot_list = list()
+for (i in 1:4){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title, 'interLAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'border']) & mean_exp[,'lad_state'] == 'interLAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1) +
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+```
+
+**conclusion:**
+
+There is a clear relation between the distance to the border of the respective LAD or interLAD and the expression in each of the conditions.
+
+
+## changes in relative expression
+
+According to the K562 cell line experiments, integration more than 2^18 bp (262 kb) to the edge of the LAD are extremely late replicating. Let's use this cutoff to split up the data.
+
+```{r lad_border_change,fig.width=10, fig.height=10, cache=T}
+mean_exp$extreme = '-'
+deep_LAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'LAD')
+mean_exp[deep_LAD, 'extreme'] = sprintf('deep LAD (n=%i)',length(deep_LAD))
+shallow_LAD=which(log2(mean_exp$border)<=18 & mean_exp$lad_state == 'LAD')
+mean_exp[shallow_LAD, 'extreme'] = sprintf('shallow LAD (n=%i)',length(shallow_LAD))
+deep_interLAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'interLAD')
+mean_exp[deep_interLAD, 'extreme'] = sprintf('deep interLAD (n=%i)',length(deep_interLAD))
+shallow_interLAD=which(log2(mean_exp$border)<=18 & mean_exp$lad_state == 'interLAD')
+mean_exp[shallow_interLAD, 'extreme'] = sprintf('shallow LAD (n=%i)',length(shallow_interLAD))
+
+
+
+count_name_vec = grep('counts', colnames(mean_exp), value=T)
+concentrations = c(100, 0.1, 0.01, 0)
+names(concentrations) = count_name_vec
+
+exp_melt = melt(mean_exp, measure.vars=count_name_vec)
+exp_melt$concentrations = concentrations[exp_melt$variable]
+
+plot_list = list()
+
+
+exp_melt = exp_melt[exp_melt$extreme != '-',]
+median_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, median=median(value))
+
+title = 'median expression change\ndeepness LADs/interLADs'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=median_data, aes(x=log2(concentrations), y=log2(median), colour=extreme)) +
+                  ylab('log2(expression)') +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+mean_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, mean=mean(log2(value + min(value[value!=0])/2), na.rm=T))
+
+title = 'mean expression change\ndeepness LADs/interLADs'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value + 0.0001), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=mean_data, aes(x=log2(concentrations), y=mean, colour=extreme)) +
+                  ylab(sprintf('log2(expression + %f)', min(exp_melt$value[exp_melt$value > 0])/2)) +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+dropout = ddply(exp_melt, .(concentrations, extreme), summarise, dropout_ratio=length(which(value==0))/length(value))
+dropout$extreme = factor(dropout$extreme)
+dropout$extreme = factor(dropout$extreme, levels=levels(dropout$extreme)[c(1,4,3,2)])
+
+ggplot(dropout, aes(x=factor(concentrations), y=dropout_ratio, fill=extreme)) + geom_bar(stat="identity", position='dodge') + theme(legend.title=element_blank())
+
+```
+
+**conclusion:**
+
+```{r lad_border_change2,fig.width=10, fig.height=10, cache=T}
+mean_exp$extreme = '-'
+deep_LAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'LAD')
+mean_exp[deep_LAD, 'extreme'] = sprintf('deep LAD (n=%i)',length(deep_LAD))
+shallow_LAD=which(log2(mean_exp$border)<=18 & mean_exp$lad_state == 'LAD')
+mean_exp[shallow_LAD, 'extreme'] = sprintf('shallow LAD (n=%i)',length(shallow_LAD))
+deep_interLAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'interLAD')
+mean_exp[deep_interLAD, 'extreme'] = sprintf('deep interLAD (n=%i)',length(deep_interLAD))
+shallow_interLAD=which(log2(mean_exp$border)<=18 & mean_exp$lad_state == 'interLAD')
+mean_exp[shallow_interLAD, 'extreme'] = sprintf('shallow LAD (n=%i)',length(shallow_interLAD))
+
+
+above_0 = which(rowSums(mean_exp[,1:4]==0)==0)
+
+count_name_vec = grep('counts', colnames(mean_exp), value=T)
+concentrations = c(100, 0.1, 0.01, 0)
+names(concentrations) = count_name_vec
+
+exp_melt = melt(mean_exp[above_0,], measure.vars=count_name_vec)
+exp_melt$concentrations = concentrations[exp_melt$variable]
+
+plot_list = list()
+
+
+exp_melt = exp_melt[exp_melt$extreme != '-',]
+median_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, median=median(value))
+
+title = 'median expression change\ndeepness LADs/interLADs\n(no zeros)'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=median_data, aes(x=log2(concentrations), y=log2(median), colour=extreme)) +
+                  ylab('log2(expression)') +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+mean_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, mean=mean(log2(value)))
+
+title = 'mean expression change\ndeepness LADs/interLADs\n(no zeros)'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=mean_data, aes(x=log2(concentrations), y=mean, colour=extreme)) +
+                  ylab('log2(expression)') +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+```
+
+**conclusion:**
+
+Looking at the median, the LAD-barcodes far from the borders seem to go down in relative expression after low dosage, but at higher dosages they become more similar to normal LADs. This is not clear from the mean data, but maybe this has to do with the cut-off chosen.
+
+```{r lad_border_change3, fig.width=10, fig.height=10, cache=T}
+mean_exp$extreme = '-'
+deep_LAD=which(log2(mean_exp$border)>16 & mean_exp$lad_state == 'LAD')
+mean_exp[deep_LAD, 'extreme'] = sprintf('deep LAD (n=%i)',length(deep_LAD))
+extreme_LAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'LAD')
+mean_exp[extreme_LAD, 'extreme'] = sprintf('extreme deep LAD (n=%i)',length(extreme_LAD))
+shallow_LAD=which(log2(mean_exp$border)<=16 & mean_exp$lad_state == 'LAD')
+mean_exp[shallow_LAD, 'extreme'] = sprintf('shallow LAD (n=%i)',length(shallow_LAD))
+deep_interLAD=which(log2(mean_exp$border)>16 & mean_exp$lad_state == 'interLAD')
+mean_exp[deep_interLAD, 'extreme'] = sprintf('deep interLAD (n=%i)',length(deep_interLAD))
+shallow_interLAD=which(log2(mean_exp$border)<=16 & mean_exp$lad_state == 'interLAD')
+mean_exp[shallow_interLAD, 'extreme'] = sprintf('shallow interLAD (n=%i)',length(shallow_interLAD))
+extreme_interLAD=which(log2(mean_exp$border)>18 & mean_exp$lad_state == 'interLAD')
+mean_exp[extreme_interLAD, 'extreme'] = sprintf('extreme deep interLAD (n=%i)',length(extreme_interLAD))
+
+
+count_name_vec = grep('counts', colnames(mean_exp), value=T)
+concentrations = c(100, 0.1, 0.01, 0)
+names(concentrations) = count_name_vec
+
+exp_melt = melt(mean_exp[above_0,], measure.vars=count_name_vec)
+exp_melt$concentrations = concentrations[exp_melt$variable]
+
+
+exp_melt = exp_melt[exp_melt$extreme != '-',]
+median_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, median=median(value))
+
+title = paste('median expression change\ndeepness LADs/interLADs\n(no zeros)')
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=median_data, aes(x=log2(concentrations), y=log2(median), colour=extreme)) +
+                  ylab('log2(expression)') +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+mean_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, mean=mean(log2(value)))
+
+title = 'mean expression change\ndeepness LADs/interLADs\n(no zeros)'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=mean_data, aes(x=log2(concentrations), y=mean, colour=extreme)) +
+                  ylab('log2(expression)') +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+exp_melt = melt(mean_exp, measure.vars=count_name_vec)
+exp_melt$concentrations = concentrations[exp_melt$variable]
+
+
+exp_melt = exp_melt[exp_melt$extreme != '-',]
+mean_data = ddply(exp_melt, c('concentrations', 'extreme'), summarise, mean=mean(log2(value + min(value[value!=0])/2), na.rm=T))
+
+
+title = 'mean expression change\ndeepness LADs/interLADs\n(with zeros)'
+ggplot(exp_melt, aes(x=log2(concentrations), y=log2(value), colour=extreme)) +
+                  theme(panel.background = element_rect(fill = "lavender")) +
+                  geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                  geom_line(data=mean_data, aes(x=log2(concentrations), y=mean, colour=extreme)) +
+                  ylab(sprintf('log2(expression + %f)', min(exp_melt$value[exp_melt$value > 0])/2)) +
+                  ggtitle(title) + 
+                  theme(plot.title = element_text(size=24),text = element_text(size=20))
+
+dropout = ddply(exp_melt, .(concentrations, extreme), summarise, dropout_ratio=length(which(value==0))/length(value))
+dropout$extreme = factor(dropout$extreme)
+dropout$extreme = factor(dropout$extreme, levels=levels(dropout$extreme)[c(3,1,5,6,2,4)])
+
+ggplot(dropout, aes(x=factor(concentrations), y=dropout_ratio, fill=extreme)) + geom_bar(stat='identity', position='dodge') + theme(legend.title=element_blank())
+
+```
+
+**conclusion:**
+
+The cut-off clearly plays a big role, maybe we should look for a more soffisticated one, or find some other way to plot the data. What is clear however is that interLAD integrations close to the border of the lamina seem to show more LAD-like behavior in comparison to the deep interLAD integrations.
+
+
+## change in expression
+Now let's concentrate on differences between each condition and the 0 time-point
+
+```{r lad_border_dif, fig.width=10, fig.height=40,  cache=T}
+plot_list = list()
+col2 = colnames(mean_exp)[4]
+for (i in 1:3){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title,'change from 0ng', 'LAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'size']) & mean_exp[,'lad_state'] == 'LAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, '/', col2, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1)+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+plot_list = list()
+for (i in 1:3){
+    col1=colnames(mean_exp)[i]
+    
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title,'change from 0ng', 'interLAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'border']) & mean_exp[,'lad_state'] == 'interLAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, '/', col2, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1) +
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+```
+
+
+
+```{r lad_border_dif2, fig.width=10, fig.height=40,  cache=T}
+plot_list = list()
+for (i in 1:3){
+    col1=colnames(mean_exp)[i]
+    col2 = colnames(mean_exp)[i + 1]
+    col2ng = strsplit(col2, '_')[[1]][3]
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title,paste('change from',col2ng), 'iAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'border']) & mean_exp[,'lad_state'] == 'LAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, '/', col2, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1)+
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+
+plot_list = list()
+for (i in 1:3){
+    col1=colnames(mean_exp)[i]
+    col2 = colnames(mean_exp)[i + 1]
+    col2ng = strsplit(col2, '_')[[1]][3]
+    title = paste(strsplit(col1, '_')[[1]][c(1,3)], collapse=' ')
+    title = paste(title,paste('change from',col2ng), 'interLAD border distance', sep='\n')
+    selection = which(!is.na(mean_exp[,'border']) & mean_exp[,'lad_state'] == 'interLAD')
+    plot_list[[i]] = ggplot(mean_exp[selection,], aes_string(x='log2(border)', y=paste('log2(', col1, '/', col2, ')'))) +
+                      theme(panel.background = element_rect(fill = "lavender"))+
+                      geom_point(shape=19, size =0.5, alpha=0.3, colour="RED") + 
+                      stat_smooth() +
+                      labs(x='lad border distance',y=col1) +
+                      ggtitle(title) + 
+                      theme(plot.title = element_text(size=24),text = element_text(size=20))
+}
+do.call(grid.arrange, c(plot_list, ncol=1))
+```
+
+**conclusion:**
+
+There is a clear relation between the distance to the border of the respective LAD or interLAD and the expression in each of the conditions.
+
+

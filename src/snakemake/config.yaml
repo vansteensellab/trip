@@ -1,0 +1,428 @@
+# Configuration file for mapping of Thetered-TRIP experiments performed in K562 cells.
+# This configuration contains all configurations used by the pipeline.
+# Different parts of the pipeline use this configuration:
+#
+# snakemake:
+#   this part mainly contains input files and a description of each file
+#   the following input files are used:
+#     - cDNA:
+#         fastq files with cDNA reads of barcoded reporters
+#     - gDNA:
+#         fastq files with gDNA reads of barcoded reporters used to normalize the cDNA (cDNA) reads
+#     - spike-in:
+#         fastq file with only reads of the spike-in library which was mixed in with the cDNA and gDNA reads.
+#     - forward_mapping:
+#         fastq files with forward iPCR reads of reporter integrations containing barcodes.
+#     - reverse_mapping:
+#         fastq files with reverse iPCR reads of reporter integrations with intergration site.
+
+###############################
+### snakemake configuration ###
+###############################
+dir_suffix: 'TTRIP_K562'
+
+groups:
+  - [POI, G9a, KRAB, CBX]
+  - [condition, GAL4-POI, POI, GAL4]
+  - [day, 2, 9, 11, 12, 14]
+  - [replicate, 1, 2]
+
+
+input_file:
+  gDNA:
+    G9a_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_13.fq
+      - 10
+    G9a_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_14.fq
+      - 10
+    G9a_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_15.fq
+      - 10
+    G9a_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_16.fq
+      - 10
+    G9a_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_17.fq
+      - 10
+    G9a_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_18.fq
+      - 10
+    G9a_GAL4_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_19.fq
+      - 10
+    G9a_GAL4-POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_20.fq
+      - 10
+    G9a_POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_21.fq
+      - 10
+    G9a_GAL4_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_22.fq
+      - 10
+    G9a_GAL4-POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_23.fq
+      - 10
+    G9a_POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_24.fq
+      - 10
+    CBX_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_13.fq
+      - 0
+    CBX_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_14.fq
+      - 0
+    CBX_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_15.fq
+      - 0
+    CBX_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_16.fq
+      - 0
+    CBX_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_17.fq
+      - 0
+    CBX_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_18.fq
+      - 0
+    CBX_GAL4-POI_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_19.fq
+      - 0
+    CBX_GAL4_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_20.fq
+      - 0
+    CBX_POI_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_21.fq
+      - 0
+    CBX_GAL4-POI_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_22.fq
+      - 0
+    CBX_GAL4_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_23.fq
+      - 0
+    CBX_POI_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_24.fq
+      - 0
+    CBX_GAL4-POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_48_r2_D12_gDNA.fq
+      - 10
+    CBX_GAL4-POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_48_r3_D12_gDNA.fq
+      - 10
+    CBX_GAL4_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r2_D12_gDNA.fq
+      - 10
+    CBX_GAL4_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r3_D12_gDNA.fq
+      - 10
+    CBX_POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_51_r2_D12_gDNA.fq
+      - 10
+    CBX_POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_51_r3_D12_gDNA.fq
+      - 10
+    KRAB_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_13.fq
+      - 10
+    KRAB_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_14.fq
+      - 10
+    KRAB_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_15.fq
+      - 10
+    KRAB_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_16.fq
+      - 10
+    KRAB_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_17.fq
+      - 10
+    KRAB_GAL4_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_19.fq
+      - 10
+    KRAB_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_18.fq
+      - 10
+    KRAB_GAL4-POI_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_20.fq
+      - 10
+    KRAB_POI_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_21.fq
+      - 10
+    KRAB_GAL4_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_22.fq
+      - 10
+    KRAB_GAL4-POI_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_23.fq
+      - 10
+    KRAB_POI_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_24.fq
+      - 10
+    KRAB_GAL4_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r1_D14_gDNA.fq
+      - 10
+    KRAB_GAL4_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r2_D14_gDNA.fq
+      - 10
+    KRAB_GAL4-POI_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_74_r1_D14_gDNA.fq
+      - 10
+    KRAB_GAL4-POI_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_74_r2_D14_gDNA.fq
+      - 10
+    KRAB_POI_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r1_D14_gDNA.fq
+      - 10
+    KRAB_POI_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r2_D14_gDNA.fq
+      - 10
+
+  cDNA:
+    G9a_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_1.fq
+      - 10
+    G9a_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_2.fq
+      - 10
+    G9a_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_3.fq
+      - 10
+    G9a_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_4.fq
+      - 10
+    G9a_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_5.fq
+      - 10
+    G9a_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_6.fq
+      - 10
+    G9a_GAL4_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_7.fq
+      - 10
+    G9a_GAL4-POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_8.fq
+      - 10
+    G9a_POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_9.fq
+      - 10
+    G9a_GAL4_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_10.fq
+      - 10
+    G9a_GAL4-POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_11.fq
+      - 10
+    G9a_POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160406_fastqs_G9a/3893_1_BarcodedPool_NoIndex_TRIP_K562_G9a_12.fq
+      - 10
+    CBX_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_1.fq
+      - 0
+    CBX_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_2.fq
+      - 0
+    CBX_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_3.fq
+      - 0
+    CBX_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_4.fq
+      - 0
+    CBX_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_5.fq
+      - 0
+    CBX_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_6.fq
+      - 0
+    CBX_GAL4-POI_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_7.fq
+      - 0
+    CBX_GAL4_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_8.fq
+      - 0
+    CBX_POI_9_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_9.fq
+      - 0
+    CBX_GAL4-POI_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_10.fq
+      - 0
+    CBX_GAL4_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_11.fq
+      - 0
+    CBX_POI_9_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_12.fq
+      - 0
+    CBX_GAL4-POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_48_r2_D12_cDNA.fq
+      - 10
+    CBX_GAL4-POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_48_r3_D12_cDNA.fq
+      - 10
+    CBX_GAL4_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r2_D12_cDNA.fq
+      - 10
+    CBX_GAL4_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r3_D12_cDNA.fq
+      - 10
+    CBX_POI_12_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_51_r2_D12_cDNA.fq
+      - 10
+    CBX_POI_12_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_51_r3_D12_cDNA.fq
+      - 10
+    KRAB_GAL4_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_1.fq
+      - 10
+    KRAB_GAL4-POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_2.fq
+      - 10
+    KRAB_POI_2_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_3.fq
+      - 10
+    KRAB_GAL4_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_4.fq
+      - 10
+    KRAB_GAL4-POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_5.fq
+      - 10
+    KRAB_POI_2_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_6.fq
+      - 10
+    KRAB_GAL4_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_7.fq
+      - 10
+    KRAB_GAL4-POI_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_8.fq
+      - 10
+    KRAB_POI_11_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_9.fq
+      - 10
+    KRAB_GAL4_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_10.fq
+      - 10
+    KRAB_GAL4-POI_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_11.fq
+      - 10
+    KRAB_POI_11_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160331_fastqs_TRIP_KRAB/3884_1_BarcodedPool_NoIndex_TRIP_K562_KRAB_12.fq
+      - 10
+    KRAB_GAL4_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r1_D14_cDNA.fq
+      - 10
+    KRAB_GAL4_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_50_r2_D14_cDNA.fq
+      - 10
+    KRAB_GAL4-POI_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_74_r1_D14_cDNA.fq
+      - 10
+    KRAB_GAL4-POI_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_74_r2_D14_cDNA.fq
+      - 10
+    KRAB_POI_14_1:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r1_D14_cDNA.fq
+      - 10
+    KRAB_POI_14_2:
+      - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160815_fastqs_CBX5_D12_KRAB_D14/4088_1_BarcodedPool_NoIndex_76_r2_D14_cDNA.fq
+      - 10
+
+  mapping:
+    pool1_rep1:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_09.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_09.fastq]
+      - 10
+    pool1_rep2:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_10.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_10.fastq]
+      - 10
+    pool1_rep3:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_11.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_11.fastq]
+      - 10
+    pool2_rep1:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_12.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_12.fastq]
+      - 10
+    pool2_rep2:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_13.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_13.fastq]
+      - 10
+    pool2_rep3:
+      - [raw_data/3354_1_iPCR_laura_eva_altndx_R1_001_smplIdx_14.fastq, raw_data/3354_1_iPCR_laura_eva_altndx_R2_001_smplIdx_14.fastq]
+      - 10
+
+  spike:
+    - /home/NFS/users/l.brueckner/TTRIP_K562/lb20160318_fastqs_TRIP_CBX5/3870_1_BarcodedPool_NoIndex_TRIP_K562_CBX5_25.fq
+    - 0
+
+config: cl20160816_config_K562_TTRIP.txt
+
+intersect:
+  repeat: '{outdir}/repeats.bed'
+  lad: /home/NFS/users/c.leemans/data/carolineLADs/LAD_K562_continuous_cl160714.bed
+  chrom: /home/NFS/users/c.leemans/data/tracks/hg19/wgEncodeBroadHmmK562HMM.bed
+
+extract:
+  timing: /home/NFS/users/c.leemans/data/tracks/hg19/GSM923448/GSM923448_hg19_wgEncodeUwRepliSeqK562{state}PctSignalRep1.bigWig
+
+nearest:
+  cpg: /home/NFS/users/c.leemans/data/tracks/hg19/cpgIslandExtUnmasked_140601.bed
+
+repeatMasker: /home/NFS/users/c.leemans/data/tracks/hg19/repeatMasker_hg19_fa_out_20140131.bed
+
+###############################################################################
+###++++++++++++++++++++++++++++ parser settings ++++++++++++++++++++++++++++###
+###############################################################################
+# Typical structure of gDNA and cDNA reads:
+#      index            pat1               barcode           pat2
+# NNNNNNNNNNGTCACAAGGGCCGGCCACAACTCGAGNNNNNNNNNNNNNNNNTGATCCTGCAGTGTCACC...
+#
+# settings:
+#   barcode_length -- the length of the barcode
+#   pat1 -- the first constant pattern (after index, before barcode)
+#   pat2 -- the pattern after the barcode
+# #****************************************************************************
+# Typical structures of mapping reads
+#
+# Forward Read:
+#
+# format_map1
+#      index   	        pat1             barcode     pat2		genomic DNA
+# NNNNNNNNNNGTCACAAGGGCCGGCCACAACTCGAGNNNNNNNNNNNNNNNNTGATCNNNNNNNNNNNNNNNNNNNN
+#
+# Reverse Read:
+# 	     map_pat_rev					     genomic DNA
+# GTACGTCACAATATGATTATCTTTCTAGGGTTAANNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+
+structure:
+  mapping: |
+
+  gDNA: |
+    ID      5'      3'      type    req     second-read     pos                   keep-bases
+    index   %i      -       const   present False   fixed                            -
+    pat1    GTCACAAGGGCCGGCCACAACTCGAG      -       const   present False   fixed   -
+    barcode 16      -       barcode present False   fixed   -
+    pat2    TGATCCTGCAGTG   -       const   present False   var   -
+
+  cDNA: |
+    ID      5'      3'      type    req     second-read     pos     keep-bases
+    index   %i      -       const   present False   fixed   -
+    pat1    GTCACAAGGGCCGGCCACAACTCGAG      -       const   present False   fixed   -
+    barcode 16      -       barcode present False   fixed   -
+    pat2    TGATCCTGCAGTG   -       const   present False   var   -
+
+  spike: |
+    ID      5'      3'      type    req     second-read     pos     keep-bases
+    index   %i      -       const   present False   fixed   -
+    pat1    GTCACAAGGGCCGGCCACAA    -       const   present False   fixed   -
+    barcode 16      -       barcode present False   fixed   -
+    pat2    GATCGGTACCCA    -       const   present False   var   -
+
+lev_dist: 2
+
+min_count:
+  spike: 1000
+  gDNA: 5
+  cDNA: 0
+  map: 3
+
+bowtie:
+  index: /home/NFS/users/j.yanez/data/genomes/bowtie2/hg19
+  options:
+      '1': ['--very-sensitive']
+      '2': ['--very-sensitive-local']
+
+
+max_dist_for: 500
+
+max_dist_rev: 20

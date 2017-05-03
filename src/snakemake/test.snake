@@ -1,0 +1,472 @@
+import getpass
+import datetime
+import inspect
+import os
+
+filename = inspect.getframeinfo(inspect.currentframe()).filename
+path = os.path.dirname(os.path.abspath(filename))
+
+
+configfile: "%s/config.yaml" % path
+
+# user = getpass.getuser()
+# date = datetime.datetime.now()
+# date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
+# OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
+OUTDIR = ''.join(('cl20160914','_', config["dir_suffix"]))
+
+TIMING = glob_wildcards(config["extract"]["timing"])[0]
+TYPE_LIST = ['mapping', 'gDNA', 'cDNA', 'spike']
+TYPE_LIST = [read_type for read_type in TYPE_LIST if read_type in config]
+
+
+group_name_vec = [group[0] for group in config['groups']]
+# replicate_dict = {}
+# if 'replicate' in group_name_vec:
+#     index = group_name_vec.index('replicate')
+#     for name in config['input_file']['gDNA'].keys():
+#         if 'spike' in config['input_file']:
+#             file_name = normalize_spike_output[name]
+#         else:
+#             file_name = normalize_gDNA_output
+#         name_split = name.split('_')
+#         if index < len(name_split):
+#             name_vec = [name_split[i] for i in range(0, len(name_split))
+#                         if i != index]
+#             mean_name = '_'.join(name_vec)
+#             if mean_name in replicate_dict:
+#                 replicate_dict[mean_name].append(file_name)
+#             else:
+#                 replicate_dict[mean_name] = [file_name]
+rule all:
+    input:
+        expand('{outdir}/mapping.{map}.starcode.count', outdir=OUTDIR, map=config['input_file']['mapping'].keys()),
+        expand('{outdir}/gDNA.{name}.cpm', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
+
+# rule all:
+#     input:
+#         expand('{outdir}/bc_{sample}.txt', outdir=OUTDIR,
+#                sample=config["intersect"].keys()),
+#         expand('{outdir}/bc_timing_{state}.txt', outdir=OUTDIR, state=TIMING),
+#         expand('{outdir}/bc_cpg_distance.txt', outdir=OUTDIR)
+
+# rule bedtoolsbed:
+#     input:
+#         '%s/mapping.stdout.txt' % OUTDIR,
+#     params:
+#         '%s/mapping.rev_mapping.bed' % OUTDIR
+#     output:
+#         temp('%s/mapping.rev_mapping2.bed' % OUTDIR)
+#     shell:
+#         "awk '{{if ($1!=\"*\") print $0}}' {params} | \\"
+#         "bedtools sort -i > {output}"
+#
+# rule bigWigBed:
+#     input:
+#         '%s/mapping.stdout.txt' % OUTDIR,
+#     params:
+#         '%s/mapping.rev_mapping.bed' % OUTDIR
+#     output:
+#         temp('%s/mapping.rev_mapping3.bed' % OUTDIR)
+#     run:
+#         command = "awk '{{if ($1!=\"*\") print $1\"\t\"$2\"\t\"$3\"\t\"$4\"_\"$5\"/\"$6}}' {params} > {output}"
+#         shell(command)
+# #
+# # for SAMPLE in config['extract']:
+# rule:
+#     input:
+#         map='%s/mapping.rev_mapping3.bed' % OUTDIR,
+#         lst=config["extract"]['timing']
+#     output:
+#         '%s/bc_timing_{state}.txt' % OUTDIR
+#     shell:
+#         '%s/scripts/extract.sh {input.map} < {input.lst} > {output}' % (path)
+#
+# rule nearest:
+#     input:
+#         map='%s/mapping.rev_mapping2.bed' % OUTDIR,
+#         lst=config["nearest"]['cpg']
+#     output:
+#         '%s/bc_cpg_distance.txt' % OUTDIR
+#     shell:
+#         '%s/scripts/nearest.sh {input.map} < {input.lst} > {output}' % (path)
+#
+#
+#
+#
+# for SAMPLE in config['intersect'].keys():
+#     TRACK=config["intersect"][SAMPLE]
+#     if '{outdir}' in TRACK:
+#         TRACK = expand(TRACK, outdir=OUTDIR)
+#     rule:
+#         input:
+#             map='%s/mapping.rev_mapping2.bed' % OUTDIR,
+#             track=TRACK
+#         params:
+#             SAMPLE
+#         output:
+#             '%s/bc_%s.txt' % (OUTDIR, SAMPLE)
+#         shell:
+#             '%s/scripts/intersect.sh {input.map} {params} < {input.lst} > {output}' % (path)
+#
+#
+#
+# for READ_TYPE in config["file_list"]:
+#     rule:
+#         input:
+#             lst=config["file_list"][READ_TYPE],
+#             cfg=config["config"]
+#         output:
+#             dir='/'.join((OUTDIR, READ_TYPE)),
+#             stdout='%s/%s/stdout.txt'%(OUTDIR, READ_TYPE),
+#             bed=expand('{outdir}/mapping.rev_mapping.bed', outdir=OUTDIR)
+#         threads: 10
+#         shell:
+#             "mkdir -p {output.dir};"
+#             "~/python/bin/python src/python/trip.py -t {threads} -o {output.dir} -l {input.lst} -c {input.cfg} -u -v -d 2>&1 | tee {output.stdout}"
+#
+# rule format_rep:
+#     input: config["repeatMasker"]
+#     output: expand('{outdir}/repeats.bed', outdir=OUTDIR)
+#     run:
+#         command = ("awk -F'[|\\t]' '{{if(NR==1){{print \"barcode\\tclass\\tfamily\\tname\\tcount\\ttotal\"}}"
+#                    "else {{\n"
+#                    "  if ($2 ~/\//){{\n"
+#                    "    match($2,/(.*)\/(.*)/, a)\n"
+#                    "    class=a[1]\n"
+#                    "    fam=$2\n"
+#                    "  }} else {{\n"
+#                    "    class=$2\n"
+#                    "    fam=$2\"/-\"\n"
+#                    "  }}"
+#                    "  print $1\"\\t\"class\"\\t\"fam\"\\t\"$3\"\\t\"$4\"\\t\"$5\n"
+#                    "}}}}' < {input} > {output}")
+#                 #    "mv %s/bc_repeat.tmp %s/bc_repeat.txt")%(OUTDIR, OUTDIR, OUTDIR, OUTDIR)
+#         shell(command)
+# rule trip:
+#   output:
+#     dir=expand("{outdir}/{type}/", outdir=OUTDIR, type=config["file_list"])
+#     stdout=expand("{outdir}/{type}/stdout.txt", outdir=OUTDIR, type=config["file_list"])
+#   input:
+#      lst=config["file_list"]["norm_exp"]
+#      cfg=config["config"]
+#   shell:
+#     "mkdir -p {output.dir}"
+#     "nice -19 ~/python/bin/python src/python/trip.py -t {THREADS} -o {output.dir} -l {input.lst} -c {input.cfg} -u -v -d 2>&1 | tee {output.stdout}"
+
+
+
+
+
+
+###############################################################################
+##+++++++++++++++++++++++++++ normalize with gDNA +++++++++++++++++++++++++++##
+###############################################################################
+
+rule normalize_gDNA:
+    input:
+        expand('{outdir}/gDNA.{{name}}.cpm', outdir=OUTDIR),
+        expand('{outdir}/cDNA.{{name}}.cpm', outdir=OUTDIR)
+    output:
+        '{input[1]}.gDNA'
+    shell:
+        "awk '{{if (NR==FRN){{sum += $1}}else{{print $1/sum\"\t$2\"}}}}' "
+        "{input} > {output}"
+
+###############################################################################
+##+++++++++++++++++++++++++ normalize with spike-in +++++++++++++++++++++++++##
+###############################################################################
+rule normalize_spike:
+    input:
+        expand('{outdir}/spike.{{name}}.starcode.count', outdir=OUTDIR),
+        expand('{outdir}/cDNA.{{name}}.cpm.gDNA', outdir=OUTDIR)
+    output:
+        '{input[1]}.spike'
+    shell:
+        "awk '{{if (NR==FRN){{sum += $1}}else{{print $1/sum\"\t\"$2}}}}' "
+        "{input} > {output}"
+
+
+###############################################################################
+##+++++++++++++++++++++++++++++ mean expression +++++++++++++++++++++++++++++##
+###############################################################################
+
+
+# rule mean_exp:
+#     input:
+#         lambda wildcards: replicate_dict[wildcards.mean_name]
+#     output:
+#         '%s/cDNA.{mean_name}.mean',
+#         '%s/cDNA.{mean_name}.mean.cut'
+#     run:
+#         cpm_dict = {}
+#         mean_file = open('{output[0]}', 'w')
+#         mean_cut_file = open('{output[1]}', 'w')
+#         for input_file in snakemake.input:
+#             with open(input_file) as file_in:
+#                 for line in file_in.readlines():
+#                     norm_cpm, barcode = line.strip().split()
+#                     if barcode in cpm_dict:
+#                         cpm_dict[barcode][input_file] = float(norm_cpm)
+#                     else:
+#                         cpm_dict[barcode] = {input_file: float(norm_cpm)}
+#         for barcode in cpm_dict:
+#             if len(cpm_dict[barcode]) == len(snakemake.input):
+#                 mean = sum(cpm_dict[barcode].values())/len(snakemake.input)
+#                 mean_file.write('%f\t%s' % (mean, barcode))
+#         mean_file.close()
+#         mean_cut_file.close()
+
+
+
+
+###############################################################################
+##++++++++++++++++++++++ calculate counts per million +++++++++++++++++++++++##
+###############################################################################
+
+rule cpm:
+    input:
+        expand('{outdir}/{read_type}.{{name}}.starcode.count', outdir=OUTDIR,
+               read_type = ('cDNA', 'gDNA', 'spike'))
+    output:
+        '{outdir}/{read_type}.{name}.cpm'
+    shell:
+        "awk '{{arr[$2] = $1; sum += $1}}"
+        "END{{for (bc in arr){{print arr[bc]/sum*1000000\"\t\"bc}}}}'"
+        "< {input} > {output}"
+
+
+###############################################################################
+##++++++++++++++++++++++++ select genuine barcodes ++++++++++++++++++++++++++##
+###############################################################################
+
+rule starcode_cDNA:
+    input:
+        expand('{outdir}/cDNA.{{name}}.raw.count', outdir=OUTDIR),
+        '{outdir}/gDNA.{name}.starcode.count'
+    output:
+        gen='{outdir}/cDNA.{name}.starcode.count',
+        mut='{outdir}/cDNA.{name}.genuine.cut',
+        notg='{outdir}/cDNA.{name}.in_gDNA.cut',
+        notc='{outdir}/gDNA.{name}.in_cDNA.cut',
+        count='{outdir}/cDNA.{name}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= True,
+        count= config['min_count']['cDNA']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+rule starcode_gDNA:
+    input:
+        expand('{outdir}/gDNA.{{name}}.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/gDNA.{name}.starcode.count',
+        mut='{outdir}/gDNA.{name}.genuine.cut',
+        count='{outdir}/gDNA.{name}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= config['min_count']['gDNA']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+
+rule starcode_spike_pool:
+    input:
+        expand('{outdir}/spike_pool.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/spike_pool.starcode.count',
+        mut='{outdir}/spike_pool.genuine.cut',
+        count='{outdir}/spike_pool.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= config['min_count']['spike']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+
+rule starcode_spike_sample:
+    input:
+        expand('{outdir}/spike.{{name}}.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/spike.{name}.starcode.count',
+        mut='{outdir}/spike.{name}.genuine.cut',
+        count='{outdir}/spike.{name}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= 0
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+rule starcode_map:
+    input:
+        expand('{outdir}/mapping.{{map}}.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/mapping.{map}.starcode.count',
+        mut='{outdir}/mapping.{map}.genuine.cut',
+        count='{outdir}/mapping.{map}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= config['min_count']['map']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+
+rule count_barcode:
+    input:
+        '%s/{file_base}.barcode.txt.gz' % OUTDIR
+    output:
+        '%s/{file_base}.raw.count' % OUTDIR
+    shell:
+        "gunzip -cf - < {input} | awk '{{print $3}}' | tail -n+2 | sort | uniq -c | awk '{{print $2\"\t\"$1}}'> {output}"
+
+###############################################################################
+##+++++++++++++++++++++++++++++++ parse reads +++++++++++++++++++++++++++++++##
+###############################################################################
+
+if 'gDNA' in config['input_file']:
+    THIS_BASE = '%s/gDNA' % (OUTDIR)
+    if not os.path.exists(THIS_BASE):
+        os.makedirs(THIS_BASE)
+    rule parse_gDNA:
+        input:
+            lambda wildcards: config['input_file']['gDNA'][wildcards.name][0]
+        output:
+            '%s.{name}.barcode.txt.gz' % (THIS_BASE),
+            '%s.{name}.statistics.txt' % (THIS_BASE),
+            structure = '%s.{name}.structure.txt' % (THIS_BASE)
+        log:
+            '%s.{name}_parser.log' % (THIS_BASE)
+        params:
+            structure= config['structure']['gDNA'],
+            type_dict= config['input_file']['gDNA'],
+            outdir = OUTDIR
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            if params.type_dict[wildcards.name][1] == 0:
+                structure = re.sub('index.*\n', '', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b gDNA.{wildcards.name} {input} {output.structure} {params.outdir}')
+
+if 'cDNA' in config['input_file']:
+    THIS_BASE = '%s/cDNA' % (OUTDIR)
+    if not os.path.exists(THIS_BASE):
+        os.makedirs(THIS_BASE)
+    rule parse_cDNA:
+        input:
+            lambda wildcards: config['input_file']['cDNA'][wildcards.name][0]
+        output:
+            '%s.{name}.barcode.txt.gz' % (THIS_BASE),
+            '%s.{name}.statistics.txt' % (THIS_BASE),
+            structure = '%s.{name}.structure.txt' % (THIS_BASE)
+        log:
+            '%s.{name}_parser.log' % (THIS_BASE)
+        params:
+            structure= config['structure']['cDNA'],
+            type_dict= config['input_file']['cDNA'],
+            outdir = OUTDIR
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            if params.type_dict[wildcards.name][1] == 0:
+                structure = re.sub('index.*\n', '', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b cDNA.{wildcards.name} {input} {output.structure} {params.outdir}')
+
+
+if 'spike' in config['input_file']:
+    THIS_BASE = '%s/spike' % OUTDIR
+    if not os.path.exists(THIS_BASE):
+        os.makedirs(THIS_BASE)
+    rule parse_spike_pool:
+        input:
+            config['input_file']['spike'][0]
+        output:
+            '%s.pool.barcode.txt.gz' % (THIS_BASE),
+            '%s.pool.statistics.txt' % (THIS_BASE),
+            structure = '%s.pool.structure.txt' % (THIS_BASE)
+        log:
+            '%s.pool_parser.log' % (THIS_BASE)
+        params:
+            structure = config['structure']['spike'],
+            index_len = config['input_file']['spike'][1],
+            name = 'pool',
+            outdir = OUTDIR
+        run:
+            structure = params.structure % params.index_len
+            if params.index_len == 0:
+                structure = re.sub('index.*\n', '', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b spike.{params.name} {input} %s {params.outdir}' % output.structure)
+
+    rule parse_spike_sample:
+        input:
+            lambda wildcards: config['input_file']['cDNA'][wildcards.name][0]
+        output:
+            '%s.{name}.barcode.txt.gz' % (THIS_BASE),
+            '%s.{name}.statistics.txt' % (THIS_BASE),
+            structure = '%s.{name}.structure.txt' % (THIS_BASE)
+        log:
+            '%s.{name}_parser.log' % (THIS_BASE)
+        params:
+            structure= config['structure']['spike'],
+            type_dict= config['input_file']['cDNA'],
+            outdir = OUTDIR
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            if params.type_dict[wildcards.name][1] == 0:
+                structure = re.sub('index.*\n', '', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b spike.{wildcards.name} {input} %s {params.outdir}' % output.structure)
+
+
+if 'mapping' in config['input_file']:
+    THIS_BASE = '%s/mapping' % OUTDIR
+    if not os.path.exists(THIS_BASE):
+        os.makedirs(THIS_BASE)
+    rule parse_mapping:
+        input:
+            lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
+        output:
+            '%s.{name}.barcode.txt.gz' % (THIS_BASE),
+            '%s.{name}.1.fastq.gz' % (THIS_BASE),
+            '%s.{name}.2.fastq.gz' % (THIS_BASE),
+            '%s.{name}.statistics.txt' % (THIS_BASE),
+            structure = '%s.{name}.structure.txt' % (THIS_BASE)
+        log:
+            '%s.{name}_parser.log' % (THIS_BASE)
+        params:
+            structure= config['structure']['mapping'],
+            type_dict= config['input_file']['mapping'],
+            outdir = OUTDIR,
+            name= '{name}'
+        run:
+            structure = params.structure % params.type_dict[wildcards.name][1]
+            structure = structure.replace('\\', '')
+            if params.type_dict[wildcards.name][1] == 0:
+                structure = re.sub('index.*\n', '', structure)
+            with open(output.structure, 'w') as f:
+                f.write(structure)
+            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} -p {input[1]} '
+                  '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')

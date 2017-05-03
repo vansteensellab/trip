@@ -1,0 +1,372 @@
+
+# knitr document van Steensel lab
+
+# Thethered TRIP
+## Christ Leemans, 31-05-2016 - to date 
+
+## Introduction
+Laura performed a thetered-TRIP experiment on a K562 cell pool. She transiently transfected the cell pool with GAL4 thetered to 3 different "proteins of interest"(POI), namely G9a, the KRAB domain and CBX5. She took measurements after day 2 to see the initial effect of the thetering and after 12, 11 and 9 days respectively to see if there was any memory of the silencing on day 2. Besides the thetered GAL4-POI, two seperate controlls were taken using unthetered GAL4 and unthethered POI.
+
+We managed to identify a group of barcodes with putative memory of KRAB recruitment. To further investigate whether these barcodes are intergrated in domains supporting mitotically stable maintenance of heterochromatin, Laura plans to use Cas9-KRAB to silence nearby endogenous genes.
+
+The purpose of this report is to identify endogenous genes near memmory barcodes that can be silenced.
+
+
+
+## Description of data
+For this part of the analysis I used the data that was generated previously in the data preperation report: cl20160713_TRIP_K562_data_preperation. 
+The .RData produced contains a large data frame with a row for each barcode and the following columns:
+
+| column name | description |
+| ----------- | ----------- |
+| CBX_GAL4_exp_2 | expression after thetering GAL4 on day 2  for CBX5 experiment |
+| CBX_GAL4_exp_9 | expression after thetering GAL4 on day 9 for CBX5 experiment |
+| CBX_GAL4.POI_exp_2 | expression after thetering GAL4-CBX5 on day 2 |
+| CBX_GAL4.POI_exp_9 | expression after thetering GAL4-CBX5 on day 9 |
+| CBX_POI_exp_2 | expression after thetering CBX5 on day 2 |
+| CBX_POI_exp_9 | expression after thetering CBX5 on day 9 |
+| G9a_GAL4_exp_12 | expression after thetering GAL4 on day 12 for G9a experiment |
+| G9a_GAL4_exp_2 | expression after thetering GAL4 on day 2 for G9a experiment |
+| G9a_GAL4.POI_exp_12 | expression after thetering GAL4-G9a on day 12 |
+| G9a_GAL4.POI_exp_2 | expression after thetering GAL4-G9a on day 2 |
+| G9a_POI_exp_12 | expression after thetering G9a on day 12 |
+| G9a_POI_exp_2 | expression after thetering G9a on day 2 |
+| KRAB_GAL4_exp_11 | expression after thetering GAL4 on day 11 for KRAB experiment |
+| KRAB_GAL4_exp_2 | expression after thetering GAL4 on day 2 for KRAB experiment |
+| KRAB_GAL4.POI_exp_11 | expression after thetering GAL4-KRAB on day 11 |
+| KRAB_GAL4.POI_exp_2 | expression after thetering GAL4-KRAB on day 2 |
+| KRAB_POI_exp_11 | expression after thetering KRAB on day 11 |
+| KRAB_POI_exp_2 | expression after thetering KRAB on day 2 |
+| CBX_GPvsP_day2 | fold change GAL4-CBX5 vs CBX5 on day 2 |
+| CBX_GPvsP_day9 | fold change GAL4-CBX5 vs CBX5 on day 9 |
+| G9a_GPvsP_day12 | fold change GAL4-G9a vs G9a on day 12 |
+| G9a_GPvsP_day2 | fold change GAL4-G9a vs G9a on day 2 |
+| KRAB_GPvsP_day11 | fold change GAL4-KRAB vs KRAB on day 11 |
+| KRAB_GPvsP_day2 | fold change GAL4-KRAB vs KRAB on day 2 |
+| CBX_GPvsG_day2 | fold change GAL4-CBX5 vs GAL4 on day 2 |
+| CBX_GPvsG_day9 | fold change GAL4-CBX5 vs GAL4 on day 9 |
+| G9a_GPvsG_day12 | fold change GAL4-G9a vs GAL4 on day 12 |
+| G9a_GPvsG_day2 | fold change GAL4-G9a vs GAL4 on day 2 |
+| KRAB_GPvsG_day11 | fold change GAL4-KRAB vs GAL4 on day 11 |
+| KRAB_GPvsG_day2 | fold change GAL4-KRAB vs GAL4 on day 2 |
+| CBX_PvsG_day2 | fold change CBX5 vs GAL4 on day 2 |
+| CBX_PvsG_day9 | fold change CBX5 vs GAL4 on day 9 |
+| G9a_PvsG_day12 | fold change G9a vs GAL4 on day 12 |
+| G9a_PvsG_day2 | fold change G9a vs GAL4 on day 2 |
+| KRAB_PvsG_day11 | fold change KRAB vs GAL4 on day 11 |
+| KRAB_PvsG_day2 | fold change KRAB vs GAL4 on day 2 |
+| G9a_D2_above_norm_cut | all normalization read-counts for G9a > 50 on day 2 |
+| G9a_D12_above_norm_cut | all normalization read-counts for G9a > 50 on day 12 |
+| CBX_D2_above_norm_cut | all normalization read-counts for CBX5 > 50 on day 2 |
+| CBX_D9_above_norm_cut | all normalization read-counts for CBX5 > 50 on day 9 |
+| KRAB_D2_above_norm_cut | all normalization read-counts for G9a > 50 on day 2 |
+| KRAB_D11_above_norm_cut | all normalization read-counts for G9a > 50 on day 11 |
+| chr_f | chromosome of forward mapping read |
+| ori_f | orientation of forward mapping read |
+| pos_f | location of forward read on the chromosome |
+| t_reads_f | total number of forward reads |
+| mapq_f | average mapping quality of forward reads mapped to the same location |
+| freq1_f | frequency of forward reads mapped to the primary location |
+| freq2_f | frequency of forward reads mapped to a possible secondary location |
+| chr_r | chromosome of reverse mapping read |
+| ori_r | orientation of reverse mapping read |
+| pos_r | location of reverse read on the chromosome |
+| t_reads_r | total number of reverse reads |
+| mapq_r | average mapping quality of reverse reads mapped to the same location |
+| freq1_r | frequency of reverse reads mapped to the primary location |
+| freq2_r | frequency of reverse reads mapped to a possible secondary location |
+| unique_map | according to the thresholds set in the data preperation, is the barcode uniquely mapped |
+| rep_family | with which repeat family (repeatmasker nomenclature) does the barcode overlap |
+| rep_name | with which repeat name (repeatmasker nomenclature) does the barcode overlap |
+| lad | with which state of lamina association does the barcode overlap (constitutive LAD, facultative LAD, faculatative interLAD or constitutive interLAD) |
+| chrom | with which of the 12 state chromatin model does the barcode overlap |
+| unique_rep_name | does the barcode map to a single repeat name according to the thresholds set |
+| unique_rep_family | does the barcode map to a single repeat family according to the thresholds set |
+| unique_lad | does the barcode map to a single LAD-state according to the thresholds set |
+| unique_chrom | does the barcode map to a single chromatin state according to the thresholds set |
+
+In addition I used a dataset on promoter expression previously generated by Joris from a file called "gencode.sure.160617.rda". This file contains a dataframe with a lot of data columns. The relevant columns are:
+| name                              | description |
+| --------------------------------- | ----------- |
+| encode.cage.reprocessed.1kb.sense | cage signal up to 1 kb upstream from promoter into gene-body
+| gro.cap.1kb.sense                 | GRO-cap signal up to 1 kb upstream from promoter from promoter into gene-body
+
+
+
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r functions}
+opts_chunk$set(out.width='750px', dpi=200)
+StartTime <-Sys.time()
+
+# 6-digit Date tag:
+Date <- substr(gsub("-","",Sys.time()),3,8) 
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(rtracklayer)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+
+load('../results/TTRIP_K562_FC_exp.rData')
+load('../../single_cell_damid/raw_data/gencode.sure.160617.rda')
+
+# just so I can sellect the right day for each protein of interest in the loops
+days = list(KRAB=c(11,14), G9a=12 ,CBX=c(9,12))
+conditions = c('GAL4.POI', 'POI', 'GAL4')
+
+# some colors
+lad_color_vec<-c("#FF0000", "#0077FF")
+names(lad_color_vec)<-c('LAD', 'iLAD')
+
+
+filter_data <- function(fc_table, condition_vec, poi, day, type_vec, state_vec=NA, unique_map=F){
+    # Filter the data for a specific experiment (e.g. GAL4-KRAB vs GAL4 on day 2)
+    # Check the data preperation script for a more in depth look on the different
+    # selection criteria.
+    #
+    # Args:
+    #   fc_table: the big data-frame with all data.
+    #   conditionx: the column name with the classification/expression/fold change that should be on the x-axis
+    #   conditiony: the column name with the classification/expression/fold change that should be on the y-axis
+    #   poi: the protein of interest in this experiment
+    #   day: the day of the experiment
+    #   xtype: what is the type of data for the x column?
+    #          Used to transform the data correctly [value, factor or log2]
+    #   ytype: what is the type of data for the y column?
+    #          Used to transform the data correctly [value, factor or log2]
+    #   state: optional value to add a state definition as a third column.
+    # Returns:
+    #   A filtered data frame with an x and y column, the x column contains a factor with
+    #   the classification, the y column contains log2 transformed values of the experiment.
+    total = nrow(fc_table)
+    # check if the normalization counts are above 50 for each sample
+    above_norm = sprintf('%s_D%i_above_norm_cut', poi, day)
+    if (length(above_norm)>1){
+        fc_table = fc_table[apply(fc_table[,above_norm],1, all),]
+    } else{
+        fc_table = fc_table[fc_table[,above_norm], ]
+    }
+    col_names = condition_vec
+    summary_table = data.frame(cutoff=rep(NA, 5),
+                               removed=rep(0, 5),
+                               left=rep(0, 5),
+                               stringsAsFactors=F)
+    summary_table[1,] = list('above norm-count of 50', 
+                             total - nrow(fc_table),
+                             nrow(fc_table))
+    # is the barcode uniquely linked to a single classification for clasifications used
+    
+    cd_matrix = cbind(type_vec, condition_vec)
+    if (any(!is.na(state_vec))){
+        cd_matrix = rbind(cd_matrix, cbind('factor', state_vec))
+        col_names = c(col_names, state_vec)
+    }
+    if (unique_map){
+        cd_matrix = rbind(cd_matrix, c('map', 'map'))
+    }
+    for (i in 1:nrow(cd_matrix)){
+        type = cd_matrix[i,1]
+        if (type != 'map'){
+            name = cd_matrix[i,2]
+            unique_name = paste0('unique_',name)
+            if (unique_name %in% colnames(fc_table)){
+                fc_table = fc_table[fc_table[,unique_name] | fc_table[,name]=='-',]
+            }
+        }
+        else if(type == 'map'){
+            fc_table = fc_table[fc_table[,'unique_map'],]
+        }
+    }
+    summary_table[2, ] = list('unique barcode-state link',
+                              summary_table[1,'left'] - nrow(fc_table),
+                              nrow(fc_table))
+
+    # check if the log2 expression for the barcode of the GAL4 control > 0
+    base_exp = sprintf('%s_GAL4_exp_%s',poi, day)
+    above_exp_cut = fc_table[,base_exp]>0
+    if (length(base_exp)>1){
+        fc_table = fc_table[apply(above_exp_cut,1, all),]
+    } else{
+        fc_table = fc_table[above_exp_cut, ]
+    }
+    summary_table[3, ] = list('log2 base expression > 0', 
+                              summary_table[2,'left'] - nrow(fc_table),
+                              nrow(fc_table))
+    
+
+    # create a factor column x with the classification
+    # the order can be important for the order in which the data is later represented in a plot.
+    xy_list = list()
+    for (i in 1:nrow(cd_matrix)){
+        type = cd_matrix[i,1]
+        condition = cd_matrix[i,2]
+        if (type == 'factor'){
+            if (condition == 'lad'){
+                new_values = factor(fc_table[,condition], levels=c('cLAD','fLAD', 'fiLAD', 'ciLAD', '-'))
+            } else if(condition=='chrom'){
+                chrom_levels = unique(fc_table[,condition])
+                chrom_levels = chrom_levels[!is.na(chrom_levels)]
+                # sort on the number in the state name
+                chrom_levels = chrom_levels[order(sapply(chrom_levels,function(x){
+                    # if the state is unknown, return a high number so that it ends up at the end of the sort
+                    if (x!='-'){
+                        return(as.numeric(str_split(x,'_')[[1]][1]))
+                    } else{
+                        return(Inf)
+                    }}))]
+                new_values = factor(fc_table[,condition], levels=chrom_levels)
+            } else {
+                new_values = factor(fc_table[,condition])
+            }
+            
+        } else if (type=='log2'){
+            new_values = log2(fc_table[,condition] + 0.01)
+        } else if (type != 'map'){
+            new_values = fc_table[,condition]
+        }
+        if (type != 'map'){
+            xy_list[[i]] = new_values
+        }
+    }
+    xy_table=data.frame(xy_list)
+
+    colnames(xy_table) = col_names
+    rownames(xy_table) = rownames(fc_table)
+    xy_table = data.frame(xy_table)
+    for (condition in condition_vec){
+        xy_table = xy_table[!is.na(xy_table[,condition]), ]
+    }
+    summary_table[4, ] = list('not NA', 
+                              summary_table[3,'left'] - nrow(xy_table),
+                              nrow(xy_table))
+
+    for (condition in condition_vec){
+        xy_table = xy_table[!is.infinite(xy_table[,condition]), ]
+    }
+    summary_table[5, ] = list('not infinite', 
+                              summary_table[4,'left'] - nrow(xy_table),
+                              nrow(xy_table))
+    return(list(xy_table, summary_table))
+}
+
+```
+
+## defining memory
+
+First we have to define a group of putative memory barcodes. For now let's use a simple approach in which we use the 2.5% quantile of the KRAB-only vs GAL4-only fold-change as a cutoff for the GAL4-KRAB fussion vs GAL4-only fold-change. Everything below this quantile we consider "memory" barcode.
+
+```{r memory_state}
+poi = 'KRAB'
+day = 11
+conditions = c('GPvsG', 'GPvsP', 'PvsG')
+condition_vec = sprintf('%s_%s_day%i', poi, conditions, day)
+xy_table = filter_data(fc_table, condition_vec, poi, day, rep('log2',3), state_vec=c('lad_2state'), unique_map=F)
+xy_melt = melt(xy_table[[1]], measure.vars=condition_vec)
+cdat = ddply(xy_melt, "variable", summarise, confint=quantile(value, c(0.025, 0.975)))
+cdat_lad = ddply(xy_melt, c("variable",'lad_2state'), summarise, confint=quantile(value, c(0.025, 0.975)))
+
+ggplot(xy_melt[xy_melt$lad_2state=='LAD', ] , aes(x=value, colour=variable)) + geom_density() + geom_vline(data = cdat_lad[cdat_lad$variable==condition_vec[3] & cdat_lad$lad_2state=='LAD',], aes(xintercept=as.numeric(confint), color=factor(variable)))
+cut_off = min(cdat_lad[cdat_lad$variable=='KRAB_PvsG_day11' & cdat_lad$lad_2state=='LAD','confint'])
+below_cut = rownames(xy_table[[1]])[which(xy_table[[1]]$KRAB_GPvsG_day11 < cut_off & xy_table[[1]]$lad_2state == 'LAD' )]
+
+above_cut = rownames(xy_table[[1]])[which(xy_table[[1]]$KRAB_GPvsG_day11 >= cut_off & xy_table[[1]]$lad_2state == 'LAD' )]
+
+memory_fc = rbind(cbind(memory=TRUE, fc_table[below_cut,]), cbind(memory=FALSE, fc_table[above_cut,]))
+
+```
+
+## defining active gene
+
+To define a set of active genes, let's just look at the grocap distribution and pick a reasonable cut-off based on the distribution.
+
+```{r}
+log_grocap = gencode.sure.160617$gro.cap.1kb.sense
+log_grocap = log10(log_grocap + min(log_grocap[which(log_grocap>0)])/2)
+lad = ifelse(gencode.sure.160617$k562.lad==1, 'LAD', 'iLAD')
+
+ggplot(cbind.data.frame(log_grocap, lad), aes(x=log_grocap, color=lad)) + geom_density() + scale_color_manual(values=lad_color_vec) + geom_vline(xintercept=-1.5)
+
+active = log_grocap > -1.5
+
+```
+
+
+## distribution of nearest active/inactive gene
+
+```{r, comment=NA}
+grange_frame = gencode.sure.160617[,c('chr', 'txStart', 'txEnd', 'strand', 'name')]
+barcode_frame = memory_fc[, c('chr_r', 'pos_r', 'pos_r', 'ori_r', 'memory', 'KRAB_GPvsG_day11')]
+colnames(barcode_frame)[1:4] = colnames(grange_frame)[1:4] = c('seqnames', 'start', 'stop', 'strand')
+
+active_gr = makeGRangesFromDataFrame(grange_frame[which(active),], keep.extra.columns=T)
+inactive_gr = makeGRangesFromDataFrame(grange_frame[which(!active),], keep.extra.columns=T)
+
+
+barcode_gr = makeGRangesFromDataFrame(barcode_frame, keep.extra.columns=T)
+
+nearest_active = distanceToNearest(barcode_gr, active_gr, ignore.strand=T)
+
+nearest_inactive = distanceToNearest(barcode_gr, inactive_gr, ignore.strand=T)
+
+near_table = cbind.data.frame(memory=barcode_frame$memory,
+                              active=mcols(nearest_active)[,1],
+                              inactive=mcols(nearest_inactive)[,1])
+near_melt = melt(near_table)
+near_melt$class = paste0(near_melt$variable, ifelse(near_melt$memory, '_memory', '_NO_memory'))
+
+ggplot(near_melt, aes(x=log10(value + 1), color=class)) + geom_density(adjust=1/2)
+
+
+kable(near_table[which(near_table$memory & near_table$active<100000),])
+```
+**conclusion:**
+
+There seems to be 4 intergrations with memory in active genes. There is 1 hit extra if we extend the region up to 20kb. Let's investigate these hits further.
+
+
+```{r, comment=NA}
+active_memory = nearest_active[near_table$memory & near_table$active<20000]
+
+kable(data.frame(active_gr[subjectHits(active_memory)]))
+
+
+kable(barcode_frame[queryHits(active_memory),])
+
+write.table(cbind(barcode_frame[,1:2],
+                  ifelse(barcode_frame[,4]=='+',
+                         barcode_frame[,3] + 100,
+                         barcode_frame[,3] - 100),
+                  paste0(ifelse(barcode_frame$memory,
+                                'memory_',
+                                'NO_memory_'), rownames(barcode_frame)),
+                  '.', barcode_frame[,4]),
+            'memory_barcodes.bed', col.names=F, row.names=F, quote=F, sep='\t')
+
+write.table(cbind(grange_frame[,1:3],
+                  paste0(ifelse(active,
+                                'active_',
+                                'inactive_'), grange_frame$name),
+                  '.', grange_frame$strand),
+            'active_grocap.bed', col.names=F, row.names=F, quote=F, sep='\t')
+
+```
+
+
+```{r}
+grange_frame$log_grocap = log_grocap
+nearest_active_table = cbind.data.frame(barcode_frame[from(nearest_active),],
+                                        grange_frame[active,][to(nearest_active),])
+nearest_active_table$distance = mcols(nearest_active)[,1]
+nearest_active_table$barcode = rownames(nearest_active_table)
+
+nearest_active_table = nearest_active_table[,c(14,1:6,13,11,7:10,12)]
+colnames(nearest_active_table)[c(2:5, 9:13)] = c('chr_barcode', 'start_barcode', 'stop_barcode', 'strand_barcode','active_gene', 'chr_gene', 'start_gene', 'stop_gene', 'strand_gene')
+write.table(nearest_active_table, 'cl20161212_nearest_active_table.txt',row.names=F, quote=F, sep='\t')
+```

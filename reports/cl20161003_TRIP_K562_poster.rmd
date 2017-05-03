@@ -383,7 +383,7 @@ plot_wilcox <- function(xy_table, state, poi, day, title, xlab, ylab="log2 (fold
 			xy_table$this_x[xy_table$x==state] = state
 			xy_table$this_x[xy_table$x!=state] = notx
 			xy_table$this_x = factor(xy_table$this_x, levels=c(state,notx))
-			t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\nadjusted p-value threshold:\n%.2g\ndata:%s day%i %s vs NOT %s\nW = %i, p-value = %0.5f\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f',  p_cut, poi, day, state, state, wc$statistic, p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
+			t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\nadjusted p-value threshold:\n%.2g\ndata:%s day%i %s vs NOT %s\nW = %i, p-value = %0.5f\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f', p_cut, poi, day, state, state, wc$statistic, p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
 			p = ggplot(xy_table,aes(x = this_x, y=y, colour=state)) +
 				theme(panel.background = element_rect(fill = "lavender")) +
 				theme(strip.text.x = element_text(size = 28)) + geom_boxplot(aes(colour=factor(this_x)), outlier.colour=NA) +
@@ -569,493 +569,110 @@ for (poi in c('KRAB', 'G9a', 'CBX')){
 save(plots_2, plots_9, plots_exp, plots_wilcox_2, plots_wilcox_9, plots_2vs9, plots_expVs9, stats_2, stats_9, stats_exp, corr_2vs9, stats_2vs9, corr_expVs9, stats_expVs9, file = 'plots.rData')
 
 ```
-## comparison between two later days
-We now have two timepoints for KRAB and CBX after the initial plasmid has been lost
-Let's see how they differ.
+```{r}
+xy_table = filter_data(fc_table, 'KRAB_GAL4_exp_2', 'KRAB_GAL4.POI_exp_2','KRAB', 2, 'log2', 'log2')
+svg('KRAB_day2.svg')
+ggplot(xy_table[[1]], aes(x=x, y=y)) + theme(panel.background = element_rect(fill="lavender")) + geom_point( shape=19, size=1, colour='RED') + geom_abline() + xlab('log2(expr GAL4 + 0.1)') + ylab('log2(expr GAL4-KRAB + 0.1)') + ggtitle('GAL4-KRAB vs GAL4 day 2') + theme(plot.title = element_text(size=24),text = element_text(size=20))
+dev.off()
 
-## expression
-```{r memory, fig.width=10, fig.height=15}
-KRAB_14_1 = 'KRAB_GAL4.POI_exp_D14_r1'
-KRAB_14_2 = 'KRAB_GAL4.POI_exp_D14_r2'
-fc = filter_data(fc_table, KRAB_14_1,  KRAB_14_2, 'KRAB', 14, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'KRAB expression GAL4_POI\n day 14 replicates', 14, 14)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(KRAB_14_1)+ylab(KRAB_14_2) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
+xy_table = filter_data(fc_table, 'G9a_GAL4_exp_2', 'G9a_GAL4.POI_exp_2','G9a', 2, 'log2', 'log2')
+svg('G9a_day2.svg')
+ggplot(xy_table[[1]], aes(x=x, y=y)) + theme(panel.background = element_rect(fill="lavender")) + geom_point( shape=19, size=1, colour='RED') + geom_abline() + xlab('log2(expr G9a + 0.1)') + ylab('log2(expr GAL4-G9a + 0.1)') + ggtitle('GAL4-G9a vs GAL4 day 2') + theme(plot.title = element_text(size=24),text = element_text(size=20))
+dev.off()
 
-KRAB_11_1 = 'KRAB_GAL4.POI_exp_D11_r1'
-KRAB_11_2 = 'KRAB_GAL4.POI_exp_D11_r2'
-fc = filter_data(fc_table, KRAB_11_1,  KRAB_11_2, 'KRAB', 11, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'KRAB expression GAL4_POI\n day 11 replicates', 11, 11)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(KRAB_11_1)+ylab(KRAB_11_2) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-
-KRAB_14_1 = 'KRAB_GAL4_exp_D14_r1'
-KRAB_14_2 = 'KRAB_GAL4_exp_D14_r2'
-fc = filter_data(fc_table, KRAB_14_1,  KRAB_14_2, 'KRAB', 14, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'KRAB expression GAL4-only\n day 14 replicates', 14, 14)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(KRAB_14_1)+ylab(KRAB_14_2) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-
-KRAB_11 = 'KRAB_GAL4.POI_exp_11'
-KRAB_14 = 'KRAB_GAL4.POI_exp_14'
-fc = filter_data(fc_table, KRAB_11,  KRAB_14, 'KRAB', 11, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'KRAB expression\nday 11 vs 14', 11, 14)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(KRAB_11)+ylab(KRAB_14) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-
-KRAB_11 = 'KRAB_GPvsG_day11'
-KRAB_14 = 'KRAB_GPvsG_day14'
-fc = filter_data(fc_table, KRAB_11,  KRAB_14, 'KRAB', 11, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'KRAB log2(fold-change)\nday 11 vs 14', 11, 14)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(KRAB_11)+ylab(KRAB_14) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-
-CBX_9 = 'CBX_GAL4.POI_exp_9'
-CBX_12 = 'CBX_GAL4.POI_exp_12'
-fc = filter_data(fc_table, CBX_9,  CBX_12, 'CBX', 9, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'CBX expression\nday 9 vs 14', 9, 12)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(CBX_9)+ylab(CBX_12) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-
-CBX_9 = 'CBX_GPvsG_day9'
-CBX_12 = 'CBX_GPvsG_day12'
-fc = filter_data(fc_table, CBX_9,  CBX_12, 'CBX', 9, 'log2', 'log2', unique_map=T)
-test=correlate(fc[[1]], 'CBX log2(fold-change)\nday 9 vs 12', 9, 12)
-top=data.frame(x=Inf, y=Inf, label=test[[2]])
-p = ggplot(fc[[1]],aes(x=x, y=y)) + geom_point() +xlab(CBX_9)+ylab(CBX_12) + geom_text(aes(label=label), data=top, vjust=1, hjust=1, size=5) + stat_smooth(method = "lm")
-grid.arrange(test[[1]], p, ncol=1, heights=c(3,7))
-```
-
-## repeat family's
-Repeats can be classified using a tree made up of class, family and name. Repeatmasker can link DNA regions to either of those levels. If there is doubt wether an annotation is made correctly, a "?" is added to the level.
-
-### base expression level
-First let's look if there are differences in basal expression levels of the intergrations in different repeat families.
-For this we can look at the GAL4 control.
-
-```{r rep_base_exp, fig.width=10, fig.height=15, eval=T}
-rep_plots = plots_exp[['rep_family']]
-rep_stats = stats_exp[['rep_family']]
-for (poi in names(rep_plots)){
-	title = sprintf("log2(expression) of GAL4 per repeat family\nday 2 in the %s-experiment",poi)
-	
-	grid.arrange(rep_stats[[poi]], rep_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=30, face='bold')), heights=c(1,6))
-}
-```
-**conclusion:**
-
-Some of the LINE/L1 elements seem to be more lowly expressed, but this could be just because their are more data-points.
-
-### fold-change on day 2
-First let's at the fold changes between GAL4-POI and GAL4 between different repeat families.
-The first plot shows the overall fold changes per repeat family. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct families.
-
-```{r rep_fc_2, fig.width=10, fig.height=15, eval=T}
-rep_plots = plots_2[['rep_family']]
-rep_stats = stats_2[['rep_family']]
-for (poi in names(rep_plots)){
-	title = sprintf("fold change day %i\n%s",2,poi)
-	grid.arrange(rep_stats[[poi]], rep_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-rep_plots = plots_wilcox_2[['rep_family']]
-for (poi in names(rep_plots)){
-	title = sprintf("fold change day %i %s",2,poi)
-	for (state in names(rep_plots[[poi]])){
-		wc = rep_plots[[poi]][[state]]
-		grid.arrange(wc[[2]], wc[[1]],
-			         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-	}
-}
-```
-**conclusion:**
-
-On day 2 the rRNA integrations seem not to be affected by GAL4-POI.  
-This could be because it is transcribed by a different polymerase or because the protein construct is not able to localize to the intergration site. But maybe then the rate of transcription would be different.
-
-
-```{r rRNA, fig.width=10, fig.height=10, eval=T}
-## let´s double check the base expression of the rRNA intergrations that show no effect of KRAB thetering
-plots = list()
-cut_off = c(KRAB=-2, G9a=0, CBX=-3)
-for (poi in c('KRAB', 'G9a', 'CBX')){
-	above_rRNA = rownames(fc_table)[which(log2(fc_table[,paste0(poi,'_GPvsG_day2')])>-2&fc_table$rep_class=='rRNA')]
-	condition = paste0(poi,'_GAL4_exp_2')
-	fc = filter_data(fc_table, 'rep_class', condition, poi, 2, 'factor', 'log2')
-	xy_table = fc[[1]]
-    plots[[poi]] = plot_values(xy_table, "repeat family", "log2(expression)",bc_vec=above_rRNA, which_state='rRNA') + ggtitle(paste0("expression\nwith GAL4\nday 2 ",poi))
-}
-do.call(grid.arrange,c(plots, nrow=1))
 
 ```
+```{r}
+xy_table = filter_data(fc_table, 'KRAB_GAL4.POI_exp_2', 'KRAB_GAL4_exp_2','KRAB', 2, 'value', 'value', state='lad')
+xy_lad_2 = xy_table[[1]]
+xy_lad_2$lad = '-'
+xy_lad_2[which(xy_lad_2$state=='ciLAD'|xy_lad_2$state=='fiLAD'),'lad'] = 'interLAD'
+xy_lad_2[which(xy_lad_2$state=='cLAD'|xy_lad_2$state=='fLAD'),'lad'] = 'LAD'
+
+xy_lad_2$fc = log2(xy_lad_2$x / xy_lad_2$y)
+
+wc = wilcox.test(xy_lad_2[xy_lad_2$lad=='LAD','fc'], xy_lad_2[xy_lad_2$lad=='interLAD','fc'], conf.int=T)
+t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\ndata: KRAB day 2 LAD vs interLAD\nW = %i, p-value = %0.5g\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f', wc$statistic, wc$p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
+p = ggplot(xy_lad_2,aes(x = factor(lad, levels=c('LAD', 'interLAD')), y=fc, colour=lad)) +
+				theme(panel.background = element_rect(fill = "lavender")) +
+				theme(strip.text.x = element_text(size = 28)) +
+				geom_point(shape=19, position=position_jitter(width=.9)) + geom_violin(alpha=0.3) + ggtitle('KRAB day 2 fold-change by lamina association') +
+				stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+				theme(legend.position="none") +
+				theme(axis.title = element_text(size = 28)) +
+				theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+				theme(axis.text = element_text(size = text_size)) +
+				geom_hline(yintercept=0, colour = "grey30") +
+				theme(plot.title = element_text(size=24)) +
+				ylab('log2(fold-change)') + xlab('lamina association')
+svg('KRAB_lad_day2.svg', width=8, height=15)
+grid.arrange(t,p, heights = c(1,3))
+dev.off()
 
 
-### fold-change on day 9, 11 and 12
-Now let's look at the fold changes between GAL4-POI and GAL4 between different repeat families in the memory setting.
-The first plot again shows the overall fold changes per repeat family. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct families.
+xy_table = filter_data(fc_table, 'KRAB_GAL4.POI_exp_11', 'KRAB_GAL4_exp_11','KRAB', 11, 'value', 'value', state='lad')
+xy_lad_11 = xy_table[[1]]
+xy_lad_11$lad = '-'
+xy_lad_11[which(xy_lad_11$state=='ciLAD'|xy_lad_11$state=='fiLAD'),'lad'] = 'interLAD'
+xy_lad_11[which(xy_lad_11$state=='cLAD'|xy_lad_11$state=='fLAD'),'lad'] = 'LAD'
+
+xy_lad_11$fc = log2(xy_lad_11$x / xy_lad_11$y)
+
+wc = wilcox.test(xy_lad_11[xy_lad_11$lad=='LAD','fc'], xy_lad_11[xy_lad_11$lad=='interLAD','fc'], conf.int=T)
+t = textGrob(sprintf('        Wilcoxon rank sum test with continuity correction\ndata: KRAB day 11 LAD vs interLAD\nW = %i, p-value = %0.5g\n alternative hypothesis: true location shift is not equal to 0\n95 percent confidence interval:\n %0.8f %0.8f\nsample estimates:\ndifference in location\n%0.7f', wc$statistic, wc$p.value, wc$conf.int[1], wc$conf.int[2], wc$estimate))
+p = ggplot(xy_lad_11,aes(x = factor(lad, levels=c('LAD', 'interLAD')), y=fc, colour=lad)) +
+				theme(panel.background = element_rect(fill = "lavender")) +
+				theme(strip.text.x = element_text(size = 28)) +
+				geom_point(shape=19, position=position_jitter(width=.9)) + geom_violin(alpha=0.3) + ggtitle('KRAB day 11 fold-change by lamina association') +
+				stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+				theme(legend.position="none") +
+				theme(axis.title = element_text(size = 28)) +
+				theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+				theme(axis.text = element_text(size = text_size)) +
+				geom_hline(yintercept=0, colour = "grey30") +
+				theme(plot.title = element_text(size=24)) +
+				ylab('log2(fold-change)') + xlab('lamina association')
+svg('KRAB_lad_day11.svg', width=8, height=15)
+grid.arrange(t,p, heights = c(1,3))
+dev.off()
 
 
-```{r rep_fc_9, fig.width=10, fig.height=15, eval=T}
-rep_plots = plots_9[['rep_family']]
-rep_stats = stats_9[['rep_family']]
-for (poi in names(rep_plots)){
-	for (day in names(rep_plots[[poi]])){
-		title = sprintf("fold change day %s\n%s",day,poi)
-		grid.arrange(rep_stats[[poi]][[day]], rep_plots[[poi]][[day]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-	}
-	
-}
-rep_plots = plots_wilcox_9[['rep_family']]
-for (poi in names(rep_plots)){
-	for (day in names(rep_plots[[poi]])){
-		for (state in names(rep_plots[[poi]][[day]])){
-			wc = rep_plots[[poi]][[day]][[state]]
-		
-			title = sprintf("fold change day %s %s",day,poi)
-			grid.arrange(wc[[2]], wc[[1]],
-			         	 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-		}
-	}
-}
+
+xy_rep = filter_data(fc_table, 'KRAB_GAL4.POI_exp_2', 'KRAB_GAL4_exp_2','KRAB', 2, 'value', 'value', state='rep_class')[[1]]
+xy_rep$fc = log2(xy_rep$x / xy_rep$y)
+svg('KRAB_repeat_day2.svg', width=8, height=10)
+ggplot(xy_rep,aes(x = state, y=fc, colour=state)) +
+				theme(panel.background = element_rect(fill = "lavender")) +
+				theme(strip.text.x = element_text(size = 28)) +
+				geom_point(shape=19, position=position_jitter(width=.9)) + geom_boxplot(alpha=0.3) + ggtitle('KRAB day 2 fold-change for integrations in repetitive elements') +
+				stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+				theme(legend.position="none") +
+				theme(axis.title = element_text(size = 28)) +
+				theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+				theme(axis.text = element_text(size = text_size)) +
+				geom_hline(yintercept=0, colour = "grey30") +
+				theme(plot.title = element_text(size=24)) +
+				ylab('log2(fold-change)') + xlab('repeat class')
+dev.off()
+
+
+svg('G9a_repeat_day2.svg', width=8, height=10)
+xy_rep = filter_data(fc_table, 'G9a_GAL4.POI_exp_2', 'G9a_GAL4_exp_2','G9a', 2, 'value', 'value', state='rep_class')[[1]]
+xy_rep$fc = log2(xy_rep$x / xy_rep$y)
+ggplot(xy_rep,aes(x = state, y=fc, colour=state)) +
+				theme(panel.background = element_rect(fill = "lavender")) +
+				theme(strip.text.x = element_text(size = 28)) +
+				geom_point(shape=19, position=position_jitter(width=.9)) + geom_boxplot(alpha=0.3) + ggtitle('G9a day 2 fold-change for integrations in repetitive elements') +
+				stat_summary(fun.y=median, aes(ymin=..y.., ymax=..y..), geom='errorbar', width=0.3, color='black', size=1.25) +
+				theme(legend.position="none") +
+				theme(axis.title = element_text(size = 28)) +
+				theme(axis.text.x = element_text(hjust = 1, angle = 90)) +
+				theme(axis.text = element_text(size = text_size)) +
+				geom_hline(yintercept=0, colour = "grey30") +
+				theme(plot.title = element_text(size=24)) +
+				ylab('log2(fold-change)') + xlab('repeat class')
+dev.off()
 ```
-**conclusion:**
-
-There does not seem to be a repetitive element in which integrations specifically show a memory effect.
-
-
-### correlation between expression on day 2 and fold change on day 9, 11 or 12
-It could very well be that the amount of expression on day 2 is correlated with the occurence of memory.
-It could be harder to keep the repressive state when there is a lot of signals to stimulate transcription.
-
-```{r rep_Expvs9, fig.width=10, fig.height=25, eval=T}
-rep_plots = plots_expVs9[['rep_family']]
-rep_stats = stats_expVs9[['rep_family']]
-rep_corr = corr_expVs9[['rep_family']]
-for (poi in names(rep_plots)){
-	for (day in names(rep_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(rep_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(rep_stats[[poi]][[day]], rep_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-
-
-
-### correlation between fold-change on day 2 and day 9,11 or 12
-It would be interesting to see if integrations that showed a big effect on day 2, 
-still show more difference in the memory setting, or that initial effect-size has
-no impact on memory formation.
-
-
-```{r rep_2vs9, fig.width=10, fig.height=25, eval=T}
-rep_plots = plots_2vs9[['rep_family']]
-rep_stats = stats_2vs9[['rep_family']]
-rep_corr = corr_2vs9[['rep_family']]
-for (poi in names(rep_plots)){
-	for (day in names(rep_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(rep_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(rep_stats[[poi]][[day]], rep_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-
-## LAD states
-I defined 4 different LAD-states, being constitutive LADs (cLAD), fLADs, lamina-associated in K562 (K562-fLAD), fLADS, not lamina associated in K562 (other-fLAD) and constitutive interLADs (ciLAD). We expect intergrations that are found in LADs to be more lowly expressed than intergrations in interLADs. Since G9a methylation is linked to lamina association, it would be interesting to see if the the difference in effect of G9a between LADs and iLADs is more profound than the difference in effect of KRAB and CBX5.
-
-### base expression level
-First let's look if there are differences in basal expression levels of the intergrations in different LAD states.
-For this we can look at the GAL4 control.
-
-
-```{r lad_exp, fig.width=10, fig.height=15, eval=T}
-lad_plots = plots_exp[['lad']]
-lad_stats = stats_exp[['lad']]
-for (poi in names(lad_plots)){
-	title = sprintf("log2(expression) of GAL4 per LAD state\nday 2 in the %s-experiment",poi)
-	grid.arrange(lad_stats[[poi]], lad_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-```
-**conclusion:**
-
-Although the expression in the two lamina-associated states is lower than the states that are
-not associated with the lamina, this difference is not that big. This is probably due to the fact
-that the promotor is relatively strong.
-
-
-
-### fold-change on day 2
-First let's at the fold changes between GAL4-POI and GAL4 between different LAD-states.
-The first plot shows the overall fold changes per LAD-state. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct states.
-
-```{r lad_fc2, fig.width=10, fig.height=15, eval=T}
-lad_plots = plots_2[['lad']]
-lad_stats = stats_2[['lad']]
-for (poi in names(lad_plots)){
-	title = sprintf("fold change day %i\n%s",2,poi)
-	grid.arrange(lad_stats[[poi]], lad_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-lad_plots = plots_wilcox_2[['lad']]
-for (poi in names(lad_plots)){
-	title = sprintf("fold change day %i %s",days[poi],poi)
-	for (state in names(lad_plots[[poi]])){
-		wc = lad_plots[[poi]][[state]]
-		grid.arrange(wc[[2]], wc[[1]],
-			         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-	}
-}
-```
-**conclusion:**
-
-The effect of the thetered proteins seem to be slightly larger for lamina-associated states.
-
-
-### fold-change on day 9, 11 and 12
-Now let's look at the fold changes between GAL4-POI and GAL4 between different LAD state in the memory setting.
-The first plot again shows the overall fold changes per LAD state. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct families.
-
-
-
-```{r lad_fc9, fig.width=10, fig.height=15, eval=T}
-lad_plots = plots_9[['lad']]
-lad_stats = stats_9[['lad']]
-for (poi in names(lad_plots)){
-	for (day in names(lad_plots[[poi]])){
-		title = sprintf("fold change day %s\n%s",day,poi)
-		grid.arrange(lad_stats[[poi]][[day]], lad_plots[[poi]][[day]],
-		        	 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-	}
-	
-}
-lad_plots = plots_wilcox_9[['lad']]
-for (poi in names(lad_plots)){
-	for (day in names(lad_plots[[poi]])){
-		for (state in names(lad_plots[[poi]][[day]])){
-			title = sprintf("fold change day %s %s",day,poi)
-			wc = lad_plots[[poi]][[day]][[state]]
-			grid.arrange(wc[[2]], wc[[1]],
-			        	 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-		}
-		
-	}
-}
-```
-**conclusion:**
-
-There seems to be slightly more memory in lamina-associated states. Also the difference between
-lamina-associated states and not lamina-associated domains seem to have gotten larger.
-
-### correlation between expression on day 2 and fold change on day 9, 11 or 12
-It could very well be that the amount of expression on day 2 is correlated with the occurence of memory.
-It could be harder to keep the repressive state when there is a lot of signals to stimulate transcription.
-
-```{r lad_expvs9, fig.width=10, fig.height=15, eval=T}
-lad_plots = plots_expVs9[['lad']]
-lad_stats = stats_expVs9[['lad']]
-lad_corr = corr_expVs9[['lad']]
-for (poi in names(lad_plots)){
-	for (day in names(lad_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(lad_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(lad_stats[[poi]][[day]], lad_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-
-### correlation between fold change on day 2 and day 9, 11 or 12
-It could very well be that the amount of suppression on day 2 is correlated with the occurence of memory.
-If it is harder for the transcription machinery to access the site on day 2, this could mean that the suppressive
-chromatin state is more stable and more likely to be maintained.
-
-
-```{r lad_2vs9, fig.width=10, fig.height=15, eval=T}
-lad_plots = plots_2vs9[['lad']]
-lad_stats = stats_2vs9[['lad']]
-lad_corr = corr_2vs9[['lad']]
-for (poi in names(lad_plots)){
-	for (day in names(lad_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(lad_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(lad_stats[[poi]][[day]], lad_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-
-## Chromatin states
-I used a 15-state model from the chromatin state Encode track in UCSC. ChIP-seq data from the Broad Histone track was used to generate this track. Data for nine factors plus input and nine cell types was binarized separately at a 200 base pair resolution based on a Poisson background model. The chromatin states were learned from this binarized data using a multivariate Hidden Markov Model (HMM) that explicitly models the combinatorial patterns of observed modifications (Ernst and Kellis, 2010). To learn a common set of states across the nine cell types, first the genomes were concatenated across the cell types. For each of the nine cell types, each 200 base pair interval was then assigned to its most likely state under the model. Detailed information about the model parameters and state enrichments can be found in (Ernst et al, accepted). 
-
-### base expression level
-First let's look if there are differences in basal expression levels of the intergrations in different chromatin states.
-For this we can look at the GAL4 control.
-
-```{r, fig.width=10, fig.height=15, eval=T}
-chrom_plots = plots_exp[['chrom']]
-chrom_stats = stats_exp[['chrom']]
-for (poi in names(chrom_plots)){
-	title = sprintf("log2(expression) of GAL4 per Chromatin state\nday 2 in the %s-experiment",poi)
-	grid.arrange(chrom_stats[[poi]], chrom_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-```
-**Conclustion:**
-
-In genereral there does not seem to be a lot of variation in expression level except for maybe state 13.
-
-
-
-### fold-change on day 2
-First let's at the fold changes between GAL4-POI and GAL4 between different Chromatin-states.
-The first plot shows the overall fold changes per Chromatin-state. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct states.
-
-
-```{r, fig.width=10, fig.height=15, eval=T}
-chrom_plots = plots_2[['chrom']]
-chrom_stats = stats_2[['chrom']]
-for (poi in names(chrom_plots)){
-	title = sprintf("fold change day %i\n%s",2,poi)
-	grid.arrange(chrom_stats[[poi]], chrom_plots[[poi]],
-		         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-chrom_plots = plots_wilcox_2[['chrom']]
-for (poi in names(chrom_plots)){
-	title = sprintf("fold change day %i %s",2,poi)
-	for (state in names(chrom_plots[[poi]])){
-		wc = chrom_plots[[poi]][[state]]
-		grid.arrange(wc[[2]], wc[[1]],
-			         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-	}
-}
-```
-
-**Conclusion:**
-State 14 and state 9 seem to have a population if barcodes that show a reduced suppression effect in the thetering experiment. State 14 includes intergrations in rRNA, so these are the same barcodes as shown in our analysis of the
-intergrations in repeats. As you can see in the following chuck, there is no clear classification in the top part of state 9.
-
-```{r, fig.width=10, fig.height=10, eval=T}
-## filter data and get x and y
-xy_table = filter_data(fc_table, 'chrom', 'KRAB_GPvsG_day2',poi='KRAB',day=2, xtype='factor',ytype='log2')
-## select for the barcodes with log2 fc > 1 the columns with data on mapping and linking to states
-high_fc = fc_table[rownames(xy_table[[1]])[which(xy_table[[1]][,2]>-1&xy_table[[1]]$x!='-')],43:ncol(fc_table)]
-## create a plot with data
-grid.arrange(tableGrob(high_fc[,1:15]),tableGrob(high_fc[,16:23]))
-```
-**remarks:**
-
-mapq is mapping quality produced by bowtie and is a value for how unique the mapping location is. freq1 is the frequency of reads belonging to a barcode that were mapped to the top location. freq2 is the frequency for the second location. Wether the links between barcode and state are unique is decided upon in the data preperation script.
-
-### fold-change on day 9, 11 and 12
-Now let's look at the fold changes between GAL4-POI and GAL4 between different Chromatin state in the memory setting.
-The first plot again shows the overall fold changes per Chromatin state. 
-After this plot, wilcoxon test results are shown for those families for which the p-value is below an adjusted threshold.
-This adjustment is done simply by dividing 0.05 by the number of distinct families.
-
-
-```{r, fig.width=10, fig.height=15, eval=T}
-chrom_plots = plots_9[['chrom']]
-chrom_stats = stats_9[['chrom']]
-for (poi in names(chrom_plots)){
-	for (day in names(chrom_plots[[poi]]))
-		title = sprintf("fold change day %s\n%s",day,poi)
-		grid.arrange(chrom_stats[[poi]][[day]], chrom_plots[[poi]][[day]],
-			         top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,6))
-}
-chrom_plots = plots_wilcox_9[['chrom']]
-for (poi in names(chrom_plots)){
-	for (day in names(chrom_plots[[poi]])){
-		for (state in names(chrom_plots[[poi]][[day]])){
-			title = sprintf("fold change day %s %s",day,poi)
-			wc = chrom_plots[[poi]][[day]][[state]]
-			grid.arrange(wc[[2]], wc[[1]],
-			        	 top=textGrob(title, gp=gpar(fontsize=38)), heights=c(1,3))
-		}
-		
-	}
-}
-```
-
-**conclustion:**
-There is a some sort of small tail in state 13. It appears that a subgroup of integrations
-in state 13 shows memory. The tail seems to be the same for each protein of interest.
-
-
-
-
-### correlation between expression on day 2 and fold change on day 9, 11 or 12
-It could very well be that the amount of expression on day 2 is correlated with the occurence of memory.
-It could be harder to keep the repressive state when there is a lot of signals to stimulate transcription.
-
-
-```{r, fig.width=10, fig.height=25, eval=T}
-chrom_plots = plots_expVs9[['chrom']]
-chrom_stats = stats_expVs9[['chrom']]
-chrom_corr = corr_expVs9[['chrom']]
-for (poi in names(chrom_plots)){
-	for (day in names(chrom_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(chrom_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(chrom_stats[[poi]][[day]], chrom_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-
-**conclusion:**
-According to the spearman's correlation and pearson's correlation state 13 has a significant correlation between initial expression and fold change at day 11 and 12 in the KRAB and G9a experiment. Looking at the figures however, the amount of correlation is not that high.
-
-
-
-### correlation between fold change on day 2 and day 9, 11 or 12
-It could very well be that the amount of suppression on day 2 is correlated with the occurence of memory.
-If it is harder for the transcription machinery to access the site on day 2, this could mean that the suppressive
-chromatin state is more stable and more likely to be maintained.
-
-```{r, fig.width=10, fig.height=25, eval=T}
-chrom_plots = plots_2vs9[['chrom']]
-chrom_stats = stats_2vs9[['chrom']]
-chrom_corr = corr_2vs9[['chrom']]
-for (poi in names(chrom_plots)){
-	for (day in names(chrom_plots[[poi]])){
-		title = sprintf("fold change day 2 vs day %s\n%s",day, poi)
-		
-		do.call(grid.arrange, c(chrom_corr[[poi]][[day]], ncol=3, top=list(textGrob(title, gp=gpar(fontsize=38)))))
-
-		grid.arrange(chrom_stats[[poi]][[day]], chrom_plots[[poi]][[day]], top=list(textGrob(title, gp=gpar(fontsize=38))), heights=c(1,8))
-	}
-}
-```
-**conclusion:**
-According to the spearman's correlation and pearson's correlation state 13 has a significant correlation between the fold-change after addition of POI-GAL4 on day 2 and the fold change at day 9 and 11 in the CBX5 and KRAB experiment. This does not seem to be the case for G9a, which also showed less of a memory effect.
-
 
 ```{r}
 sessionInfo()
