@@ -1,0 +1,122 @@
+import getpass
+import datetime
+import inspect
+import os
+import re
+
+filename = inspect.getframeinfo(inspect.currentframe()).filename
+path = os.path.dirname(os.path.abspath(filename))
+
+# user = getpass.getuser()
+# date = datetime.datetime.now()
+# date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
+# OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
+OUTDIR = ''.join(('cl20170329','_', config["dir_suffix"]))
+
+
+rule all:
+    input:
+        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
+               name=config['input_file']['mapping'].keys(), num=(1,2)),
+        expand('{outdir}/mapping.{name}.starcode.count', outdir=OUTDIR,
+                   name=config['input_file']['mapping'].keys())
+
+
+rule parse_sam:
+    input:
+        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
+        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR)
+    output:
+        bed='{outdir}/mapping.{name}.{num}.bed',
+        table='{outdir}/mapping.{name}.{num}.table',
+        stats='{outdir}/mapping.{name}.{num}.parse_stat.table',
+        length='{outdir}/mapping.{name}.{num}.length.table',
+        remap_fq='{outdir}/mapping.{name}.{num}.remap.fastq.gz',
+        remap='{outdir}/mapping.{name}.{num}.remap.bam'
+    wildcard_constraints:
+        num="\d+"
+    params:
+        bowtie_index = config['bowtie']['index'],
+        options=config['bowtie']['options'],
+        max_dist = config['max_dist'],
+        num='{num}'
+    threads: 10
+    script:
+        'scripts/parse_sam.py'
+
+
+if 'mapping' in config['input_file']:
+    rule align:
+        input:
+            '%s/mapping.{name}.{num}.fastq.gz' % OUTDIR
+        output:
+            sam='{outdir}/mapping.{name}.{num}.sam',
+            bam='{outdir}/mapping.{name}.{num}.bam'
+        params:
+            bowtie_index=config['bowtie']['index'],
+            options=config['bowtie']['options'],
+            num='{num}'
+        wildcard_constraints:
+            num="\d+"
+        threads: 10
+        log:
+            '{outdir}/mapping.align.{name}.{num}.log'
+        run:
+            options = params.options[params.num]
+            shell("{path}/scripts/align.sh {input} {log} {threads}"
+                  "{options} {params.bowtie_index} {output}")
+
+
+
+rule starcode_map:
+    input:
+        expand('{outdir}/mapping.{{name}}.raw.count', outdir=OUTDIR)
+    output:
+        gen='{outdir}/mapping.{name}.starcode.count',
+        mut='{outdir}/mapping.{name}.genuine.cut',
+        count='{outdir}/mapping.{name}.count.cut'
+    params:
+        lev_dist= config['lev_dist'],
+        use_other= False,
+        count= config['min_count']['map']
+    threads:
+        3
+    script:
+        'scripts/starcode.py'
+
+rule count_barcode:
+    input:
+        '%s/{file_base}.{name}.barcode.txt.gz' % OUTDIR
+    output:
+        '%s/{file_base}.{name}.raw.count' % OUTDIR
+    params:
+        path=path
+    shell:
+        "{params.path}/scripts/count_barcode.sh {input} > {output}"
+
+
+rule parse_mapping:
+    input:
+        lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
+    output:
+        '%s/mapping.{name}.barcode.txt.gz' % (OUTDIR),
+        '%s/mapping.{name}.1.fastq.gz' % (OUTDIR),
+        '%s/mapping.{name}.2.fastq.gz' % (OUTDIR),
+        '%s/mapping.{name}.statistics.txt' % (OUTDIR),
+        structure = '%s/mapping.{name}.structure.txt' % (OUTDIR)
+    log:
+        '%s/mapping.{name}_parser.log' % (OUTDIR)
+    params:
+        structure= config['structure']['mapping'],
+        type_dict= config['input_file']['mapping'],
+        outdir = OUTDIR,
+        name= '{name}'
+    run:
+        structure = params.structure % params.type_dict[wildcards.name][1]
+        structure = structure.replace('\\', '')
+        if params.type_dict[wildcards.name][1] == 0:
+            structure = re.sub('index.*\n', '', structure)
+        with open(output.structure[0], 'w') as f:
+            f.write(structure)
+        shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
+              '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')

@@ -180,17 +180,17 @@ if __name__ == '__main__':
     (map_dict, remap_list,
         map_stat_dict, length_dict) = parse_sam(snakein.sam[0])
     if len(remap_list) > 0:
-        with gzip.open(snakeout.remap_fq, "wt") as fqfile:
+        with gzip.open(snakeout.remap_fq[0], "wt") as fqfile:
             SeqIO.write(remap_list, fqfile, 'fastq')
         options = snakeparam.options[snakeparam.num]
         align_command = ("bowtie2 -p %i -t %s"
                          " -x %s -U %s -S %s" % (threads,
                                                  ' '.join(options),
                                                  snakeparam.bowtie_index,
-                                                 snakeout.remap_fq,
-                                                 snakeout.remap))
+                                                 snakeout.remap_fq[0],
+                                                 snakeout.remap[0]))
         os.system(align_command)
-        remap_sam_out = parse_sam(snakeout.remap)
+        remap_sam_out = parse_sam(snakeout.remap[0])
         for bc in remap_sam_out[0]:
             if bc in map_dict:
                 this_remap_dict = remap_sam_out[0][bc]
@@ -212,10 +212,10 @@ if __name__ == '__main__':
                 if barcode not in starcode_set:
                     starcode_set.add(barcode)
 
-    write_bed(map_dict, snakeout.bed, snakeparam.max_dist[snakeparam.num])
+    write_bed(map_dict, snakeout.bed[0], snakeparam.max_dist[snakeparam.num])
 
     top_map_dict = top_map(map_dict, snakeparam.max_dist[snakeparam.num])
-    with open(snakeout.table, 'w') as fout:
+    with open(snakeout.table[0], 'w') as fout:
         fout.write('\t'.join(('barcode', 'seqname', 'ori', 'start_pos',
                               'total_mapped', 'av_mapq', 'freq1', 'freq2',
                               'seq')))
@@ -225,8 +225,8 @@ if __name__ == '__main__':
                                          top_map_dict[bc]]))
             fout.write('\n')
 
-    with open(snakeout.stats, 'w') as f_stats:
-        with open(snakeout.length, 'w') as f_length:
+    with open(snakeout.stats[0], 'w') as f_stats:
+        with open(snakeout.length[0], 'w') as f_length:
             f_stats.write('\t'.join(('barcode', 'total_reads', 'aligned',
                                      'aligned_correct', 'realigned',
                                      'realigned_correct')))

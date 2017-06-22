@@ -17,6 +17,6 @@ if type(fastq_name) != str and len(fastq_name)==2:
 else:
     paired = ''
 
-hell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l %s %s '
+shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l %s %s '
       '-b %s %s %s %s' % (log, paired, name, fastq_name, structure_file,
                           outdir))

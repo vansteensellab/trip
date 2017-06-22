@@ -608,7 +608,7 @@ rule count_barcode:
     output:
         '%s/{file_base}.{name}raw.count' % OUTDIR
     shell:
-        "gunzip -cf - < {input} | awk '{{print $3}}' | tail -n+2 | sort | uniq -c | awk '{{print $2\"\t\"$1}}'> {output}"
+        "scripts/count_barcode.sh {input} > {output}"
 
 ###############################################################################
 ##+++++++++++++++++++++++++++++++ parse reads +++++++++++++++++++++++++++++++##

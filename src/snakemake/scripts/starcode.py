@@ -39,11 +39,11 @@ except subprocess.TimeoutExpired:
     starcode.kill()
     outs, errs = starcode.communicate()
 
-genuine = open(snakemake.output.gen, 'w')
-mutated = open(snakemake.output.mut, 'w')
-count = open(snakemake.output.count, 'w')
+genuine = open(snakemake.output.gen[0], 'w')
+mutated = open(snakemake.output.mut[0], 'w')
+count = open(snakemake.output.count[0], 'w')
 if use_other:
-    notg = open(snakemake.output.notg, 'w')
+    notg = open(snakemake.output.notg[0], 'w')
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
@@ -72,7 +72,7 @@ for line in outs.decode('UTF-8').split('\n'):
 mutated.close()
 genuine.close()
 if use_other:
-    with open(snakemake.output.notc, 'w') as notc:
+    with open(snakemake.output.notc[0], 'w') as notc:
         for barcode in barcode_set:
             notc.write(barcode)
             notc.write('\n')
