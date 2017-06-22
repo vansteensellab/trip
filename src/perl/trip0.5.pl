@@ -187,8 +187,7 @@ if ($map_style ne 'n') {
 	my $sam_for = $out_dir . "samFor.sam";
 	my $align_command = "bowtie2 -p " . $cores . " -t -f --very-sensitive -x " . 
 						$bowtie_base . " -U " . $for_map_tbl ." -S " . $sam_for;
-	print $align_command;
-	print "TEST";				
+	print $align_command;			
 	system ($align_command);
 	
 	if ($debug) {
@@ -770,9 +769,13 @@ sub bc_extract_exp1 {
     	$ line = <FASTQ>;
     	chomp ($line);
     	my $BC_this = 0;
-    
+    	
    		if ($line =~ $regex) { 	
     	$BC_this =  $1;
+    	if ($BC_this =~ /TGAGTGCCGTTCCACT/){
+	    	print $BC_this;
+	    	print '\n';
+    	}
     	} elsif ( Hdist ($pat1, substr($line, $ind_len, $len1)) <= ($len1/7)) {
 		    
 		    if ( Hdist ($pat2, substr($line, ($ind_len + $len1 + $bc_len) , $len2)) < ($len2/7) ) {
@@ -1531,9 +1534,12 @@ sub parse_sam {
 					
 		} elsif ($cigar =~ /^\*$/) {
 			$mapping = join (":" , ($chr, $ori, $pos));
-			} elsif ($cigar =~ /^(\d+)S/ and $1 > 17) { # these are cases which need re-alignmnet
-				$re_map -> {$id} = substr ($query, 0 , $1);
-				}
+		} elsif ($cigar =~ /^(\d+)S/ and $1 > 17) { # these are cases which need re-alignmnet
+			$re_map -> {$id} = substr ($query, 0 , $1);
+		} else {
+			print join(":", ($chr, $ori, $pos, $cigar));
+			print '\n';
+		}
 		
 		# put the information in the map_hash
 		if (exists $map_hash -> {$BC_this} ) {

@@ -254,11 +254,11 @@ sub bc_extract_exp2 {
 	my $hits = 0;				# reads with successful match
 	my $ex_match =0;			# barcodes with exact match
 	my $part_match =0;			# barcodes which match only partially to only one of the reference barcodes
+	my $double_match =0;
 	my $regex = make_regex ($ind_len, $bc_len, $pat1, $pat2, "exp");
 	my $len1 = length $pat1;
 	my $len2 = length $pat2;
 	die "Cannot open the file  $fastq\n" unless open (FASTQ , "<" , $fastq);
-	
 	while (my $line = <FASTQ>) {
     
     	die "$fastq is not a proper fastq file\n" if (substr $line, 0, 1) ne "@";
@@ -297,6 +297,8 @@ sub bc_extract_exp2 {
 						$part_match++;
 						$BC_this = shift @mutants;
 						$BCs -> { $BC_this } -> [$no] += 1;
+					} elsif (scalar @mutants > 1){
+						$double_match++;
 					}
 				}
 		}
@@ -304,7 +306,7 @@ sub bc_extract_exp2 {
     	<FASTQ>;
 	}
 	close FASTQ;
-	return ($total , $hits, $ex_match, $part_match);
+	return ($total , $hits, $ex_match, $part_match, $double_match);
 }
 
 
