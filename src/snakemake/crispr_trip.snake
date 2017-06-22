@@ -13,23 +13,45 @@ path = os.path.dirname(os.path.abspath(filename))
 
 rule all:
     input:
-        expand('{outdir}/mapping.{name}.{num}.table', outdir=config['out_dir'],
-               name=config['input_file']['mapping'].keys(), num=(1,2)),
-        expand('{outdir}/mapping.{name}.starcode.count', outdir=config['out_dir'],
-                   name=config['input_file']['mapping'].keys())
+        expand('{outdir}/mutation/{name}.raw.table', outdir=config['out_dir'],
+               name=config['input_file']['mutation'].keys()),
+        expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
+               name=config['input_file']['mapping'].keys(), num=(1,2))
+
+rule mutation_only:
+    input:
+        expand('{outdir}/mutation/{name}.raw.table', outdir=config['out_dir'],
+               name=config['input_file']['mutation'].keys())
+
+rule mapping_only:
+    input:
+        expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
+               name=config['input_file']['mapping'].keys(), num=(1,2))
+
+rule call_mutation:
+    input:
+        '%s/parsed/mutation.{name}.barcode.txt.gz' % config['out_dir']
+    output:
+        '%s/mutation/{name}.raw.table' % config['out_dir']
+    params:
+        target = config['crispr_target'],
+        spacer_list = config['spacer_list'],
+        gap_list = config['gap_list']
+    script:
+        'scripts/call_mutation.py'
 
 
 rule parse_sam:
     input:
-        sam=expand('{out_dir}/mapping.{{name}}.{{num}}.sam', out_dir=config['out_dir']),
-        count=expand('{out_dir}/mapping.{{name}}.starcode.count', out_dir=config['out_dir'])
+        sam=expand('{out_dir}/aligned/{{name}}.{{num}}.sam', out_dir=config['out_dir']),
+        count=expand('{out_dir}/counts/mapping.{{name}}.starcode.count', out_dir=config['out_dir'])
     output:
-        bed='{outdir}/mapping.{name}.{num}.bed',
-        table='{outdir}/mapping.{name}.{num}.table',
-        stats='{outdir}/mapping.{name}.{num}.parse_stat.table',
-        length='{outdir}/mapping.{name}.{num}.length.table',
-        remap_fq='{outdir}/mapping.{name}.{num}.remap.fastq.gz',
-        remap='{outdir}/mapping.{name}.{num}.remap.bam'
+        bed='{outdir}/bed/mapping.{name}.{num}.bed',
+        table='{outdir}/table/mapping.{name}.{num}.table',
+        stats='{outdir}/stats/mapping.{name}.{num}.parse_stat.table',
+        length='{outdir}/stats/mapping.{name}.{num}.length.table',
+        remap_fq='{outdir}/aligned/mapping.{name}.{num}.remap.fastq.gz',
+        remap='{outdir}/aligned/mapping.{name}.{num}.remap.bam'
     wildcard_constraints:
         num="\d+"
     params:
@@ -45,10 +67,10 @@ rule parse_sam:
 if 'mapping' in config['input_file']:
     rule align:
         input:
-            expand('{outdir}/mapping.{{name}}.{{num}}.fastq.gz', outdir=config['out_dir'])
+            expand('{outdir}/parsed/mapping.{{name}}.{{num}}.fastq.gz', outdir=config['out_dir'])
         output:
-            sam='{outdir}/mapping.{name}.{num}.sam',
-            bam='{outdir}/mapping.{name}.{num}.bam'
+            sam='{outdir}/aligned/{name}.{num}.sam',
+            bam='{outdir}/aligned/{name}.{num}.bam'
         params:
             bowtie_index=config['bowtie']['index'],
             options=config['bowtie']['options'],
@@ -65,17 +87,18 @@ if 'mapping' in config['input_file']:
 
 
 
-rule starcode_map:
+rule starcode:
     input:
-        '%s/mapping.{name}.raw.count' % config['out_dir']
+        '%s/counts/{read_type}.{name}.raw.count' % config['out_dir']
     output:
-        gen='%s/mapping.{name}.starcode.count' % config['out_dir'],
-        mut='%s/mapping.{name}.genuine.cut' % config['out_dir'],
-        count='%s/mapping.{name}.count.cut' % config['out_dir']
+        gen='%s/counts/{read_type}.{name}.starcode.count' % config['out_dir'],
+        mut='%s/counts/{read_type}.{name}.genuine.cut' % config['out_dir'],
+        count='%s/counts/{read_type}.{name}.count.cut' % config['out_dir']
     params:
-        lev_dist= config['lev_dist'],
-        use_other= False,
-        count= config['min_count']['map']
+        lev_dist = config['lev_dist'],
+        use_other = False,
+        read_type = '{read_type}',
+        count= config['min_count']
     threads:
         3
     script:
@@ -83,30 +106,53 @@ rule starcode_map:
 
 rule count_barcode:
     input:
-        '%s/{file_base}.{name}.barcode.txt.gz' % config['out_dir']
+        '%s/parsed/{file_base}.{name}.barcode.txt.gz' % config['out_dir']
     output:
-        '%s/{file_base}.{name}.raw.count' % config['out_dir']
+        '%s/counts/{file_base}.{name}.raw.count' % config['out_dir']
     params:
         path=path
     shell:
         "{params.path}/scripts/count_barcode.sh {input} > {output}"
 
 
+rule parse_mutation:
+    input:
+        lambda wildcards: config['input_file']['mutation'][wildcards.name][0]
+    output:
+        '%s/parsed/mutation.{name}.barcode.txt.gz' % (config['out_dir']),
+        '%s/parsed/mutation.{name}.statistics.txt' % (config['out_dir']),
+        structure = '%s/parsed/mutation.{name}.structure.txt' % (config['out_dir'])
+    log:
+        '%s/stats/mutation.{name}_parser.log' % (config['out_dir'])
+    params:
+        structure= config['structure']['mutation'],
+        type_dict= config['input_file']['mutation'],
+        outdir = '%s/parsed/' % config['out_dir']
+    run:
+        structure = params.structure % params.type_dict[wildcards.name][1]
+        if params.type_dict[wildcards.name][1] == 0:
+            structure = re.sub('index.*\n', '', structure)
+        with open(output.structure[0], 'w') as f:
+            f.write(structure)
+        shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -s -l {log} '
+              '-b mutation.{wildcards.name} {input} {output.structure} {params.outdir}')
+
+
 rule parse_mapping:
     input:
         lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
     output:
-        '%s/mapping.{name}.barcode.txt.gz' % (config['out_dir']),
-        '%s/mapping.{name}.1.fastq.gz' % (config['out_dir']),
-        '%s/mapping.{name}.2.fastq.gz' % (config['out_dir']),
-        '%s/mapping.{name}.statistics.txt' % (config['out_dir']),
-        structure = '%s/mapping.{name}.structure.txt' % (config['out_dir'])
+        '%s/parsed/mapping.{name}.barcode.txt.gz' % (config['out_dir']),
+        '%s/parsed/mapping.{name}.1.fastq.gz' % (config['out_dir']),
+        '%s/parsed/mapping.{name}.2.fastq.gz' % (config['out_dir']),
+        '%s/parsed/mapping.{name}.statistics.txt' % (config['out_dir']),
+        structure = '%s/parsed/mapping.{name}.structure.txt' % (config['out_dir'])
     log:
-        '%s/mapping.{name}_parser.log' % (config['out_dir'])
+        '%s/parsed/mapping.{name}_parser.log' % (config['out_dir'])
     params:
         structure= config['structure']['mapping'],
         type_dict= config['input_file']['mapping'],
-        outdir = config['out_dir'],
+        outdir = '%s/parsed/' % config['out_dir'],
         name= '{name}'
     run:
         structure = params.structure % params.type_dict[wildcards.name][1]

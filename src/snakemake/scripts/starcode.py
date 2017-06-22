@@ -3,6 +3,8 @@ import re
 
 count_file = snakemake.input[0]
 use_other = snakemake.params.use_other
+min_count = snakemake.params.count[snakemake.params.read_type]
+
 if use_other:
     starcode_file = snakemake.input[1]
     with open(starcode_file) as f:
@@ -51,7 +53,7 @@ for line in outs.decode('UTF-8').split('\n'):
         if use_other and barcode not in barcode_set:
             notg.write('%s\t%i\n' % (barcode, count_dict[barcode]))
         elif barcode in count_dict:
-            if count_dict[barcode] > snakemake.params.count:
+            if count_dict[barcode] > min_count:
                 genuine.write('%s\t%i\n' % (barcode, count_dict[barcode]))
             else:
                 count.write('%s\t%i\n' % (barcode, count_dict[barcode]))

@@ -10,6 +10,10 @@ input_file:
     idx_B:
       - [/home/NFS/users/r.schep/projects/RSTP2/20170619_RSTP2_100-4491/RSTP2_100_Idx-B_TCTCTATGCG_R1.fastq, /home/NFS/users/r.schep/projects/RSTP2/20170619_RSTP2_100-4491/RSTP2_100_Idx-B_TCTCTATGCG_R2.fastq]
       - 10
+  mutation:
+    idx_C:
+      - /home/NFS/users/r.schep/projects/RSTP2/20170619_RSTP2_100-4491/RSTP2_100_Idx-C_CGAGAGATAC_R1.fastq
+      - 10
 
 structure:
   mapping: |
@@ -20,11 +24,18 @@ structure:
     rev_map_complement      -       TTAACCCTAGAAAGATAATCATATTGTGACGTAC      const   -       False   var   -
     rev_map GTACGTCACAATATGATTATCTTTCTAGGGTTAA      -       const   present True    fixed   -
     fwd_map_complement      -       GATCA[BC]CTCGAGTTGTGGCCGGCCCTTGTGAC     const_bar_comp  -       True    var   -
+  mutation: |
+    ID      5'      3'      type    req     second-read     pos   keep-bases
+    index   %i      -       const   present False   fixed   -
+    pat1       GTCACAAGGGCCGGCCACAA   -       const   present False   fixed   -
+    barcode 16 - barcode present False fixed -
+    pat2       TGATCGGT  -       const       present False   fixed   -
 
 lev_dist: 2
 
 min_count:
-    map: 3
+    mapping: 3
+    mutation: 0
 
 bowtie:
   index:  /home/NFS/users/r.schep/data/bowtie2/hg38/hg38
@@ -34,3 +45,8 @@ bowtie:
 max_dist:
   '1': 500
   '2': 20
+
+crispr_target: 'GCCGATGGTGAAGTGGTAAG'
+crispr_gap: 10
+spacer_list: ['GATTATG', 'CACTTT']
+gap_list: [94, 88]
