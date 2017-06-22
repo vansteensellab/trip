@@ -10,22 +10,19 @@ path = os.path.dirname(os.path.abspath(filename))
 # user = getpass.getuser()
 # date = datetime.datetime.now()
 # date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
-# OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
-OUTDIR = ''.join(('cl20170329','_', config["dir_suffix"]))
-
 
 rule all:
     input:
-        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
+        expand('{outdir}/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2)),
-        expand('{outdir}/mapping.{name}.starcode.count', outdir=OUTDIR,
+        expand('{outdir}/mapping.{name}.starcode.count', outdir=config['out_dir'],
                    name=config['input_file']['mapping'].keys())
 
 
 rule parse_sam:
     input:
-        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
-        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR)
+        sam=expand('{out_dir}/mapping.{{name}}.{{num}}.sam', out_dir=config['out_dir']),
+        count=expand('{out_dir}/mapping.{{name}}.starcode.count', out_dir=config['out_dir'])
     output:
         bed='{outdir}/mapping.{name}.{num}.bed',
         table='{outdir}/mapping.{name}.{num}.table',
@@ -48,7 +45,7 @@ rule parse_sam:
 if 'mapping' in config['input_file']:
     rule align:
         input:
-            '%s/mapping.{name}.{num}.fastq.gz' % OUTDIR
+            expand('{outdir}/mapping.{{name}}.{{num}}.fastq.gz', outdir=config['out_dir'])
         output:
             sam='{outdir}/mapping.{name}.{num}.sam',
             bam='{outdir}/mapping.{name}.{num}.bam'
@@ -70,11 +67,11 @@ if 'mapping' in config['input_file']:
 
 rule starcode_map:
     input:
-        expand('{outdir}/mapping.{{name}}.raw.count', outdir=OUTDIR)
+        '%s/mapping.{name}.raw.count' % config['out_dir']
     output:
-        gen='{outdir}/mapping.{name}.starcode.count',
-        mut='{outdir}/mapping.{name}.genuine.cut',
-        count='{outdir}/mapping.{name}.count.cut'
+        gen='%s/mapping.{name}.starcode.count' % config['out_dir'],
+        mut='%s/mapping.{name}.genuine.cut' % config['out_dir'],
+        count='%s/mapping.{name}.count.cut' % config['out_dir']
     params:
         lev_dist= config['lev_dist'],
         use_other= False,
@@ -86,9 +83,9 @@ rule starcode_map:
 
 rule count_barcode:
     input:
-        '%s/{file_base}.{name}.barcode.txt.gz' % OUTDIR
+        '%s/{file_base}.{name}.barcode.txt.gz' % config['out_dir']
     output:
-        '%s/{file_base}.{name}.raw.count' % OUTDIR
+        '%s/{file_base}.{name}.raw.count' % config['out_dir']
     params:
         path=path
     shell:
@@ -99,17 +96,17 @@ rule parse_mapping:
     input:
         lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
     output:
-        '%s/mapping.{name}.barcode.txt.gz' % (OUTDIR),
-        '%s/mapping.{name}.1.fastq.gz' % (OUTDIR),
-        '%s/mapping.{name}.2.fastq.gz' % (OUTDIR),
-        '%s/mapping.{name}.statistics.txt' % (OUTDIR),
-        structure = '%s/mapping.{name}.structure.txt' % (OUTDIR)
+        '%s/mapping.{name}.barcode.txt.gz' % (config['out_dir']),
+        '%s/mapping.{name}.1.fastq.gz' % (config['out_dir']),
+        '%s/mapping.{name}.2.fastq.gz' % (config['out_dir']),
+        '%s/mapping.{name}.statistics.txt' % (config['out_dir']),
+        structure = '%s/mapping.{name}.structure.txt' % (config['out_dir'])
     log:
-        '%s/mapping.{name}_parser.log' % (OUTDIR)
+        '%s/mapping.{name}_parser.log' % (config['out_dir'])
     params:
         structure= config['structure']['mapping'],
         type_dict= config['input_file']['mapping'],
-        outdir = OUTDIR,
+        outdir = config['out_dir'],
         name= '{name}'
     run:
         structure = params.structure % params.type_dict[wildcards.name][1]

@@ -1,6 +1,6 @@
 
 
-dir_suffix: 'TRIP_CRISPR'
+out_dir: 'cl20170622_TRIP_CRISPR'
 
 input_file:
   mapping:
