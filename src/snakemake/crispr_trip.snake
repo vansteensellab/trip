@@ -43,7 +43,7 @@ rule call_mutation:
 
 rule parse_sam:
     input:
-        sam=expand('{out_dir}/aligned/{{name}}.{{num}}.sam', out_dir=config['out_dir']),
+        bam=expand('{out_dir}/aligned/{{name}}.{{num}}.bam', out_dir=config['out_dir']),
         count=expand('{out_dir}/counts/mapping.{{name}}.starcode.count', out_dir=config['out_dir'])
     output:
         bed='{outdir}/bed/mapping.{name}.{num}.bed',
@@ -69,8 +69,7 @@ if 'mapping' in config['input_file']:
         input:
             expand('{outdir}/parsed/mapping.{{name}}.{{num}}.fastq.gz', outdir=config['out_dir'])
         output:
-            sam='{outdir}/aligned/{name}.{num}.sam',
-            bam='{outdir}/aligned/{name}.{num}.bam'
+            '{outdir}/aligned/{name}.{num}.bam'
         params:
             bowtie_index=config['bowtie']['index'],
             options=config['bowtie']['options'],
@@ -82,7 +81,7 @@ if 'mapping' in config['input_file']:
             '{outdir}/mapping.align.{name}.{num}.log'
         run:
             options = params.options[params.num]
-            shell("{path}/scripts/align.sh {input} {log} {threads}"
+            shell("{path}/scripts/align.sh {input} {log} {threads} "
                   "{options} {params.bowtie_index} {output}")
 
 

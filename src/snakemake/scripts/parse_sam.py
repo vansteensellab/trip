@@ -6,7 +6,7 @@ from Bio import SeqIO
 from collections import Counter
 
 
-def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
+def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
               remap_soft_clip=17):
     remap_list = []
     map_dict = {}
@@ -14,58 +14,59 @@ def parse_sam(sam_file, max_soft_clip=5, min_first_match=10,
     length_dict = {}
     for line in pysam.AlignmentFile(sam_file):
         bc_this = re.match(r'.*:([ACGT]+)$', line.query_name).groups(1)[0]
-        if bc_this not in map_stat_dict:
-            map_stat_dict[bc_this] = [0, 0, 0, 0]
-            length_dict[bc_this] = [0, 0, 0, 0]
-        if line.is_reverse:
-            start_pos = line.reference_end
-            ori = '-'
-        else:
-            start_pos = line.reference_start
-            ori = '+'
-        add_mapping = False
-        if line.cigarstring is None:
-            mapping = ('*', ori, 0)
-            map_stat_dict[bc_this][1] += 1
-            length_dict[bc_this][1] += len(line.query_sequence)
-        else:
+        if bc_this in starcode_set:
+            if bc_this not in map_stat_dict:
+                map_stat_dict[bc_this] = [0, 0, 0, 0]
+                length_dict[bc_this] = [0, 0, 0, 0]
             if line.is_reverse:
-                first_cigar = line.cigartuples[-1]
+                start_pos = line.reference_end
+                ori = '-'
             else:
-                first_cigar = line.cigartuples[0]
-            mapping = (line.reference_name, ori, start_pos)
-            if first_cigar[0] == 4:
-                if first_cigar[1] <= max_soft_clip:
+                start_pos = line.reference_start
+                ori = '+'
+            add_mapping = False
+            if line.cigarstring is None:
+                mapping = ('*', ori, 0)
+                map_stat_dict[bc_this][1] += 1
+                length_dict[bc_this][1] += len(line.query_sequence)
+            else:
+                if line.is_reverse:
+                    first_cigar = line.cigartuples[-1]
+                else:
+                    first_cigar = line.cigartuples[0]
+                mapping = (line.reference_name, ori, start_pos)
+                if first_cigar[0] == 4:
+                    if first_cigar[1] <= max_soft_clip:
+                        add_mapping = True
+                    elif first_cigar[1] >= remap_soft_clip:
+                        quality_dict = {'phred_quality':
+                                        line.query_qualities[:first_cigar[1]]}
+                        query_seq = line.query_sequence[:first_cigar[1]]
+                        seq = SeqIO.SeqRecord(query_seq, line.query_name,
+                                              description=line.query_name,
+                                              letter_annotations=quality_dict)
+                        remap_list.append(seq)
+                        map_stat_dict[bc_this][3] += 1
+                        length_dict[bc_this][3] += len(line.query_sequence)
+                    else:
+                        map_stat_dict[bc_this][2] += 1
+                        length_dict[bc_this][2] += len(line.query_sequence)
+                if first_cigar[0] == 0 and first_cigar[1] >= min_first_match:
                     add_mapping = True
-                elif first_cigar[1] >= remap_soft_clip:
-                    quality_dict = {'phred_quality':
-                                    line.query_qualities[:first_cigar[1]]}
-                    query_seq = line.query_sequence[:first_cigar[1]]
-                    seq = SeqIO.SeqRecord(query_seq, line.query_name,
-                                          description=line.query_name,
-                                          letter_annotations=quality_dict)
-                    remap_list.append(seq)
-                    map_stat_dict[bc_this][3] += 1
-                    length_dict[bc_this][3] += len(line.query_sequence)
+            mapping_quality = line.mapping_quality
+            if add_mapping:
+                map_stat_dict[bc_this][0] += 1
+                length_dict[bc_this][0] += len(line.query_sequence)
+                seq = line.query_alignment_sequence
+                if bc_this in map_dict:
+                    if mapping in map_dict[bc_this]:
+                        map_dict[bc_this][mapping][0] += 1
+                        map_dict[bc_this][mapping][1] += mapping_quality
+                        map_dict[bc_this][mapping][2].append(seq)
+                    else:
+                        map_dict[bc_this][mapping] = [1, mapping_quality, [seq]]
                 else:
-                    map_stat_dict[bc_this][2] += 1
-                    length_dict[bc_this][2] += len(line.query_sequence)
-            if first_cigar[0] == 0 and first_cigar[1] >= min_first_match:
-                add_mapping = True
-        mapping_quality = line.mapping_quality
-        if add_mapping:
-            map_stat_dict[bc_this][0] += 1
-            length_dict[bc_this][0] += len(line.query_sequence)
-            seq = line.query_alignment_sequence
-            if bc_this in map_dict:
-                if mapping in map_dict[bc_this]:
-                    map_dict[bc_this][mapping][0] += 1
-                    map_dict[bc_this][mapping][1] += mapping_quality
-                    map_dict[bc_this][mapping][2].append(seq)
-                else:
-                    map_dict[bc_this][mapping] = [1, mapping_quality, [seq]]
-            else:
-                map_dict[bc_this] = {mapping: [1, mapping_quality, [seq]]}
+                    map_dict[bc_this] = {mapping: [1, mapping_quality, [seq]]}
     return(map_dict, remap_list, map_stat_dict, length_dict)
 
 
@@ -144,6 +145,10 @@ def top_map(map_dict_in, max_dist):
                 freq2 = second_reads / total_reads
             else:
                 freq2 = 0
+            sorted_key_list = sorted(this_map_dict.keys(),
+                                     key=lambda elem: sort_keys(elem,
+                                                                this_map_dict),
+                                     reverse=True)
         map_dict_out[bc] = [reference_name, ori, start_pos, total_reads,
                             av_mapq, freq1, freq2, seq]
     return(map_dict_out)
@@ -161,11 +166,11 @@ def refine_map(this_map_dict, sorted_key_list, max_dist):
             close_key = sorted_key_list.pop(i)
             this_reads += this_map_dict[close_key][0]
             this_mapq += this_map_dict[close_key][1]
-        elif (abs(sorted_key_list[i][2] - top_key[2]) < max_dist):
-            print(sorted_key_list[i][0])
-            print(top_key[0])
-            print(sorted_key_list[i][1])
-            print(top_key[1])
+        # elif (abs(sorted_key_list[i][2] - top_key[2]) < max_dist):
+        #     print(sorted_key_list[i][0])
+        #     print(top_key[0])
+        #     print(sorted_key_list[i][1])
+        #     print(top_key[1])
         i += 1
     return(top_key, this_reads, this_mapq, sorted_key_list)
 
@@ -177,8 +182,15 @@ if __name__ == '__main__':
     snakeparam = snakemake.params
     threads = snakemake.threads
 
+    for count_file in snakein.count:
+        with open(count_file) as cf:
+            for line in cf.readlines():
+                barcode = line.split('\t')[0]
+                if barcode not in starcode_set:
+                    starcode_set.add(barcode)
+
     (map_dict, remap_list,
-        map_stat_dict, length_dict) = parse_sam(snakein.sam[0])
+        map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set)
     if len(remap_list) > 0:
         with gzip.open(snakeout.remap_fq[0], "wt") as fqfile:
             SeqIO.write(remap_list, fqfile, 'fastq')
@@ -190,7 +202,7 @@ if __name__ == '__main__':
                                                  snakeout.remap_fq[0],
                                                  snakeout.remap[0]))
         os.system(align_command)
-        remap_sam_out = parse_sam(snakeout.remap[0])
+        remap_sam_out = parse_sam(snakeout.remap[0], starcode_set)
         for bc in remap_sam_out[0]:
             if bc in map_dict:
                 this_remap_dict = remap_sam_out[0][bc]
@@ -205,12 +217,8 @@ if __name__ == '__main__':
             else:
                 map_dict[bc] = remap_sam_out[0][bc]
 
-    for count_file in snakein.count:
-        with open(count_file) as cf:
-            for line in cf.readlines():
-                barcode = line.split('\t')[0]
-                if barcode not in starcode_set:
-                    starcode_set.add(barcode)
+
+
 
     write_bed(map_dict, snakeout.bed[0], snakeparam.max_dist[snakeparam.num])
 
