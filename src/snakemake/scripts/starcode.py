@@ -49,20 +49,11 @@ if use_other:
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
+    other_str = line_split[2]
     if barcode != '':
-        if use_other and barcode not in barcode_set:
-            notg.write('%s\t%i\n' % (barcode, count_dict[barcode]))
-        elif barcode in count_dict:
-            if count_dict[barcode] > min_count:
-                genuine.write('%s\t%i\n' % (barcode, count_dict[barcode]))
-            else:
-                count.write('%s\t%i\n' % (barcode, count_dict[barcode]))
-            if use_other:
-                barcode_set.remove(barcode)
-        else:
-            genuine.write('%s\t0\n' % barcode)
         if len(line_split) == 3:
-            other_list = line_split[2].split(',')
+            other_str = line_split[2]
+            other_list = other_str.split(',')
             for other_barcode in other_list:
                 if other_barcode != barcode:
                     mutated.write('%s\t%i\t%s\n' % (other_barcode,
@@ -70,6 +61,23 @@ for line in outs.decode('UTF-8').split('\n'):
                                                     barcode))
                     if use_other:
                         barcode_set.remove(other_barcode)
+        else:
+            other_str = barcode
+        if use_other and barcode not in barcode_set:
+            notg.write('%s\t%i\t%s\n' % (barcode, count_dict[barcode],
+                                         other_str))
+        elif barcode in count_dict:
+            if count_dict[barcode] > min_count:
+                genuine.write('%s\t%i\t%s\n' % (barcode, count_dict[barcode],
+                                                other_str))
+            else:
+                count.write('%s\t%i\t%s\n' % (barcode, count_dict[barcode],
+                                              other_str))
+            if use_other:
+                barcode_set.remove(barcode)
+        else:
+            genuine.write('%s\t0\n' % barcode)
+
 
 mutated.close()
 genuine.close()
