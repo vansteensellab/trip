@@ -49,7 +49,7 @@ if use_other:
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
-    other_str = line_split[2]
+
     if barcode != '':
         if len(line_split) == 3:
             other_str = line_split[2]

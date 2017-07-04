@@ -13,7 +13,7 @@ path = os.path.dirname(os.path.abspath(filename))
 
 rule all:
     input:
-        expand('{outdir}/mutation/{name}.raw.table', outdir=config['out_dir'],
+        expand('{outdir}/mutation/{name}.genuine_mapped.table', outdir=config['out_dir'],
                name=config['input_file']['mutation'].keys()),
         expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2))
@@ -27,6 +27,19 @@ rule mapping_only:
     input:
         expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2))
+
+rule genuine_mutations:
+    input:
+        '%s/mutation/{name}.raw.table' % config['out_dir'],
+        '%s/counts/mutation.{name}.starcode.count' % config['out_dir'],
+        lambda wildcards: '%s/table/mapping.%s.2.table' % (config['out_dir'], config['input_file']['mutation'][wildcards.name][2])
+    output:
+        '%s/mutation/{name}.not_genuine.table' % config['out_dir'],
+        '%s/mutation/{name}.genuine_mapped.table' % config['out_dir'],
+        '%s/mutation/{name}.genuine_unmapped.table' % config['out_dir']
+    script:
+        'scripts/genuine_mutations.py'
+
 
 rule call_mutation:
     input:

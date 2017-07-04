@@ -325,8 +325,6 @@ rule parse_sam:
         table='{outdir}/mapping.{name}.{num}.table',
         stats='{outdir}/mapping.{name}.{num}.parse_stat.table',
         length='{outdir}/mapping.{name}.{num}.length.table',
-        remap_fq='{outdir}/mapping.{name}.{num}.remap.fastq.gz',
-        remap='{outdir}/mapping.{name}.{num}.remap.bam'
     wildcard_constraints:
         num="\d+"
     params:

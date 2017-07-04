@@ -13,7 +13,7 @@ def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
     map_stat_dict = {}
     length_dict = {}
     for line in pysam.AlignmentFile(sam_file):
-        bc_this = re.match(r'.*:([ACGT]+)$', line.query_name).groups(1)[0]
+        bc_this = re.match(r'.*_([ACGT]+)$', line.query_name).groups(1)[0]
         if bc_this in starcode_set:
             if bc_this not in map_stat_dict:
                 map_stat_dict[bc_this] = [0, 0, 0, 0]
@@ -188,7 +188,6 @@ if __name__ == '__main__':
                 barcode = line.split('\t')[0]
                 if barcode not in starcode_set:
                     starcode_set.add(barcode)
-
     (map_dict, remap_list,
         map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set)
     if len(remap_list) > 0:
@@ -196,11 +195,12 @@ if __name__ == '__main__':
             SeqIO.write(remap_list, fqfile, 'fastq')
         options = snakeparam.options[snakeparam.num]
         align_command = ("bowtie2 -p %i -t %s"
-                         " -x %s -U %s -S %s" % (threads,
-                                                 ' '.join(options),
-                                                 snakeparam.bowtie_index,
-                                                 snakeout.remap_fq[0],
-                                                 snakeout.remap[0]))
+                         " -x %s -U %s | "
+                         "samtools view -Sb - > %s" % (threads,
+                                                       ' '.join(options),
+                                                       snakeparam.bowtie_index,
+                                                       snakeout.remap_fq[0],
+                                                       snakeout.remap[0]))
         os.system(align_command)
         remap_sam_out = parse_sam(snakeout.remap[0], starcode_set)
         for bc in remap_sam_out[0]:
@@ -217,6 +217,9 @@ if __name__ == '__main__':
             else:
                 map_dict[bc] = remap_sam_out[0][bc]
 
+    else:
+        os.system('touch %s; touch %s;' % (snakeout.remap_fq[0],
+                                           snakeout.remap[0]))
 
 
 

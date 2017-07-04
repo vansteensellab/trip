@@ -14,6 +14,7 @@ input_file:
     idx_C:
       - /home/NFS/users/r.schep/projects/RSTP2/20170619_RSTP2_100-4491/RSTP2_100_Idx-C_CGAGAGATAC_R1.fastq
       - 10
+      - idx_A
 
 structure:
   mapping: |
