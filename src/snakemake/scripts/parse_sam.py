@@ -13,7 +13,7 @@ def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
     map_stat_dict = {}
     length_dict = {}
     for line in pysam.AlignmentFile(sam_file):
-        bc_this = re.match(r'.*_([ACGT]+)$', line.query_name).groups(1)[0]
+        bc_this = re.match(r'.*:([ACGT]+)$', line.query_name).groups(1)[0]
         if bc_this in starcode_set:
             if bc_this not in map_stat_dict:
                 map_stat_dict[bc_this] = [0, 0, 0, 0]
