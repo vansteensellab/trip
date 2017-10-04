@@ -1,0 +1,85 @@
+# knitr document van Steensel lab
+
+# Efficiency of tagmantation mapping
+## Christ Leemans, 29-06-2017
+
+## Introduction
+
+The normal procedure of locating trip integrations is by iPCR. However this is a relatively complicated technique and often a big part of your integrations is not mappable. The last of which proves especially troublesome in the variation on TRIP where clonal cell-lines in which each cell cary the same set of intergrations. These clonal lines are developed to investigate the effect of the integration of an active element on it's surrounding environment (e.g. lamina detachment). 
+
+In this analysis barcodes are less informative and information on surrounding DNA is necesarry to assign each integration to a specific allele. IPCR therefore might be less suitable, but since missing the barcode is acceptable, another technique called tagmentation mapping is more attractive.
+
+Laura used both techniques on her clonal integration F1-hybrid CAST-129S1 cell lines. In this report I would like to find out wheter it's best to use local or global alignment option in bowtie.
+
+
+```{r}
+library(rtracklayer)
+```
+
+```{r}
+
+COL_NAMES = c('seqnames', 'start', 'end', 'strand', 'allele', 'CAST_mut',
+              '129S1_mut', 'depth_fwd', 'depth_rev')
+CM1410_local = read.table('~/projects/trip/cl20170619_tn5/results/insertions/CM1410.txt',
+                          col.names=COL_NAMES, stringsAsFactors=F)
+CM1410_global =  read.table('~/projects/trip/cl20170717_tn5/results/insertions/CM1410.txt',
+                            col.names=COL_NAMES, stringsAsFactors=F)
+
+CM1410_local_gr = makeGRangesFromDataFrame(CM1410_local[which(CM1410_local$depth_fwd > 50 &
+                                                              CM1410_local$depth_rev > 50), ],
+                                           keep.extra.columns=T)
+
+CM1410_global_gr = makeGRangesFromDataFrame(CM1410_global[which(CM1410_global$depth_fwd > 50 &
+                                                                CM1410_global$depth_rev > 50), ],
+                                            keep.extra.columns=T)
+
+table(CM1410_local_gr$allele)
+
+table(CM1410_global_gr$allele)
+
+o = findOverlaps(CM1410_local_gr, CM1410_global_gr)
+
+CM1410_local_gr[-queryHits(o)]
+CM1410_global_gr[-subjectHits(o)]
+
+```
+
+**conclusion:**
+
+Looking at the differences in the genome browser it appears that in this case, the local mapping option resulted in 2 extra predictions which seem to be false-positives. The global option also has an extra region which is probably false-positive.
+
+
+```{r}
+COL_NAMES = c('seqnames', 'start', 'end', 'strand', 'allele', 'CAST_mut',
+              '129S1_mut', 'depth_fwd', 'depth_rev')
+CM1411_local = read.table('~/projects/trip/cl20170619_tn5/results/insertions/CM1411.txt',
+                          col.names=COL_NAMES, stringsAsFactors=F)
+CM1411_global =  read.table('~/projects/trip/cl20170717_tn5/results/insertions/CM1411.txt',
+                            col.names=COL_NAMES, stringsAsFactors=F)
+
+nrow(CM1411_local)
+nrow(CM1411_global)
+
+CM1411_local_gr = makeGRangesFromDataFrame(CM1411_local[which(CM1411_local$depth_fwd > 50 &
+                                                              CM1411_local$depth_rev > 50), ],
+                                           keep.extra.columns=T)
+
+CM1411_global_gr = makeGRangesFromDataFrame(CM1411_global[which(CM1411_global$depth_fwd > 50 &
+                                                                CM1411_global$depth_rev > 50), ],
+                                            keep.extra.columns=T)
+
+table(CM1411_local_gr$allele)
+
+table(CM1411_global_gr$allele)
+
+o = findOverlaps(CM1411_local_gr, CM1411_global_gr)
+
+CM1411_local_gr[-queryHits(o)]
+CM1411_global_gr[-subjectHits(o)]
+
+```
+
+**conclusion:**
+
+Exactly the same insertions with exactly the same allele call. Only local mapping has some minor background which is easily filtered out.
+

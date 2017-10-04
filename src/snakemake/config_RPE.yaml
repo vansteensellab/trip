@@ -19,7 +19,8 @@
 ###############################
 ### snakemake configuration ###
 ###############################
-dir_suffix: 'TTRIP_RPE'
+outdir: 'cl20170913_TTRIP_RPE'
+
 
 groups:
   - [replicate, 1, 2]

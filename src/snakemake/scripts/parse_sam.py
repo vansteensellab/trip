@@ -12,8 +12,9 @@ def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
     map_dict = {}
     map_stat_dict = {}
     length_dict = {}
+    print(sam_file)
     for line in pysam.AlignmentFile(sam_file):
-        bc_this = re.match(r'.*:([ACGT]+)$', line.query_name).groups(1)[0]
+        bc_this = re.match(r'.*[:_]([A-Z]+)$', line.query_name).groups(1)[0]
         if bc_this in starcode_set:
             if bc_this not in map_stat_dict:
                 map_stat_dict[bc_this] = [0, 0, 0, 0]
@@ -115,9 +116,10 @@ def top_map(map_dict_in, max_dist):
             key = next(iter(this_map_dict))
             reference_name, ori, start_pos = key
             total_reads, mapq_sum, seq_list = this_map_dict[key]
-            av_mapq = mapq_sum / total_reads
-            freq1 = 1.0
-            freq2 = 0.0
+            top_mapq = mapq_sum
+            top_reads = total_reads
+            second_mapq = 0
+            second_reads = 0
             seq = Counter(seq_list).most_common(1)[0][0]
         else:
             total_reads = sum(value[0] for value in this_map_dict.values())
@@ -133,8 +135,6 @@ def top_map(map_dict_in, max_dist):
                 sorted_key_list = refine_map(this_map_dict, sorted_key_list,
                                              max_dist)
             reference_name, ori, start_pos = top_key
-            av_mapq = top_mapq / top_reads
-            freq1 = top_reads / total_reads
             if len(sorted_key_list) > 0:
                 second_key, \
                     second_reads, \
@@ -142,15 +142,15 @@ def top_map(map_dict_in, max_dist):
                     sorted_key_list = refine_map(this_map_dict,
                                                  sorted_key_list,
                                                  max_dist)
-                freq2 = second_reads / total_reads
             else:
-                freq2 = 0
+                second_reads = 0
+                second_mapq = 0
             sorted_key_list = sorted(this_map_dict.keys(),
                                      key=lambda elem: sort_keys(elem,
                                                                 this_map_dict),
                                      reverse=True)
         map_dict_out[bc] = [reference_name, ori, start_pos, total_reads,
-                            av_mapq, freq1, freq2, seq]
+                            top_mapq, top_reads, second_mapq, second_reads, seq]
     return(map_dict_out)
 
 
@@ -191,7 +191,7 @@ if __name__ == '__main__':
     (map_dict, remap_list,
         map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set)
     if len(remap_list) > 0:
-        with gzip.open(snakeout.remap_fq[0], "wt") as fqfile:
+        with gzip.open(snakeout.remap_fq, "wt") as fqfile:
             SeqIO.write(remap_list, fqfile, 'fastq')
         options = snakeparam.options[snakeparam.num]
         align_command = ("bowtie2 -p %i -t %s"
@@ -199,10 +199,10 @@ if __name__ == '__main__':
                          "samtools view -Sb - > %s" % (threads,
                                                        ' '.join(options),
                                                        snakeparam.bowtie_index,
-                                                       snakeout.remap_fq[0],
-                                                       snakeout.remap[0]))
+                                                       snakeout.remap_fq,
+                                                       snakeout.remap))
         os.system(align_command)
-        remap_sam_out = parse_sam(snakeout.remap[0], starcode_set)
+        remap_sam_out = parse_sam(snakeout.remap, starcode_set)
         for bc in remap_sam_out[0]:
             if bc in map_dict:
                 this_remap_dict = remap_sam_out[0][bc]
@@ -218,26 +218,26 @@ if __name__ == '__main__':
                 map_dict[bc] = remap_sam_out[0][bc]
 
     else:
-        os.system('touch %s; touch %s;' % (snakeout.remap_fq[0],
-                                           snakeout.remap[0]))
+        os.system('touch %s; touch %s;' % (snakeout.remap_fq,
+                                           snakeout.remap))
 
 
 
-    write_bed(map_dict, snakeout.bed[0], snakeparam.max_dist[snakeparam.num])
+    write_bed(map_dict, snakeout.bed, snakeparam.max_dist[snakeparam.num])
 
     top_map_dict = top_map(map_dict, snakeparam.max_dist[snakeparam.num])
-    with open(snakeout.table[0], 'w') as fout:
+    with open(snakeout.table, 'w') as fout:
         fout.write('\t'.join(('barcode', 'seqname', 'ori', 'start_pos',
-                              'total_mapped', 'av_mapq', 'freq1', 'freq2',
-                              'seq')))
+                              'total_mapped', 'mapq_sum1', 'reads1', 'mapq_sum2',
+                              'reads2', 'seq')))
         fout.write('\n')
         for bc in top_map_dict:
             fout.write('\t'.join([bc] + [str(item) for item in
                                          top_map_dict[bc]]))
             fout.write('\n')
 
-    with open(snakeout.stats[0], 'w') as f_stats:
-        with open(snakeout.length[0], 'w') as f_length:
+    with open(snakeout.stats, 'w') as f_stats:
+        with open(snakeout.length, 'w') as f_length:
             f_stats.write('\t'.join(('barcode', 'total_reads', 'aligned',
                                      'aligned_correct', 'realigned',
                                      'realigned_correct')))

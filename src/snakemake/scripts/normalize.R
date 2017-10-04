@@ -1,10 +1,13 @@
 #!/usr/bin/R
 args = commandArgs(trailingOnly=T)
-cDNA_input = read.table(args[1], col.names=c('barcode','count'), stringsAsFactors=F)
-gDNA_input = read.table(args[2], col.names=c('barcode','count'), stringsAsFactors=F)
+cDNA_input = read.table(args[1], col.names=c('barcode','count', 'other_list'),
+                        stringsAsFactors=F, fill=T)
+gDNA_input = read.table(args[2], col.names=c('barcode','count', 'other_list'),
+                        stringsAsFactors=F, fill=T)
 
 if (length(args) == 4){
-  spike_input = read.table(args[3], col.names=c('barcode','count'), stringsAsFactors=F)
+  spike_input = read.table(args[3], col.names=c('barcode','count', 'other_list'),
+                           stringsAsFactors=F, fill=T)
   spike_sum = sum(spike_input$count)
   output = args[4]
 } else if (length(args) == 3){

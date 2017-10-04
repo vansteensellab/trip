@@ -1,0 +1,308 @@
+
+title: "allele specific DamID around TRIP intergrations"
+author: "Christ Leemans (based on work from: Laura Brueckner)"
+date: "6/28/2017"
+output: html_document
+
+
+
+```{r}
+library(rtracklayer)
+library(plyr)
+```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First let's look at the data with highest counts, which is the combined samples
+
+```{r}
+CM1417_Dam_129S1<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1417_Dam_hybrid-v10_129S1-gatc.counts.txt.gz", stringsAsFactors =F)
+CM1417_DamLAM_129S1<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1417_DamLAM_hybrid-v10_129S1-gatc.counts.txt.gz", stringsAsFactors =F)
+
+CM1417_Dam_CAST<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1417_Dam_hybrid-v10_CAST-gatc.counts.txt.gz", stringsAsFactors =F)
+CM1417_DamLAM_CAST<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1417_DamLAM_hybrid-v10_CAST-gatc.counts.txt.gz", stringsAsFactors =F)
+
+colnames(CM1417_Dam_129S1) = colnames(CM1417_DamLAM_129S1) = colnames(CM1417_Dam_CAST) = colnames(CM1417_DamLAM_CAST) = c('seqnames', 'start', 'end', 'score')
+
+
+CM1417_Dam_129S1<-makeGRangesFromDataFrame(CM1417_Dam_129S1,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1417_DamLAM_129S1<-makeGRangesFromDataFrame(CM1417_DamLAM_129S1,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1417_Dam_CAST<-makeGRangesFromDataFrame(CM1417_Dam_CAST,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1417_DamLAM_CAST<-makeGRangesFromDataFrame(CM1417_DamLAM_CAST,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+
+
+
+CM1420_Dam_129S1<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1420_Dam_hybrid-v10_129S1-gatc.counts.txt.gz", stringsAsFactors =F)
+CM1420_DamLAM_129S1<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1420_DamLAM_hybrid-v10_129S1-gatc.counts.txt.gz", stringsAsFactors =F)
+
+CM1420_Dam_CAST<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1420_Dam_hybrid-v10_CAST-gatc.counts.txt.gz", stringsAsFactors =F)
+CM1420_DamLAM_CAST<-read.table("~t.v.schaik/proj/tests/results/ts170615_analysis_lb170615_DamID_mESC/strainSpecificMapping_analysis/results_combined/counts/CM1420_DamLAM_hybrid-v10_CAST-gatc.counts.txt.gz", stringsAsFactors =F)
+
+colnames(CM1420_Dam_129S1) = colnames(CM1420_DamLAM_129S1) = colnames(CM1420_Dam_CAST) = colnames(CM1420_DamLAM_CAST) = c('seqnames', 'start', 'end', 'score')
+
+
+
+CM1420_Dam_129S1<-makeGRangesFromDataFrame(CM1420_Dam_129S1,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1420_DamLAM_129S1<-makeGRangesFromDataFrame(CM1420_DamLAM_129S1,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1420_Dam_CAST<-makeGRangesFromDataFrame(CM1420_Dam_CAST,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+CM1420_DamLAM_CAST<-makeGRangesFromDataFrame(CM1420_DamLAM_CAST,keep.extra.columns=TRUE,
+                         ignore.strand=T)
+
+seqlevels(CM1420_Dam_129S1) = seqlevels(CM1420_DamLAM_129S1) = seqlevels(CM1420_Dam_CAST) = seqlevels(CM1420_DamLAM_CAST) = seqlevels(CM1417_Dam_129S1) = seqlevels(CM1417_DamLAM_129S1) = seqlevels(CM1417_Dam_CAST) = seqlevels(CM1417_DamLAM_CAST) = gsub('chr', '', seqlevels(CM1417_Dam_129S1))
+```
+
+```{r}
+#now plot
+#first the plots of integrations with DamID from the corresponding allele
+
+CM1417_trip = read.table('../cl20170619_tn5/results/barcode/CM1417.bed',
+                         stringsAsFactors=F)
+barcode_split = do.call(rbind, strsplit(CM1417_trip[,4], '_'))
+CM1417_trip = data.frame(CM1417_trip[,-4], barcode_split, stringsAsFactors=F)
+colnames(CM1417_trip) = c('seqnames', 'start', 'end', 'strand', 'barcode', 'allele')
+
+CM1420_trip = read.table('../cl20170619_tn5/results/barcode/CM1420.bed',
+                         stringsAsFactors=F)
+barcode_split = do.call(rbind, strsplit(CM1420_trip[,4], '_'))
+CM1420_trip = data.frame(CM1420_trip[,-4], barcode_split, stringsAsFactors=F)
+colnames(CM1420_trip) = c('seqnames', 'start', 'end', 'strand', 'barcode', 'allele')
+
+CM1417_trip_129S1 = makeGRangesFromDataFrame(CM1417_trip[CM1417_trip$allele=='129S1', ],
+                                             keep.extra.columns=T)
+CM1417_trip_CAST = makeGRangesFromDataFrame(CM1417_trip[CM1417_trip$allele=='CAST', ],
+                                            keep.extra.columns=T)
+
+CM1420_trip_129S1 = makeGRangesFromDataFrame(CM1420_trip[CM1420_trip$allele=='129S1', ],
+                                             keep.extra.columns=T)
+CM1420_trip_CAST = makeGRangesFromDataFrame(CM1420_trip[CM1420_trip$allele=='CAST', ],
+                                            keep.extra.columns=T)
+
+```
+```{r}
+
+#for Dam only
+#cl3_129_Dam = cl3_129_Dam[score(cl3_129_Dam)!=0]
+o_129S1 = findOverlaps(CM1417_trip_129S1, CM1417_Dam_129S1, maxgap=50000)
+CM1417_data_129S1 = data.frame(pos=start(CM1417_trip_129S1[queryHits(o_129S1 )]) - 
+                                   start(CM1417_Dam_129S1[subjectHits(o_129S1)]),
+                               dam= score(CM1417_Dam_129S1[subjectHits(o_129S1)]))
+CM1417_data_129S1 = data.frame(start=start(CM1417_trip_129S1[queryHits(o_129S1 )]) - 
+                                     start(CM1417_Dam_129S1[subjectHits(o_129S1)]),
+                               end=end(CM1417_trip_129S1[queryHits(o_129S1 )]) - 
+                                   end(CM1417_Dam_129S1[subjectHits(o_129S1)]),
+                               dam= score(CM1417_Dam_129S1[subjectHits(o_129S1)]))
+#cl3_CAST_Dam = cl3_CAST_Dam[score(cl3_CAST_Dam)!=0]
+o_CAST = findOverlaps(CM1417_trip_CAST, CM1417_Dam_CAST, maxgap=50000)
+CM1417_data_CAST = data.frame(start=start(CM1417_trip_CAST[queryHits(o_CAST )]) - 
+                                    start(CM1417_Dam_CAST[subjectHits(o_CAST)]),
+                              end=end(CM1417_trip_CAST[queryHits(o_CAST )]) - 
+                                  end(CM1417_Dam_CAST[subjectHits(o_CAST)]),
+                              dam= score(CM1417_Dam_CAST[subjectHits(o_CAST)]))
+
+get_score_matrix <- function(trip_list, score_list){
+    score_matrix = matrix(0,ncol=2,nrow=51, dimnames=list(-25:25, c('pos', 'score')))
+    score_matrix[,'pos'] = -25:25 * 2000
+    for (i in 1:length(trip_list)){
+        o = findOverlaps(trip_list[[i]], score_list[[i]], maxgap=50000)
+        data = data.frame(start=start(trip_list[[i]][queryHits(o )]) - 
+                                start(score_list[[i]][subjectHits(o)]),
+                          end= end(trip_list[[i]][queryHits(o )]) - 
+                               end(score_list[[i]][subjectHits(o)]),
+                          score= score(score_list[[i]][subjectHits(o)]))
+        for (j in 1:nrow(data)){
+            pos_vec = as.character(round(data[j,'start']:data[j,'end']/2000))
+            pos_table = table(pos_vec)
+            pos_score = pos_table * data[j,'score']
+            pos_score = pos_score[names(pos_score)%in%rownames(score_matrix)]
+            score_matrix[names(pos_score),'score'] = score_matrix[names(pos_score),'score'] + pos_score
+        }
+    }
+    return(score_matrix)
+}
+
+
+data_dam = get_score_matrix(list(CM1417_trip_129S1, CM1417_trip_CAST), list(CM1417_Dam_129S1, CM1417_Dam_CAST))
+data_damlam = get_score_matrix(list(CM1417_trip_129S1, CM1417_trip_CAST), list(CM1417_DamLAM_129S1, CM1417_DamLAM_CAST))
+
+CM1417_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1417_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITH intergrations\nclone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITH intergrations\nclone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITH intergrations\nclone CM1417')
+
+
+data_dam = get_score_matrix(list(CM1420_trip_129S1, CM1420_trip_CAST), list(CM1420_Dam_129S1, CM1420_Dam_CAST))
+data_damlam = get_score_matrix(list(CM1420_trip_129S1, CM1420_trip_CAST), list(CM1420_DamLAM_129S1, CM1420_DamLAM_CAST))
+
+CM1420_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1420_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITH intergrations\nclone CM1420')
+ggplot(CM1420_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITH intergrations\nclone CM1420')
+
+ggplot(CM1420_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITH intergrations\nclone CM1420')
+```
+
+```{r}
+
+data_dam = get_score_matrix(list(CM1417_trip_129S1, CM1417_trip_CAST), list(CM1417_Dam_CAST, CM1417_Dam_129S1))
+data_damlam = get_score_matrix(list(CM1417_trip_129S1, CM1417_trip_CAST), list(CM1417_DamLAM_CAST, CM1417_DamLAM_129S1))
+
+CM1417_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1417_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITHOUT intergrations\nclone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITHOUT intergrations\nclone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITHOUT intergrations\nclone CM1417')
+
+
+data_dam = get_score_matrix(list(CM1420_trip_129S1, CM1420_trip_CAST), list(CM1420_Dam_CAST, CM1420_Dam_129S1))
+data_damlam = get_score_matrix(list(CM1420_trip_129S1, CM1420_trip_CAST), list(CM1420_DamLAM_CAST, CM1420_DamLAM_129S1))
+
+CM1420_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1420_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITHOUT intergrations\nclone CM1420')
+ggplot(CM1420_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITHOUT intergrations\nclone CM1420')
+
+ggplot(CM1420_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITHOUT intergrations\nclone CM1420')
+```
+
+
+```{r}
+#what if I only take LAD integrations?
+
+mESC_LADstate=read.table("~/data/tracks/mm10/cl20161026_ES_LAD_2state_mm10.bed")[,1:4]
+names(mESC_LADstate) = c('seqnames', 'start', 'end', 'lad_state')
+mESC_LADstate=makeGRangesFromDataFrame(mESC_LADstate, keep.extra.columns=T)
+seqlevels(mESC_LADstate) = gsub('chr','',seqlevels(mESC_LADstate))
+
+CM1417_trip_129S1_lad<-CM1417_trip_129S1[mESC_LADstate[nearest(CM1417_trip_129S1, mESC_LADstate)]$lad_state=='LAD']
+CM1417_trip_CAST_lad<-CM1417_trip_CAST[mESC_LADstate[nearest(CM1417_trip_CAST, mESC_LADstate)]$lad_state=='LAD']
+
+CM1420_trip_129S1_lad<-CM1420_trip_129S1[mESC_LADstate[nearest(CM1420_trip_129S1, mESC_LADstate)]$lad_state=='LAD']
+CM1420_trip_CAST_lad<-CM1420_trip_CAST[mESC_LADstate[nearest(CM1420_trip_CAST, mESC_LADstate)]$lad_state=='LAD']
+```
+
+
+```{r}
+data_dam = get_score_matrix(list(CM1417_trip_129S1_lad, CM1417_trip_CAST_lad), list(CM1417_Dam_129S1, CM1417_Dam_CAST))
+data_damlam = get_score_matrix(list(CM1417_trip_129S1_lad, CM1417_trip_CAST_lad), list(CM1417_DamLAM_129S1, CM1417_DamLAM_CAST))
+
+CM1417_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1417_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITH intergrations\nin LADs; clone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITH intergrations\nin LADs; clone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITH intergrations\nin LADs; clone CM1417')
+
+
+data_dam = get_score_matrix(list(CM1420_trip_129S1_lad, CM1420_trip_CAST_lad), list(CM1420_Dam_129S1, CM1420_Dam_CAST))
+data_damlam = get_score_matrix(list(CM1420_trip_129S1_lad, CM1420_trip_CAST_lad), list(CM1420_DamLAM_129S1, CM1420_DamLAM_CAST))
+
+CM1420_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1420_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITH intergrations\nin LADs; clone CM1420')
+ggplot(CM1420_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITH intergrations\nin LADs; clone CM1420')
+
+ggplot(CM1420_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITH intergrations\nin LADs; clone CM1420')
+```
+
+```{r}
+
+data_dam = get_score_matrix(list(CM1417_trip_129S1_lad, CM1417_trip_CAST_lad), list(CM1417_Dam_CAST, CM1417_Dam_129S1))
+data_damlam = get_score_matrix(list(CM1417_trip_129S1_lad, CM1417_trip_CAST_lad), list(CM1417_DamLAM_CAST, CM1417_DamLAM_129S1))
+
+CM1417_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1417_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITHOUT intergrations\nin LADs; clone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITHOUT intergrations\nin LADs; clone CM1417')
+ggplot(CM1417_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITHOUT intergrations\nin LADs; clone CM1417')
+
+
+data_dam = get_score_matrix(list(CM1420_trip_129S1_lad, CM1420_trip_CAST_lad), list(CM1420_Dam_CAST, CM1420_Dam_129S1))
+data_damlam = get_score_matrix(list(CM1420_trip_129S1_lad, CM1420_trip_CAST_lad), list(CM1420_DamLAM_CAST, CM1420_DamLAM_129S1))
+
+CM1420_data = data.frame(pos=data_dam[, 'pos'],
+                         dam=data_dam[, 'score'],
+                         damlam=data_damlam[, 'score'],
+                         log2=log2(data_damlam[, 'score']/data_dam[, 'score']))
+ggplot(CM1420_data, aes(x=pos, y=dam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of dam-only for allele WITHOUT intergrations\nin LADs; clone CM1420')
+ggplot(CM1420_data, aes(x=pos, y=damlam)) +
+    geom_bar(stat='identity') +
+    ggtitle('binned sum of damlamin for allele WITHOUT intergrations\nin LADs; clone CM1420')
+
+ggplot(CM1420_data, aes(x=pos, y=log2)) +
+    geom_bar(stat='identity') +
+    ggtitle('log2(dam-lamin / dam-only) for allele WITHOUT intergrations\nin LADs; clone CM1420')
+```
+

@@ -1,0 +1,78 @@
+# knitr document van Steensel lab
+
+# Efficiency of tagmantation mapping
+## Christ Leemans, 29-06-2017
+
+## Introduction
+
+The normal procedure of locating trip integrations is by iPCR. However this is a relatively complicated technique and often a big part of your integrations is not mappable. The last of which proves especially troublesome in the variation on TRIP where clonal cell-lines in which each cell cary the same set of intergrations. These clonal lines are developed to investigate the effect of the integration of an active element on it's surrounding environment (e.g. lamina detachment). 
+
+In this analysis barcodes are less informative and information on surrounding DNA is necesarry to assign each integration to a specific allele. IPCR therefore might be less suitable, but since missing the barcode is acceptable, another technique called tagmentation mapping is more attractive.
+
+Laura used both techniques on her clonal integration F1-hybrid CAST-129S1 cell lines. In this report I would like to give an overview of the efficiency of each technique and try some downsampling on the tagmentation mapping to quantify the amount of reads necesarry to map.
+
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r}
+library(rtracklayer)
+clone_info = data.frame(number=c(1,3,6,8,13,18,19,20,22,23),
+                        cm_id=c('CM1410', 'CM1411', 'CM1412', 'CM1413', 'CM1415', 'CM1416', 'CM1417',
+                                'CM1418', 'CM1419', 'CM1420'),
+                        qpcr=c(24, 49, 23, 32, 1, 50, 27, 27, 26, 40))
+
+tn5_list = lapply(clone_info$cm_id, function(x){
+        file=paste0('../cl20170704_tn5/results/insertions/',x, '.txt')
+        data=read.table(file, stringsAsFactors=F)
+        colnames(data) = c('seqnames', 'start', 'end', 'strand', 'allele', 'CAST_mut', '129S1_mut',
+                           'depth_fwd', 'depth_rev')
+        return(data)
+    })
+
+ipcr_list = lapply(clone_info$cm_id, function(x){
+        file=paste0('../cl20170619_tn5/results/insertions_ipcr/',x, '_ipcr.txt')
+        data=read.table(file, header=T)
+        return(data)
+    })
+
+```
+
+```{r}
+
+grange_tn5 = lapply(tn5_list, function(x){
+        insertions = x[which(x$depth_fwd > 50 & x$depth_rev > 50), ]
+        makeGRangesFromDataFrame(insertions, keep.extra.columns=T)
+    })
+
+grange_ipcr = lapply(ipcr_list, function(x){
+        insertions = x[which(x$t_reads_r > 50 & x$freq1_r > 0.7), ]
+        data = data.frame(seqnames= insertions$chr_r,
+                          start=ifelse(insertions$ori_r=='+',
+                                       insertions$pos_r - 5,
+                                       insertions$pos_r - 1),
+                          end=ifelse(insertions$ori_r=='+',
+                                     insertions$pos_r + 1,
+                                     insertions$pos_r + 5),
+                          strand=insertions$ori_r,
+                          insertions[,c('allele', 'CAST_mut', 'X129S1_mut')]
+                          )
+        makeGRangesFromDataFrame(data, keep.extra.columns=T)
+    })
+
+stat_tn5 = do.call(rbind, lapply(grange_tn5, function(x){
+        called = length(which(x$allele%in%c('CAST', '129S1')))
+        c(length(x), called)
+    }))
+clone_info$tn5 = stat_tn5[,1]
+clone_info$tn5_allelic = stat_tn5[,2]
+
+stat_ipcr = do.call(rbind, lapply(grange_ipcr, function(x){
+        called = length(which(x$allele%in%c('CAST', '129S1')))
+        c(length(x), called)
+    }))
+clone_info$ipcr = stat_ipcr[,1]
+clone_info$ipcr_allelic = stat_ipcr[,2]
+
+
+overlap = 
+```

@@ -1,0 +1,47 @@
+```{r}
+
+# libraries:
+library(stringr)
+library(ggplot2)
+library(reshape2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+library(grid)
+
+
+load('../results/TTRIP_K562_FC_exp.rData')
+
+pdf('cl20170126_TRIP_keystone_slide.pdf', useDingbats=F)
+
+control_vec = c('KRAB_GAL4_exp_11', 'KRAB_GAL4_exp_2', 'KRAB_GAL4_exp_11',
+                                              'CBX_GAL4_exp_2', 'CBX_GAL4_exp_9', 'CBX_GAL4_exp_12',
+                                              'G9a_GAL4_exp_2', 'G9a_GAL4_exp_12')
+cut_off_vec = grep('norm_cutoff', colnames(fc_table))
+fc_table = fc_table[which(rowSums(fc_table[,cut_off_vec])==length(cut_off_vec)),]
+fc_table = fc_table[which(fc_table$unique_map==TRUE), ]
+fc_table$GAL4_control = rowMeans(fc_table[,control_vec])
+fc_table = fc_table[!is.na(fc_table$GAL4_control), ]
+fc_table$lad_2state[fc_table$lad_2state=='interLAD'] = 'iLAD'
+fc_table = fc_table[fc_table$lad_2state!='-', ]
+
+fc_table$GAL4_control = fc_table$GAL4_control + min(fc_table$GAL4_control[fc_table$GAL4_control>0]) /2
+
+
+fc_table$lad_color = factor(fc_table$lad_2state)
+levels(fc_table$lad_color) = paste0(levels(fc_table$lad_color), '; n=', table(fc_table$lad_color)) 
+COL_lad<-c("#0077FF", "#FF0000")
+names(COL_lad) = levels(fc_table$lad_color)
+
+fc_mean = mean(fc_table[fc_table$lad_2state=='iLAD', 'GAL4_control']) / mean(fc_table[fc_table$lad_2state=='LAD', 'GAL4_control'])
+fc_median = median(fc_table[fc_table$lad_2state=='iLAD', 'GAL4_control']) / median(fc_table[fc_table$lad_2state=='LAD', 'GAL4_control'])
+ggplot(fc_table, aes(x=lad_2state, y=log2(GAL4_control), color=lad_color)) + 
+    geom_violin(alpha=0.5) +
+    theme_bw() +
+    ggtitle('TRIP expression of barcodes with more than 50 normalization reads in all experiments\nmean expression of all GAL4 control experiments\nadded pseudo of minimum/2') +
+    stat_summary(fun.y = 'median', fun.ymin = 'median', fun.ymax = 'median',
+                 geom = "crossbar", width = 0.3) +
+    geom_point(position=position_jitter(width=0.4), size=0.5, alpha=0.5) + 
+    scale_color_manual(values=COL_lad)
+
+dev.off()

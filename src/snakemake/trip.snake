@@ -12,8 +12,7 @@ path = os.path.dirname(os.path.abspath(filename))
 # date = datetime.datetime.now()
 # date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
 # OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
-OUTDIR = ''.join(('cl20170329','_', config["dir_suffix"]))
-
+OUTDIR = config['outdir']
 if 'extract' in config:
     TIMING = glob_wildcards(config["extract"]["timing"])[0]
 # TYPE_LIST = ['mapping', 'gDNA', 'cDNA', 'spike']
@@ -26,9 +25,9 @@ if 'groups' in config:
         index = group_name_vec.index('replicate')
         for name in config['input_file']['gDNA'].keys():
             if 'spike' in config['input_file']:
-                file_name = '%s/cDNA.%s.cpm.gDNA.spike' % (OUTDIR, name)
+                file_name = '%s/cDNA/%s.cpm.gDNA/spike' % (OUTDIR, name)
             else:
-                file_name = '%s/cDNA.%s.cpm.gDNA' % (OUTDIR, name)
+                file_name = '%s/cDNA/%s.cpm.gDNA' % (OUTDIR, name)
             name_split = name.split('_')
             if index < len(name_split):
                 name_vec = [name_split[i] for i in range(0, len(name_split))
@@ -40,39 +39,44 @@ if 'groups' in config:
                     replicate_dict[mean_name] = [file_name]
 rule all:
     input:
-        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
-               name=config['input_file']['mapping'].keys(), num=(1,2)),
-        # expand('{outdir}/cDNA.{name}.normalized', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
+        expand('{outdir}/mapping/{name}.{num}.table', outdir=OUTDIR,
+                name=config['input_file']['mapping'].keys(), num=(1,2)),
+        expand('{outdir}/cDNA/{name}.normalized', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
 
 if 'cDNA' in config['input_file']:
     rule cDNA_only:
         input:
-            expand('{outdir}/cDNA.{name}.raw.count', outdir=OUTDIR,
+            expand('{outdir}/cDNA/{name}.raw.count', outdir=OUTDIR,
+                   name=config['input_file']['cDNA'].keys())
+    rule expression:
+        input:
+            expand('{outdir}/cDNA/{name}.normalized', outdir=OUTDIR,
                    name=config['input_file']['cDNA'].keys())
 
 if 'polyA' in config['input_file']:
     rule polyA_only:
         input:
-            expand('{outdir}/polyA.{name}.normalized', outdir=OUTDIR,
+            expand('{outdir}/polyA/{name}.normalized', outdir=OUTDIR,
                    name=config['input_file']['polyA'].keys())
 
 if 'gDNA' in config['input_file']:
     rule gDNA_only:
         input:
-            expand('{outdir}/gDNA.{name}.starcode.count', outdir=OUTDIR,
+            expand('{outdir}/gDNA/{name}.starcode.count', outdir=OUTDIR,
                    name=config['input_file']['gDNA'].keys())
 
-rule mapping_split:
-    input:
-        expand('%s/allelic/mapping.{name}.alleles' % (OUTDIR),
-               name=config['input_file']['mapping'].keys())
-
-rule mapping_only:
-    input:
-        expand('{outdir}/mapping.{name}.{num}.table', outdir=OUTDIR,
-               name=config['input_file']['mapping'].keys(), num=(1,2)),
-        expand('{outdir}/mapping.{name}.starcode.count', outdir=OUTDIR,
+if 'mapping' in config['input_file']:
+    rule mapping_split:
+        input:
+            expand('%s/allelic/mapping/{name}.alleles' % (OUTDIR),
                    name=config['input_file']['mapping'].keys())
+
+    rule mapping_only:
+        input:
+            expand('{outdir}/mapping/{name}.{num}.table', outdir=OUTDIR,
+                   name=config['input_file']['mapping'].keys(), num=(1,2)),
+            expand('{outdir}/mapping/{name}.starcode.count', outdir=OUTDIR,
+                       name=config['input_file']['mapping'].keys())
 
 # rule all:
 #     input:
@@ -83,22 +87,22 @@ rule mapping_only:
 
 # rule bedtoolsbed:
 #     input:
-#         '%s/mapping.stdout.txt' % OUTDIR,
+#         '%s/mapping/stdout.txt' % OUTDIR,
 #     params:
-#         '%s/mapping.rev_mapping.bed' % OUTDIR
+#         '%s/mapping/rev_mapping/bed' % OUTDIR
 #     output:
-#         temp('%s/mapping.rev_mapping2.bed' % OUTDIR)
+#         temp('%s/mapping/rev_mapping2.bed' % OUTDIR)
 #     shell:
 #         "awk '{{if ($1!=\"*\") print $0}}' {params} | \\"
 #         "bedtools sort -i > {output}"
 #
 # rule bigWigBed:
 #     input:
-#         '%s/mapping.stdout.txt' % OUTDIR,
+#         '%s/mapping/stdout.txt' % OUTDIR,
 #     params:
-#         '%s/mapping.rev_mapping.bed' % OUTDIR
+#         '%s/mapping/rev_mapping/bed' % OUTDIR
 #     output:
-#         temp('%s/mapping.rev_mapping3.bed' % OUTDIR)
+#         temp('%s/mapping/rev_mapping3.bed' % OUTDIR)
 #     run:
 #         command = "awk '{{if ($1!=\"*\") print $1\"\t\"$2\"\t\"$3\"\t\"$4\"_\"$5\"/\"$6}}' {params} > {output}"
 #         shell(command)
@@ -106,7 +110,7 @@ rule mapping_only:
 # # for SAMPLE in config['extract']:
 # rule:
 #     input:
-#         map='%s/mapping.rev_mapping3.bed' % OUTDIR,
+#         map='%s/mapping/rev_mapping3.bed' % OUTDIR,
 #         lst=config["extract"]['timing']
 #     output:
 #         '%s/bc_timing_{state}.txt' % OUTDIR
@@ -115,7 +119,7 @@ rule mapping_only:
 #
 # rule nearest:
 #     input:
-#         map='%s/mapping.rev_mapping2.bed' % OUTDIR,
+#         map='%s/mapping/rev_mapping2.bed' % OUTDIR,
 #         lst=config["nearest"]['cpg']
 #     output:
 #         '%s/bc_cpg_distance.txt' % OUTDIR
@@ -131,7 +135,7 @@ rule mapping_only:
 #         TRACK = expand(TRACK, outdir=OUTDIR)
 #     rule:
 #         input:
-#             map='%s/mapping.rev_mapping2.bed' % OUTDIR,
+#             map='%s/mapping/rev_mapping2.bed' % OUTDIR,
 #             track=TRACK
 #         params:
 #             SAMPLE
@@ -150,7 +154,7 @@ rule mapping_only:
 #         output:
 #             dir='/'.join((OUTDIR, READ_TYPE)),
 #             stdout='%s/%s/stdout.txt'%(OUTDIR, READ_TYPE),
-#             bed=expand('{outdir}/mapping.rev_mapping.bed', outdir=OUTDIR)
+#             bed=expand('{outdir}/mapping/rev_mapping/bed', outdir=OUTDIR)
 #         threads: 10
 #         shell:
 #             "mkdir -p {output.dir};"
@@ -185,25 +189,26 @@ rule mapping_only:
 #     "mkdir -p {output.dir}"
 #     "nice -19 ~/python/bin/python src/python/trip.py -t {THREADS} -o {output.dir} -l {input.lst} -c {input.cfg} -u -v -d 2>&1 | tee {output.stdout}"
 
-rule allele_barcodes:
-    input:
-        table='%s/allelic/mapping.{name}.table' % (OUTDIR),
-        fasta=config['fasta']
-    output:
-        '%s/allelic/mapping.{name}.alleles' % (OUTDIR)
-    params:
-        vcf=config['vcf']
-    script:
-        'scripts/allele.py'
+# if 'mapping' in config['input_file']:
+#     rule allele_barcodes:
+#         input:
+#             table='%s/allelic/mapping/{name}.table' % (OUTDIR),
+#             fasta=config['fasta']
+#         output:
+#             '%s/allelic/mapping/{name}.alleles' % (OUTDIR)
+#         params:
+#             vcf=config['vcf']
+#         script:
+#             'scripts/allele.py'
 
 
 
 rule combine_table:
     input:
-        expand('%s/mapping.{{name}}.{num}.table' % (OUTDIR), num=(1,2)),
-        '%s/mapping.{name}.starcode.count' % (OUTDIR)
+        expand('%s/mapping/{{name}}.{num}.table' % (OUTDIR), num=(1,2)),
+        '%s/mapping/{name}.starcode.count' % (OUTDIR)
     output:
-        '%s/allelic/mapping.{name}.table' % (OUTDIR)
+        '%s/allelic/mapping/{name}.table' % (OUTDIR)
     run:
         bc_dict = {}
         with open(input[2]) as bc_file:
@@ -245,13 +250,13 @@ rule combine_table:
 
 rule split_sam:
     input:
-        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
-        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR),
-        gen_cut=expand('{outdir}/mapping.{{name}}.genuine.cut', outdir=OUTDIR),
-        count_cut=expand('{outdir}/mapping.{{name}}.count.cut', outdir=OUTDIR)
+        sam=expand('{outdir}/mapping/{{name}}.{{num}}.sam', outdir=OUTDIR),
+        count=expand('{outdir}/mapping/{{name}}.starcode.count', outdir=OUTDIR),
+        gen_cut=expand('{outdir}/mapping/{{name}}.genuine.cut', outdir=OUTDIR),
+        count_cut=expand('{outdir}/mapping/{{name}}.count.cut', outdir=OUTDIR)
     output:
-        genuine='{outdir}/mapping.{name}.{num}.genuine.sam',
-        stat='{outdir}/mapping.{name}.{num}.align.stat'
+        genuine='{outdir}/mapping/{name}.{num}.genuine.sam',
+        stat='{outdir}/mapping/{name}.{num}.align.stat'
     run:
         import gzip
         starcode_set = set()
@@ -318,13 +323,15 @@ rule split_sam:
 
 rule parse_sam:
     input:
-        sam=expand('{outdir}/mapping.{{name}}.{{num}}.sam', outdir=OUTDIR),
-        count=expand('{outdir}/mapping.{{name}}.starcode.count', outdir=OUTDIR)
+        bam=expand('{outdir}/mapping/{{name}}.{{num}}.bam', outdir=OUTDIR),
+        count=expand('{outdir}/mapping/{{name}}.starcode.count', outdir=OUTDIR)
     output:
-        bed='{outdir}/mapping.{name}.{num}.bed',
-        table='{outdir}/mapping.{name}.{num}.table',
-        stats='{outdir}/mapping.{name}.{num}.parse_stat.table',
-        length='{outdir}/mapping.{name}.{num}.length.table',
+        bed='{outdir}/mapping/{name}.{num}.bed',
+        table='{outdir}/mapping/{name}.{num}.table',
+        stats='{outdir}/mapping/{name}.{num}.parse_stat.table',
+        length='{outdir}/mapping/{name}.{num}.length.table',
+        remap_fq='{outdir}/mapping/{name}.{num}.remap.fastq.gz',
+        remap='{outdir}/mapping/{name}.{num}.remap.bam'
     wildcard_constraints:
         num="\d+"
     params:
@@ -340,10 +347,9 @@ rule parse_sam:
 if 'mapping' in config['input_file']:
     rule align:
         input:
-            '%s/mapping.{name}.{num}.fastq.gz' % OUTDIR
+            '%s/mapping/{name}.{num}.fastq.gz' % OUTDIR
         output:
-            sam='{outdir}/mapping.{name}.{num}.sam',
-            bam='{outdir}/mapping.{name}.{num}.bam'
+            bam='{outdir}/mapping/{name}.{num}.bam'
         params:
             bowtie_index=config['bowtie']['index'],
             options=config['bowtie']['options'],
@@ -352,7 +358,7 @@ if 'mapping' in config['input_file']:
             num="\d+"
         threads: 10
         log:
-            '{outdir}/mapping.align.{name}.{num}.log'
+            '{outdir}/mapping/align.{name}.{num}.log'
         run:
             print(input)
             print(output.sam)
@@ -379,19 +385,19 @@ if 'mapping' in config['input_file']:
                    "print \"stats from bowtie2:\" > \"{log}\"; "
                    "}}'")
             options = ' '.join(params.options[params.num])
-            bowtie = ('bowtie2 -p {threads} %s -x %s -U - '
-                      '1> {output.sam} 2>> {log}' % (options, params.bowtie_index))
-            samToBam = 'samtools view -@ {threads} -Sb {output.sam} > {output.bam}'
-            shell('%s | %s | %s; %s' % (gunzip, awk, bowtie, samToBam))
+            bowtie = 'bowtie2 -p {threads} %s -x %s -U - ' % (options,
+                                                              params.bowtie_index)
+            samToBam = 'samtools view -@ {threads} -Sb - 1> {output.bam} 2>> {log}'
+            shell('%s | %s | %s | %s' % (gunzip, awk, bowtie, samToBam))
 
 
 rule split_mapping:
     input:
-        bam=expand('{outdir}/mapping.{{num}}.bam', outdir=OUTDIR)
+        bam=expand('{outdir}/mapping/{{num}}.bam', outdir=OUTDIR)
     output:
-        '{outdir}/mapping.{num}.genuine.bam'
-        '{outdir}/mapping.{num}.genuine.cut.bam'
-        '{outdir}/mapping.{num}.unmapped.bam'
+        '{outdir}/mapping/{num}.genuine.bam'
+        '{outdir}/mapping/{num}.genuine.cut.bam'
+        '{outdir}/mapping/{num}.unmapped.bam'
 
 
 ###############################################################################
@@ -403,8 +409,8 @@ rule split_mapping:
 #     input:
 #         lambda wildcards: replicate_dict[wildcards.mean_name]
 #     output:
-#         '%s/cDNA.{mean_name}.mean',
-#         '%s/cDNA.{mean_name}.mean.cut'
+#         '%s/cDNA/{mean_name}.mean',
+#         '%s/cDNA/{mean_name}.mean.cut'
 #     run:
 #         cpm_dict = {}
 #         mean_file = open('{output[0]}', 'w')
@@ -445,11 +451,11 @@ rule split_mapping:
 if 'spike' in config['input_file']:
     rule normalize_mean_expression:
         input:
-            expand('{outdir}/cDNA.{{name}}.starcode.count', outdir=OUTDIR),
-            expand('{outdir}/gDNA.{{name}}.starcode.count', outdir=OUTDIR),
-            expand('{outdir}/spike.{{name}}.starcode.count', outdir=OUTDIR)
+            expand('{outdir}/cDNA/{{name}}.starcode.count', outdir=OUTDIR),
+            expand('{outdir}/gDNA/{{name}}.starcode.count', outdir=OUTDIR),
+            expand('{outdir}/spike/{{name}}.starcode.count', outdir=OUTDIR)
         output:
-            '{outdir}/cDNA.{name}.normalized'
+            '{outdir}/cDNA/{name}.normalized'
         params:
             path
         shell:
@@ -457,10 +463,10 @@ if 'spike' in config['input_file']:
 else:
     rule normalize_mean_expression:
         input:
-            expand('{outdir}/cDNA.{{name}}.starcode.count', outdir=OUTDIR),
-            expand('{outdir}/gDNA.{{name}}.starcode.count', outdir=OUTDIR)
+            expand('{outdir}/cDNA/{{name}}.starcode.count', outdir=OUTDIR),
+            expand('{outdir}/gDNA/{{name}}.starcode.count', outdir=OUTDIR)
         output:
-            '{outdir}/cDNA.{name}.normalized'
+            '{outdir}/cDNA/{name}.normalized'
         params:
             path
         shell:
@@ -469,9 +475,9 @@ else:
 rule normalize_polyA:
     input:
         lambda wildcards: config['input_file']['polyA'][wildcards.name][0],
-        expand('{outdir}/polyA.{{name}}.starcode.count', outdir=OUTDIR)
+        expand('{outdir}/polyA/{{name}}.starcode.count', outdir=OUTDIR)
     output:
-        '{outdir}/polyA.{name}.normalized'
+        '{outdir}/polyA/{name}.normalized'
     run:
         print(input[0])
         print(input[1])
@@ -489,14 +495,14 @@ rule normalize_polyA:
 
 rule starcode_cDNA:
     input:
-        expand('{outdir}/cDNA.{{name}}.raw.count', outdir=OUTDIR),
-        '{outdir}/gDNA.{name}.starcode.count'
+        expand('{outdir}/cDNA/{{name}}.raw.count', outdir=OUTDIR),
+        '{outdir}/gDNA/{name}.starcode.count'
     output:
-        gen='{outdir}/cDNA.{name}.starcode.count',
-        mut='{outdir}/cDNA.{name}.genuine.cut',
-        notg='{outdir}/cDNA.{name}.in_gDNA.cut',
-        notc='{outdir}/gDNA.{name}.in_cDNA.cut',
-        count='{outdir}/cDNA.{name}.count.cut'
+        gen='{outdir}/cDNA/{name}.starcode.count',
+        mut='{outdir}/cDNA/{name}.genuine.cut',
+        notg='{outdir}/cDNA/{name}.in_gDNA.cut',
+        notc='{outdir}/gDNA/{name}.in_cDNA.cut',
+        count='{outdir}/cDNA/{name}.count.cut'
     params:
         lev_dist= config['lev_dist'],
         use_other= True,
@@ -508,11 +514,11 @@ rule starcode_cDNA:
 
 rule starcode_gDNA:
     input:
-        expand('{outdir}/gDNA.{{name}}.raw.count', outdir=OUTDIR)
+        expand('{outdir}/gDNA/{{name}}.raw.count', outdir=OUTDIR)
     output:
-        gen='{outdir}/gDNA.{name}.starcode.count',
-        mut='{outdir}/gDNA.{name}.genuine.cut',
-        count='{outdir}/gDNA.{name}.count.cut'
+        gen='{outdir}/gDNA/{name}.starcode.count',
+        mut='{outdir}/gDNA/{name}.genuine.cut',
+        count='{outdir}/gDNA/{name}.count.cut'
     params:
         lev_dist= config['lev_dist'],
         use_other= False,
@@ -522,31 +528,31 @@ rule starcode_gDNA:
     script:
         'scripts/starcode.py'
 
-
-rule starcode_polyA:
-    input:
-        expand('{outdir}/polyA.{{name}}.raw.count', outdir=OUTDIR)
-    output:
-        gen='{outdir}/polyA.{name}.starcode.count',
-        mut='{outdir}/polyA.{name}.genuine.cut',
-        count='{outdir}/polyA.{name}.count.cut'
-    params:
-        lev_dist= config['lev_dist'],
-        use_other= False,
-        count= config['min_count']['polyA']
-    threads:
-        3
-    script:
-        'scripts/starcode.py'
+if 'polyA' in config['input_file']:
+    rule starcode_polyA:
+        input:
+            expand('{outdir}/polyA/{{name}}.raw.count', outdir=OUTDIR)
+        output:
+            gen='{outdir}/polyA/{name}.starcode.count',
+            mut='{outdir}/polyA/{name}.genuine.cut',
+            count='{outdir}/polyA/{name}.count.cut'
+        params:
+            lev_dist= config['lev_dist'],
+            use_other= False,
+            count= config['min_count']['polyA']
+        threads:
+            3
+        script:
+            'scripts/starcode.py'
 
 
 rule starcode_spike_pool:
     input:
-        expand('{outdir}/spike_pool.raw.count', outdir=OUTDIR)
+        expand('{outdir}/spike/spike_pool.raw.count', outdir=OUTDIR)
     output:
-        gen='{outdir}/spike_pool.starcode.count',
-        mut='{outdir}/spike_pool.genuine.cut',
-        count='{outdir}/spike_pool.count.cut'
+        gen='{outdir}/spike/spike_pool.starcode.count',
+        mut='{outdir}/spike/spike_pool.genuine.cut',
+        count='{outdir}/spike/spike_pool.count.cut'
     params:
         lev_dist= config['lev_dist'],
         use_other= False,
@@ -559,14 +565,17 @@ rule starcode_spike_pool:
 
 rule starcode_spike_sample:
     input:
-        expand('{outdir}/spike.{{name}}.raw.count', outdir=OUTDIR)
+        expand('{outdir}/spike/{{name}}.raw.count', outdir=OUTDIR),
+        '{outdir}/spike/spike_pool.starcode.count'
     output:
-        gen='{outdir}/spike.{name}.starcode.count',
-        mut='{outdir}/spike.{name}.genuine.cut',
-        count='{outdir}/spike.{name}.count.cut'
+        gen='{outdir}/spike/{name}.starcode.count',
+        mut='{outdir}/spike/{name}.genuine.cut',
+        count='{outdir}/spike/{name}.count.cut',
+        notg='{outdir}/spike/{name}.in_pool.cut',
+        notc='{outdir}/spike/{name}.in_sample.cut'
     params:
         lev_dist= config['lev_dist'],
-        use_other= False,
+        use_other= True,
         count= 0
     threads:
         3
@@ -575,11 +584,11 @@ rule starcode_spike_sample:
 
 rule starcode_map:
     input:
-        expand('{outdir}/mapping.{{name}}.raw.count', outdir=OUTDIR)
+        expand('{outdir}/mapping/{{name}}.raw.count', outdir=OUTDIR)
     output:
-        gen='{outdir}/mapping.{name}.starcode.count',
-        mut='{outdir}/mapping.{name}.genuine.cut',
-        count='{outdir}/mapping.{name}.count.cut'
+        gen='{outdir}/mapping/{name}.starcode.count',
+        mut='{outdir}/mapping/{name}.genuine.cut',
+        count='{outdir}/mapping/{name}.count.cut'
     params:
         lev_dist= config['lev_dist'],
         use_other= False,
@@ -592,21 +601,21 @@ rule starcode_map:
 #if 'mapping' in config['input_file']:
 #    rule combine_starcode_map:
 #        input:
-#            expand('{outdir}/mapping.{map}.raw.count', outdir=OUTDIR,
+#            expand('{outdir}/mapping/{map}.raw.count', outdir=OUTDIR,
 #                   map=config['input_file']['mapping'].keys())
 #        output:
-#            '{outdir}/mapping.{name}.raw.count'
+#            '{outdir}/mapping/{name}.raw.count'
 #        shell:
 #            'cat {input} > {output}'
 
 
 rule count_barcode:
     input:
-        '%s/{file_base}.{name}barcode.txt.gz' % OUTDIR
+        '%s/{file_base}/{name}barcode.txt.gz' % OUTDIR
     output:
-        '%s/{file_base}.{name}raw.count' % OUTDIR
+        '%s/{file_base}/{name}raw.count' % OUTDIR
     shell:
-        "scripts/count_barcode.sh {input} > {output}"
+        "{path}/scripts/count_barcode.sh {input} > {output}"
 
 ###############################################################################
 ##+++++++++++++++++++++++++++++++ parse reads +++++++++++++++++++++++++++++++##
@@ -617,11 +626,11 @@ if 'gDNA' in config['input_file']:
         input:
             lambda wildcards: config['input_file']['gDNA'][wildcards.name][0]
         output:
-            '%s/gDNA.{name}.barcode.txt.gz' % (OUTDIR),
-            '%s/gDNA.{name}.statistics.txt' % (OUTDIR),
-            structure = '%s/gDNA.{name}.structure.txt' % (OUTDIR)
+            '%s/gDNA/{name}.barcode.txt.gz' % (OUTDIR),
+            '%s/gDNA/{name}.statistics.txt' % (OUTDIR),
+            structure = '%s/gDNA/{name}.structure.txt' % (OUTDIR)
         log:
-            '%s/gDNA.{name}_parser.log' % (OUTDIR)
+            '%s/gDNA/{name}_parser.log' % (OUTDIR)
         params:
             structure= config['structure']['gDNA'],
             type_dict= config['input_file']['gDNA'],
@@ -632,19 +641,19 @@ if 'gDNA' in config['input_file']:
                 structure = re.sub('index.*\n', '', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
-                  '-b gDNA.{wildcards.name} {input} {output.structure} {params.outdir}')
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b gDNA/{wildcards.name} {input} {output.structure} {params.outdir}')
 
 if 'cDNA' in config['input_file']:
     rule parse_cDNA:
         input:
             lambda wildcards: config['input_file']['cDNA'][wildcards.name][0]
         output:
-            '%s/cDNA.{name}.barcode.txt.gz' % (OUTDIR),
-            '%s/cDNA.{name}.statistics.txt' % (OUTDIR),
-            structure = '%s/cDNA.{name}.structure.txt' % (OUTDIR)
+            '%s/cDNA/{name}.barcode.txt.gz' % (OUTDIR),
+            '%s/cDNA/{name}.statistics.txt' % (OUTDIR),
+            structure = '%s/cDNA/{name}.structure.txt' % (OUTDIR)
         log:
-            '%s/cDNA.{name}_parser.log' % (OUTDIR)
+            '%s/cDNA/{name}_parser.log' % (OUTDIR)
         params:
             structure= config['structure']['cDNA'],
             type_dict= config['input_file']['cDNA'],
@@ -656,8 +665,8 @@ if 'cDNA' in config['input_file']:
             with open(output.structure, 'w') as f:
                 f.write(structure)
             print(input)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
-                  '-b cDNA.{wildcards.name} {input} {output.structure} {params.outdir}')
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b cDNA/{wildcards.name} {input} {output.structure} {params.outdir}')
 
 
 if 'spike' in config['input_file']:
@@ -668,46 +677,49 @@ if 'spike' in config['input_file']:
         input:
             config['input_file']['spike'][0]
         output:
-            '%s_pool.barcode.txt.gz' % (THIS_BASE),
-            '%s_pool.statistics.txt' % (THIS_BASE),
-            structure = '%s_pool.structure.txt' % (THIS_BASE)
+            '%s/spike_pool.barcode.txt.gz' % (THIS_BASE),
+            '%s/spike_pool.statistics.txt' % (THIS_BASE),
+            structure = '%s/spike_pool.structure.txt' % (THIS_BASE)
         log:
-            '%s.pool_parser.log' % (THIS_BASE)
+            '%s/spike_pool_parser.log' % (THIS_BASE)
         params:
             structure = config['structure']['spike'],
             index_len = config['input_file']['spike'][1],
             name = 'pool',
-            outdir = OUTDIR
+            outdir = THIS_BASE
         run:
             structure = params.structure % params.index_len
             if params.index_len == 0:
                 structure = re.sub('index.*\n', '', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -l {log} '
                   '-b spike_{params.name} {input} %s {params.outdir}' % output.structure)
 
+    THIS_BASE = '%s/spike' % OUTDIR
+    if not os.path.exists(THIS_BASE):
+        os.makedirs(THIS_BASE)
     rule parse_spike_sample:
         input:
             lambda wildcards: config['input_file']['cDNA'][wildcards.name][0]
         output:
-            '%s.{name}.barcode.txt.gz' % (THIS_BASE),
-            '%s.{name}.statistics.txt' % (THIS_BASE),
-            structure = '%s.{name}.structure.txt' % (THIS_BASE)
+            '%s/{name}.barcode.txt.gz' % (THIS_BASE),
+            '%s/{name}.statistics.txt' % (THIS_BASE),
+            structure = '%s/{name}.structure.txt' % (THIS_BASE)
         log:
-            '%s.{name}_parser.log' % (THIS_BASE)
+            '%s/{name}_parser.log' % (THIS_BASE)
         params:
             structure= config['structure']['spike'],
             type_dict= config['input_file']['cDNA'],
-            outdir = OUTDIR
+            outdir = THIS_BASE
         run:
             structure = params.structure % params.type_dict[wildcards.name][1]
             if params.type_dict[wildcards.name][1] == 0:
                 structure = re.sub('index.*\n', '', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -l {log} '
-                  '-b spike.{wildcards.name} {input} %s {params.outdir}' % output.structure)
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -l {log} '
+                  '-b spike/{wildcards.name} {input} %s {params.outdir}' % output.structure)
 
 
 if 'mapping' in config['input_file']:
@@ -715,13 +727,13 @@ if 'mapping' in config['input_file']:
         input:
             lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
         output:
-            '%s/mapping.{name}.barcode.txt.gz' % (OUTDIR),
-            '%s/mapping.{name}.1.fastq.gz' % (OUTDIR),
-            '%s/mapping.{name}.2.fastq.gz' % (OUTDIR),
-            '%s/mapping.{name}.statistics.txt' % (OUTDIR),
-            structure = '%s/mapping.{name}.structure.txt' % (OUTDIR)
+            '%s/mapping/{name}.barcode.txt.gz' % (OUTDIR),
+            '%s/mapping/{name}.1.fastq.gz' % (OUTDIR),
+            '%s/mapping/{name}.2.fastq.gz' % (OUTDIR),
+            '%s/mapping/{name}.statistics.txt' % (OUTDIR),
+            structure = '%s/mapping/{name}.structure.txt' % (OUTDIR)
         log:
-            '%s/mapping.{name}_parser.log' % (OUTDIR)
+            '%s/mapping/{name}_parser.log' % (OUTDIR)
         params:
             structure= config['structure']['mapping'],
             type_dict= config['input_file']['mapping'],
@@ -734,19 +746,19 @@ if 'mapping' in config['input_file']:
                 structure = re.sub('index.*\n', '', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
-                  '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
+                  '-b mapping/{wildcards.name} {input[0]} {output.structure} {params.outdir}')
 
 if 'polyA' in config['input_file']:
     rule parse_polyA:
         input:
             lambda wildcards: config['input_file']['polyA'][wildcards.name][0]
         output:
-            '%s/polyA.{name}.barcode.txt.gz' % (OUTDIR),
-            '%s/polyA.{name}.statistics.txt' % (OUTDIR),
-            structure = '%s/polyA.{name}.structure.txt' % (OUTDIR)
+            '%s/polyA/{name}.barcode.txt.gz' % (OUTDIR),
+            '%s/polyA/{name}.statistics.txt' % (OUTDIR),
+            structure = '%s/polyA/{name}.structure.txt' % (OUTDIR)
         log:
-            '%s/polyA.{name}_parser.log' % (OUTDIR)
+            '%s/polyA/{name}_parser.log' % (OUTDIR)
         params:
             structure= config['structure']['polyA'],
             type_dict= config['input_file']['polyA'],
@@ -760,6 +772,6 @@ if 'polyA' in config['input_file']:
             structure = re.sub('\\\}', '}', structure)
             with open(output.structure, 'w') as f:
                 f.write(structure)
-            shell('~t.v.schaik/modules/read-parsing/read_parser.py -a -n 10000000000 -r -l {log} '
-                  '-e 0.17 -o -b polyA.{wildcards.name} {input} '
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -n 10000000000 -r -l {log} '
+                  '-e 0.17 -o -b polyA/{wildcards.name} {input} '
                   '{output.structure} {params.outdir} > /dev/null')

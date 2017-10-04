@@ -1,0 +1,94 @@
+# knitr document van Steensel lab
+
+# Gene repression in LADs
+## Christ Leemans, 03-11-2016 - to date
+
+## Introduction
+Laura set up a new TRIP-like experiment using clonal lines with reporter integrations in a CAST-F121 F1-hybrid cell line. With this data we hope to be able to analyse the effect of intergrating an active promoter on the surrounding chromatin. We are interested to find out if integration will be able to change the local chromatin environment, nuclear organisation and subsequent gene expression of neighbouring genes and if so, to what extend.
+
+```{r}
+## for each clone, try to find as much mapped sequences as possible.
+clone_vec = c('cl3', 'cl18', 'cl19', 'cl23')
+
+
+mapping_list = list('1'=list(), '2'=list())
+map_table = 'cl20170329_TTRIP_F1mESC/mapping.%s.%s.table'
+for (clone in clone_vec){
+    for (direction in c('1','2')){
+        map_name = sprintf(map_table, clone, direction)
+        mapping_list[[direction]][[clone]] = read.table(map_name, row.names=1, header=T,
+                                                        stringsAsFactors=T)
+    }
+}
+
+expression_list = list()
+count_table_pattern = 'cl20170329_TTRIP_F1mESC/polyA.%s_%s_r%i.normalized'
+for (clone in clone_vec){
+    expression_list[[clone]] = list()
+    for (condition in c('ctrl', 'GAL4-KRAB')){
+        for (rep in c(1,2)){
+            file_name = sprintf(count_table_pattern, clone, condition, rep)
+            expression_list[[clone]][[condition]][[rep]] = read.table(file_name, row.names=1)
+        }        
+    }
+}
+expression_list[['wt']] = list('ctrl'=list())
+for (rep in c(1,2)){
+    file_name = sprintf(count_table_pattern, 'wt', 'ctrl', rep)
+    expression_list[['wt']][['ctrl']][[rep]] = read.table(file_name, row.names=1)
+}
+
+plot_list = list()
+for (clone in clone_vec){
+    for (condition in c('ctrl', 'GAL4-KRAB')){
+        r1_table = expression_list[[clone]][[condition]][[1]]
+        r2_table = expression_list[[clone]][[condition]][[2]]
+        bc_vec = unique(c(rownames(r1_table), rownames(r2_table)))
+        df = data.frame(r1=rep(0, length(bc_vec)),
+                        r2=rep(0, length(bc_vec)),
+                        row.names=bc_vec)
+        df[rownames(r1_table), 'r1'] = r1_table[, 2]
+        df[rownames(r2_table), 'r2'] = r2_table[, 2]
+        plot_list[[paste0(clone, condition)]] = ggplot(df, aes(x=log2(r1), y=log2(r2))) +
+                                                    geom_point(alpha=0.5, size=0.3) +
+                                                    geom_smooth()
+    }
+}
+do.call(grid.arrange, plot_list)
+
+plot_list_point = list()
+plot_list_violin = list()
+for (clone in clone_vec){
+    r1_table = expression_list[[clone]][['ctrl']][[1]]
+    r2_table = expression_list[[clone]][['ctrl']][[2]]
+    bc_vec = unique(c(rownames(r1_table), rownames(r2_table)))
+    df_ctrl = data.frame(r1=rep(0, length(bc_vec)),
+                         r2=rep(0, length(bc_vec)),
+                         row.names=bc_vec)
+    df_ctrl[rownames(r1_table), 'r1'] = r1_table[, 2]
+    df_ctrl[rownames(r2_table), 'r2'] = r2_table[, 2]
+    r1_table = expression_list[[clone]][['GAL4-KRAB']][[1]]
+    r2_table = expression_list[[clone]][['GAL4-KRAB']][[2]]
+    bc_vec = unique(c(rownames(r1_table), rownames(r2_table)))
+    df_gal4 = data.frame(r1=rep(0, length(bc_vec)),
+                         r2=rep(0, length(bc_vec)),
+                         row.names=bc_vec)
+    df_gal4[rownames(r1_table), 'r1'] = r1_table[, 2]
+    df_gal4[rownames(r2_table), 'r2'] = r2_table[, 2]
+    bc_vec = unique(c(rownames(df_ctrl), rownames(df_gal4)))
+    df = data.frame(ctrl=rep(0, length(bc_vec)),
+                    GAL4_KRAB=rep(0, length(bc_vec)),
+                    row.names=bc_vec)
+    df[rownames(df_ctrl), 'ctrl'] = rowMeans(df_ctrl)
+    df[rownames(df_gal4), 'GAL4_KRAB'] = rowMeans(df_gal4)
+
+    plot_list_point[[clone]] = ggplot(df, aes(x=log2(ctrl), y=log2(GAL4_KRAB))) +
+                                      geom_point(alpha=0.3, size=0.3) +
+                                      geom_smooth()
+    plot_list_violin[[clone]] = ggplot(melt(df), aes(x=variable, y=log2(value), color=variable)) +
+                                       geom_violin(alpha=0.3) + 
+                                       geom_point(position = position_jitter(width=0.5), alpha=0.3, size=0.3)
+}
+do.call(grid.arrange, plot_list_point)
+do.call(grid.arrange, plot_list_violin)
+```

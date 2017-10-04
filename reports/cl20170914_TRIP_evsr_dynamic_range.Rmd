@@ -1,0 +1,183 @@
+q# knitr document van Steensel lab
+
+# Escaper/repressed TRIP data pre-processing
+## Christ Leemans, 14-09-2017
+
+## Introduction
+In previous analysis we used SuRE and GROcap to classify promoters in lamina
+associated domains as repressed, inactive or escaper. Repressed being actively
+repressed, inactive promoters showing no activity even when removed from the lamina
+and escapers being equally active in both SuRE and GROcap.
+
+To validate that the escaping behavior is encoded in the promoter sequence,
+Marloes created TRIP pools for 4 escaper promoters and 4 repressed promoters.
+If escaping behavior is encoded in the sequence, any integration of an escaper
+promoter in LADs should be able to escape repression, while integrations of
+repressed promoters should be repressed.
+
+Recently the first data came back from the sequencing facility. This contains
+3 promoters (2 repressed, 1 escaper), each two biological replicates and two
+technical replicates.
+
+
+
+```{r}
+library(ggplot2)
+
+pseudo_log10 <- function(val_vec){
+    Pseud=min(val_vec[val_vec > 0], na.rm=TRUE)/2
+    val_vec = val_vec + Pseud
+    return(log10(val_vec))
+}
+
+
+file_list = list.files('../cl20170913_TRIP_K562_evsr/', pattern='normalized',
+                       full.names=T)
+names(file_list) = gsub('.*cDNA.(.*).normalized', '\\1', file_list)
+
+table_list = lapply(file_list, read.table, header=T, stringsAsFactors=F,
+                    row.names=1)
+
+info = data.frame(name=names(file_list),
+                  promoter=gsub('([0-9]+).*', '\\1', names(file_list)),
+                  bio_rep = gsub('[0-9]+([A-B]).*', '\\1', names(file_list)),
+                  tech_rep = gsub('[0-9]+[A-B]_rep(.*)', '\\1', names(file_list)),
+                  stringsAsFactors=F)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+check_reproducability <- function(rep1, rep2, label){
+    bc_vec1 = rownames(rep1)
+    bc_vec2 = rownames(rep2)
+    bc_vec = bc_vec1[bc_vec1 %in% bc_vec2]
+    uniq_rep1 = bc_vec1[!bc_vec1 %in% bc_vec2]
+    uniq_rep2 = bc_vec2[!bc_vec2 %in% bc_vec1]
+    cat(paste0('shared: ', length(bc_vec), '\n'))
+    cat(paste0('rep1 unique: ', length(uniq_rep1), '\n'))
+    cat(paste0('rep2 unique: ', length(uniq_rep2), '\n'))
+    bc_vec = bc_vec[rep1[bc_vec, 'gDNA_count'] > 100 | rep2[bc_vec, 'gDNA_count'] > 100]
+    cat(paste0('above threshold (> 100 gDNA either rep): ', length(bc_vec), '\n'))
+    cat(paste0('rep1 unique > 100: ', length(which(rep1[uniq_rep1, 'gDNA_count'] > 100)),
+               '\n'))
+    cat(paste0('rep2 unique > 100: ', length(which(rep2[uniq_rep2, 'gDNA_count'] > 100)),
+               '\n'))
+    norm_data = data.frame(rep1 = rep1[bc_vec, 'normalized_by_gDNA'],
+                          rep2 = rep2[bc_vec, 'normalized_by_gDNA'],
+                          gdna1 = rep1[bc_vec, 'gDNA_cpm'],
+                          gdna2 = rep2[bc_vec, 'gDNA_cpm'],
+                          row.names=bc_vec)
+    rep_cor = cor(norm_data$rep1, norm_data$rep2)
+    print(ggplot(norm_data, aes(x=pseudo_log10(rep1), y=pseudo_log10(rep2))) +
+         geom_point(alpha=0.4, size=0.4) +
+         ggtitle(paste0(name_label, '; cor=', rep_cor)))
+
+    print(ggplot(norm_data, aes(x=pseudo_log10(gdna1 + gdna2),
+                         y=pseudo_log10(rep1)-pseudo_log10(rep2))) +
+         geom_point(alpha=0.3, size=0.3) +
+         ggtitle(paste0(name_label,
+                        ' replicate difference vs total gDNA count; cor=',
+                        rep_cor)))
+    return(bc_vec)
+}
+
+add_density <- function(rep1, rep2, bc_vec, label){
+    combined_data = data.frame(cDNA = rep1[bc_vec, 'cDNA_count'] +
+                                      rep2[bc_vec, 'cDNA_count'],
+                               gDNA = rep1[bc_vec, 'gDNA_count'] +
+                                      rep2[bc_vec, 'gDNA_count'],
+                               color=label)
+    combined_data$normalized = (combined_data$cDNA / sum(combined_data$cDNA)) /
+                               (combined_data$gDNA / sum(combined_data$gDNA))
+    return(geom_density(data = combined_data, adjust=1/2))
+}
+
+
+density_plot = ggplot(data.frame(), aes(x=pseudo_log10(normalized), color=color))
+bc_list = list()
+for (prom in unique(info$promoter)){
+    for (bio in unique(info$bio_rep)){
+        cat(paste0(prom, bio, ':\n'))
+        name_vec = info[info$promoter==prom & info$bio==bio, 'name']
+        rep1 = table_list[[name_vec[1]]]
+        rep2 = table_list[[name_vec[2]]]
+        color_label = prom
+        label = paste0(prom, bio)
+        bc_vec = check_reproducability(rep1, rep2, label)
+        bc_list[[label]] = bc_vec
+        density_plot = density_plot + add_density(rep1, rep2, bc_vec, prom)
+
+    }
+}
+density_plot
+```
+
+**conclusions:**
+
+For promoter 11 and 8 the reproducibility between technical replicates looks
+reasonable, unfortunately promoter 6 is not as reproducible. There seems to be a group
+of promoters that show higher variation between replicates, would be interesting
+to know what defines this group.
+
+The overall density plot of barcode expression levels is really similar between
+biological replicates. This is really nice.
+
+The mayor difference in distribution between promoter 11 and promoter 8 is the
+subgroup of barcodes in promoter 8 with a slightly lower expression and the
+amount of barcodes that are not expressed. Promoter 8 is an escaper promoter, while
+promoter 11 is a repressed promoter. This agrees with previous observations,
+that although escaper promoters are equally active as iLAD promoters,
+initiation/elongation of POL2 is more difficult in escapers.
+
+```{r, fig.width=10, fig.height=10}
+
+
+
+density_plot = ggplot(data.frame(), aes(x=pseudo_log10(normalized), color=color))
+for (prom in c('11', '8')){
+  for (bio in unique(info$bio_rep)){
+      cat(paste0(prom, bio, ':\n'))
+      name_vec = info[info$promoter==prom & info$bio==bio, 'name']
+      rep1 = table_list[[name_vec[1]]]
+      rep2 = table_list[[name_vec[2]]]
+      label = paste0(prom, bio)
+      bc_vec = bc_list[[label]]
+      density_plot = density_plot + add_density(rep1, rep2, bc_vec, prom)
+
+  }
+}
+file_list = list.files('../cl20160914_TTRIP_K562/', pattern='KRAB_GAL4.*_[1-2]+_[1-2].normalized',
+                       full.names=T)
+names(file_list) = gsub('.*cDNA.(.*).normalized', '\\1', file_list)
+
+table_list = lapply(file_list, read.table, header=T, stringsAsFactors=F,
+                    row.names=1)
+
+info = data.frame(name=names(file_list),
+                  promoter=gsub('(.*)_.*_.*', '\\1', names(file_list)),
+                  day = gsub('.*_(.*)_.*', '\\1', names(file_list)),
+                  tech_rep = gsub('.*_.*_(.*)', '\\1', names(file_list)),
+                  stringsAsFactors=F)
+
+for (prom in unique(info$promoter)){
+  for (day in unique(info$day)){
+      cat(paste0(prom, day, ':\n'))
+      name_vec = info[info$promoter==prom & info$day==day, 'name']
+      rep1 = table_list[[name_vec[1]]]
+      rep2 = table_list[[name_vec[2]]]
+      label = paste0(prom,'_day', day)
+      bc_vec = check_reproducability(rep1, rep2, label)
+      bc_list[[label]] = bc_vec
+      density_plot = density_plot + add_density(rep1, rep2, bc_vec, label)
+
+  }
+}
+density_plot
+
+```
+
+**conclusions:**
+Compared to KRAB tethering experiment, the escaper promoters have similar amount
+of barcodes with 0 expression (mind the pseudo count). But the expression range
+of the pGK promoter in control conditions is more narrow. Day 2 with GAL4-KRAB
+condition on the other hand shows 0 expression barcodes similar to repressed promoters

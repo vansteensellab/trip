@@ -41,7 +41,7 @@ min_count:
 bowtie:
   index:  /home/NFS/users/r.schep/data/bowtie2/hg38/hg38
   options:
-      '1': ['--very-sensitive-local']
+      '1': ['--very-sensitive']
       '2': ['--very-sensitive-local']
 max_dist:
   '1': 500

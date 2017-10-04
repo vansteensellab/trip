@@ -176,6 +176,10 @@ With this file, the barcodes can be linked:
 
 nice -18 bedtools intersect -abam cl20160707_trip_without_bc_list/samRev_combined.bam -b /home/NFS/users/c.leemans/data/tracks/LAD_K562_continuous_cl160629.bed -wa -wb -bed | awk 'sub(/[0-9:]*_/, "", $4){print $4"\t"$16}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/barcode_LAD_state.txt
 
+
+
+nice -18 bedtools closest -abam cl20160707_trip_without_bc_list/samRev_combined.bam -b /home/NFS/users/c.leemans/data/tracks/LAD_K562_continuous_cl160629.bed -wa -wb -bed | awk 'sub(/[0-9:]*_/, "", $4){print $4"\t"$16}' | sort -k 1,2 | uniq -c | sort -k2,2 -k1,1nr > cl20160707_trip_without_bc_list/barcode_LAD_state.txt
+
 ```
 
 

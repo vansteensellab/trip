@@ -19,7 +19,7 @@
 ###############################
 ### snakemake configuration ###
 ###############################
-dir_suffix: 'TTRIP_F1mESC'
+outdir: 'cl20170913_TTRIP_F1mESC'
 
 # groups:
 #   - [clone, cl3, cl18, cl19, cl23, wt]

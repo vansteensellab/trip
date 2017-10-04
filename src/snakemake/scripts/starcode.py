@@ -3,7 +3,7 @@ import re
 
 count_file = snakemake.input[0]
 use_other = snakemake.params.use_other
-min_count = snakemake.params.count[snakemake.params.read_type]
+min_count = snakemake.params.count
 
 if use_other:
     starcode_file = snakemake.input[1]
@@ -28,7 +28,7 @@ with open(count_file) as f:
             stdin.append('%s\t1' % barcode)
 
 
-args = ('/home/NFS/users/c.leemans/Programs/starcode/starcode'
+args = ('/home/c.leemans/mydata/Programs/starcode/starcode'
         ' --print-clusters -d %i -t %i -s' % (snakemake.params.lev_dist,
                                               snakemake.threads))
 
@@ -41,15 +41,14 @@ except subprocess.TimeoutExpired:
     starcode.kill()
     outs, errs = starcode.communicate()
 
-genuine = open(snakemake.output.gen[0], 'w')
-mutated = open(snakemake.output.mut[0], 'w')
-count = open(snakemake.output.count[0], 'w')
+genuine = open(snakemake.output.gen, 'w')
+mutated = open(snakemake.output.mut, 'w')
+count = open(snakemake.output.count, 'w')
 if use_other:
-    notg = open(snakemake.output.notg[0], 'w')
+    notg = open(snakemake.output.notg, 'w')
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
-
     if barcode != '':
         if len(line_split) == 3:
             other_str = line_split[2]
@@ -59,7 +58,7 @@ for line in outs.decode('UTF-8').split('\n'):
                     mutated.write('%s\t%i\t%s\n' % (other_barcode,
                                                     count_dict[other_barcode],
                                                     barcode))
-                    if use_other:
+                    if use_other and other_barcode in barcode_set:
                         barcode_set.remove(other_barcode)
         else:
             other_str = barcode
@@ -82,7 +81,7 @@ for line in outs.decode('UTF-8').split('\n'):
 mutated.close()
 genuine.close()
 if use_other:
-    with open(snakemake.output.notc[0], 'w') as notc:
+    with open(snakemake.output.notc, 'w') as notc:
         for barcode in barcode_set:
             notc.write(barcode)
             notc.write('\n')
