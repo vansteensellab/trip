@@ -1,0 +1,163 @@
+# knitr document van Steensel lab
+
+# Escaper/repressed TRIP data pre-processing
+## Christ Leemans, 14-11-2017
+
+## Introduction
+In previous analysis we used SuRE and GROcap to classify promoters in lamina
+associated domains as repressed, inactive or escaper. Repressed being actively
+repressed, inactive promoters showing no activity even when removed from the lamina
+and escapers being equally active in both SuRE and GROcap.
+
+To validate that the escaping behavior is encoded in the promoter sequence,
+Marloes created TRIP pools for 4 escaper promoters and 4 repressed promoters.
+If escaping behavior is encoded in the sequence, any integration of an escaper
+promoter in LADs should be able to escape repression, while integrations of
+repressed promoters should be repressed.
+
+Recently the second round of data came back from the sequencing facility. This contains
+3 promoters (2 repressed, 1 escaper), each two biological replicates and two
+technical replicates.
+
+In this report I would like to look at the mapping and it's mayor bottlenecks.
+
+```{r}
+library(ggplot2)
+library(rtracklayer)
+library(knitr)
+
+
+
+stat_file_vec = list.files('../cl20171120_TRIP_K562_evsr/mapping',
+                           pattern='statistics.txt', full.names=T)
+names(stat_file_vec) = gsub('.*mapping/(.*?)[.]statistics.txt', '\\1', stat_file_vec)
+
+stat_list = lapply(stat_file_vec, read.table, header=T)
+stat_data = do.call(rbind, stat_list)
+
+stat_data = stat_data[,c('reads', 'reads_written', 'map_pat1a', 'const_bar',
+                         'rev_map_complement', 'rev_map', 'fwd_map_complement')]
+colnames(stat_data) = c('total reads', 'reads written', 'constant pattern 1',
+                        'barcode pattern', 'rev. complement reverse pattern',
+                        'reverse contant pattern', 'rev. complement forward pattern')
+
+cat('absolute read numbers:\n')
+kable(stat_data)
+
+cat('\npercentage of total reads:\n')
+perc_stat = round(stat_data[,-1] / stat_data[,1] * 100, 1)
+kable(perc_stat)
+
+cat('\npercentage of previous step:\n')
+rel_perc_stat = perc_stat[,-1]
+
+rel_perc_stat[,2] = stat_data[,4] / stat_data[,3] * 100
+rel_perc_stat[,3] = stat_data[,5] / stat_data[,4] * 100
+rel_perc_stat[,4] = stat_data[,6] / stat_data[,4] * 100
+rel_perc_stat[,5] = stat_data[,7] / stat_data[,6] * 100
+rel_perc_stat = round(rel_perc_stat, 1)
+kable(rel_perc_stat)
+```
+**conclusion:**
+
+Looks like we are losing a substantial amount of reads because the constant
+pattern in the reverse read can not be matched (reads without barcode, going
+directly from integration site). We can try to fix this, but I think this will
+only be partly successful.
+
+```
+for f in $(ls cl20171120_TRIP_K562_evsr/mapping/*.all.txt.gz)
+do
+    out=${f%.all.txt.gz}.all.starcode.gz
+    zcat $f | awk -F'\t' '{
+        if ($5 != "-"){
+            match($5, "TCGAG(.*)TGATC$", m)
+            if (m[1] != ""){
+                print m[1]
+            }
+        }
+    }' | ~/mydata/Programs/starcode/starcode -d 2 -t 10 -s /dev/stdin | gzip -c > $out
+done
+
+```
+
+```{r}
+
+
+cDNA_vec = list.files('../cl20171113_TRIP_K562_evsr/cDNA',
+                          pattern='.normalized', full.names=T)
+all_file_vec = list.files('../cl20171120_TRIP_K562_evsr/mapping',
+                          pattern='all.starcode.gz', full.names=T)
+parsed_file_vec = list.files('../cl20171120_TRIP_K562_evsr/mapping',
+                             pattern='.starcode.count', full.names=T)
+mapping_file_vec = list.files('../cl20171120_TRIP_K562_evsr/mapping',
+                              pattern='.2.table', full.names=T)
+names(all_file_vec) = gsub('.*mapping/(.*?)[.]all.starcode.gz', '\\1', all_file_vec)
+names(parsed_file_vec) = gsub('.*mapping/(.*?)[.]starcode.count', '\\1',
+                              parsed_file_vec)
+names(mapping_file_vec) = gsub('.*mapping/(.*?)[.]2.table', '\\1',
+                              mapping_file_vec)
+
+all_list = lapply(all_file_vec, read.table, row.names=1)
+parsed_list = lapply(parsed_file_vec, read.table, row.names=1, fill=T)
+mapping_list = lapply(mapping_file_vec, read.table, row.names=1, header=T)
+
+stats = data.frame(row.names=names(all_file_vec),
+                   'total_mapping'=rep(0, length(all_list)),
+                   'mapping_thresh'=rep(0, length(all_list)),
+                   'total_gDNA'=rep(0, length(all_list)),
+                   'gDNA_tresh'=rep(0, length(all_list)),
+                   'mapping_in_gDNA'=rep(0, length(all_list)),
+                   'parsed'=rep(0, length(all_list)),
+                   'parsed_thresh'=rep(0, length(all_list)),
+                   'parsed_in_gDNA'=rep(0, length(all_list)),
+                   'mapped'=rep(0, length(all_list)),
+                   'mapped_in_gDNA'=rep(0, length(all_list)),
+                   'unique'=rep(0, length(all_list)))
+
+for (name in names(all_list)){
+    cDNA = grep(name, cDNA_vec, value=T)
+    cDNA_list = lapply(cDNA, read.table, header=T, row.names=1)
+    rep1 = cDNA_list[[1]]
+    rep2 = cDNA_list[[2]]
+    bc_rep1 = rownames(rep1)
+    bc_rep2 = rownames(rep2)
+    shared_bc = bc_rep1[bc_rep1%in%bc_rep2]
+    stats[name, 'total_gDNA'] = length(shared_bc)
+    above_thresh = rep1[shared_bc, 'gDNA_count'] > 100 &
+                   rep2[shared_bc, 'gDNA_count'] > 100           
+    cDNA_bc = shared_bc[above_thresh]
+    stats[name, 'gDNA_tresh'] = length(cDNA_bc)
+    all = all_list[[name]]
+    all_vec = all[all > 0, ]
+    names(all_vec) = rownames(all)[all > 0]
+    stats[name, 'total_mapping'] = length(all_vec)
+    all_vec = all[all > 5, ]
+    names(all_vec) = rownames(all)[all > 5]
+    stats[name, 'mapping_thresh'] = length(all_vec)
+    stats[name, 'mapping_in_gDNA'] = length(which(names(all_vec)%in%cDNA_bc))
+    parsed_vec = parsed_list[[name]][,1]
+    names(parsed_vec) = rownames(parsed_list[[name]])
+    stats[name, 'parsed'] = length(parsed_vec)
+    parsed_vec = parsed_vec[parsed_vec > 5]
+    stats[name, 'parsed_thresh'] = length(parsed_vec)
+    stats[name, 'parsed_in_gDNA'] = length(which(names(parsed_vec)%in%cDNA_bc))
+    map_data = mapping_list[[name]]
+    map_data$freq1 = map_data$reads1 / map_data$total_mapped
+    map_data$freq2 = map_data$reads2 / map_data$total_mapped
+    map_data$avg_mapq = map_data$mapq_sum1 / map_data$total_mapped
+    map_data$unique = map_data$freq1 > 0.7 &
+                        map_data$freq2 < 0.1 &
+                        map_data$avg_mapq >= 10
+    stats[name, 'mapped'] = nrow(map_data)
+    map_data = map_data[rownames(map_data)%in%cDNA_bc, ]
+    stats[name, 'mapped_in_gDNA'] = nrow(map_data)
+    stats[name, 'unique'] = length(which(map_data$unique))
+}
+kable(stats)
+
+```
+
+**conclusion:**
+Biggest bottleneck by far is the amount of barcodes retrieved when parsing. This 
+might be improved incorporation imperfect barcodes

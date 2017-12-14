@@ -1,0 +1,378 @@
+# knitr document van Steensel lab
+
+# Escaper/repressed TRIP data pre-processing
+## Christ Leemans, 14-11-2017
+
+## Introduction
+In previous analysis we used SuRE and GROcap to classify promoters in lamina
+associated domains as repressed, inactive or escaper. Repressed being actively
+repressed, inactive promoters showing no activity even when removed from the lamina
+and escapers being equally active in both SuRE and GROcap.
+
+To validate that the escaping behavior is encoded in the promoter sequence,
+Marloes created TRIP pools for 4 escaper promoters and 4 repressed promoters.
+If escaping behavior is encoded in the sequence, any integration of an escaper
+promoter in LADs should be able to escape repression, while integrations of
+repressed promoters should be repressed.
+
+Recently the second round of data came back from the sequencing facility. This contains
+3 promoters (2 repressed, 1 escaper), each two biological replicates and two
+technical replicates.
+
+
+
+```{r}
+library(ggplot2)
+library(rtracklayer)
+
+pseudo_log2 <- function(val_vec){
+    Pseud=min(val_vec[val_vec > 0], na.rm=TRUE)/2
+    val_vec = val_vec + Pseud
+    return(log2(val_vec))
+}
+
+
+file_list = list.files('../cl20171113_TRIP_K562_evsr/cDNA', pattern='normalized',
+                       full.names=T)
+names(file_list) = gsub('.*cDNA/(.*).normalized', '\\1', file_list)
+
+table_list = lapply(file_list, read.table, header=T, stringsAsFactors=F,
+                    row.names=1)
+
+info = data.frame(name=names(file_list),
+                  promoter=gsub('([0-9]+).*', '\\1', names(file_list)),
+                  bio_rep = gsub('[0-9]+([A-B]).*', '\\1', names(file_list)),
+                  tech_rep = gsub('[0-9]+[A-B]_r(.*)', '\\1', names(file_list)),
+                  stringsAsFactors=F)
+info$promoter = gsub('(.*)_.*_.*', '\\1', info$promoter)
+info$bio_rep = gsub('.*_(.*)_.*', '\\1', info$bio_rep)
+info$tech_rep = gsub('.*_.*_r(.*)', '\\1', info$tech_rep)
+```
+
+
+```{r, fig.width=10, fig.height=10}
+check_reproducability <- function(rep1, rep2, label){
+    bc_vec1 = rownames(rep1)
+    bc_vec2 = rownames(rep2)
+    bc_vec = bc_vec1[bc_vec1 %in% bc_vec2]
+    uniq_rep1 = bc_vec1[!bc_vec1 %in% bc_vec2]
+    uniq_rep2 = bc_vec2[!bc_vec2 %in% bc_vec1]
+    cat(paste0('shared: ', length(bc_vec), '\n'))
+    cat(paste0('rep1 unique: ', length(uniq_rep1), '\n'))
+    cat(paste0('rep2 unique: ', length(uniq_rep2), '\n'))
+    bc_vec = bc_vec[rep1[bc_vec, 'gDNA_count'] > 100 | rep2[bc_vec, 'gDNA_count'] > 100]
+    cat(paste0('above threshold (> 100 gDNA either rep): ', length(bc_vec), '\n'))
+    cat(paste0('rep1 unique > 100: ', length(which(rep1[uniq_rep1, 'gDNA_count'] > 100)),
+               '\n'))
+    cat(paste0('rep2 unique > 100: ', length(which(rep2[uniq_rep2, 'gDNA_count'] > 100)),
+               '\n'))
+    norm_data = data.frame(rep1 = rep1[bc_vec, 'normalized_by_gDNA'],
+                          rep2 = rep2[bc_vec, 'normalized_by_gDNA'],
+                          gdna1 = rep1[bc_vec, 'gDNA_cpm'],
+                          gdna2 = rep2[bc_vec, 'gDNA_cpm'],
+                          row.names=bc_vec)
+    rep_cor = cor(norm_data$rep1, norm_data$rep2)
+    print(ggplot(norm_data, aes(x=pseudo_log2(rep1), y=pseudo_log2(rep2))) +
+         geom_point(alpha=0.4, size=0.4) +
+         ggtitle(paste0(label, '; cor=', rep_cor)))
+
+    print(ggplot(norm_data, aes(x=pseudo_log2(gdna1 + gdna2),
+                         y=pseudo_log2(rep1)-pseudo_log2(rep2))) +
+         geom_point(alpha=0.3, size=0.3) +
+         ggtitle(paste0(label,
+                        ' replicate difference vs total gDNA count; cor=',
+                        rep_cor)))
+    return(bc_vec)
+}
+
+add_density <- function(rep1, rep2, bc_vec, label){
+    combined_data = data.frame(cDNA = rep1[bc_vec, 'cDNA_count'] +
+                                      rep2[bc_vec, 'cDNA_count'],
+                               gDNA = rep1[bc_vec, 'gDNA_count'] +
+                                      rep2[bc_vec, 'gDNA_count'],
+                               color=label)
+    combined_data$normalized = (combined_data$cDNA / sum(combined_data$cDNA)) /
+                               (combined_data$gDNA / sum(combined_data$gDNA))
+    return(geom_density(data = combined_data, adjust=1/2))
+}
+
+
+density_plot = ggplot(data.frame(), aes(x=pseudo_log2(normalized), color=color))
+bc_list = list()
+# for (prom in unique(info$promoter)){
+class_vec = c('6'='repressed', '8'='escaper', '11'='repressed', 'hPGK'='iLAD')
+COL_vec = c(repressed="#A020F0", escaper="#FFA500", iLAD="#0077FF")
+for (prom in names(class_vec)){
+    for (bio in unique(info$bio_rep)){
+        cat(paste0(prom, bio, ':\n'))
+        name_vec = info[info$promoter==prom & info$bio==bio, 'name']
+        rep1 = table_list[[name_vec[1]]]
+        rep2 = table_list[[name_vec[2]]]
+        class = as.character(class_vec[prom])
+        label = paste0(prom, bio)
+        bc_vec = check_reproducability(rep1, rep2, label)
+        bc_list[[label]] = bc_vec
+        density_plot = density_plot + add_density(rep1, rep2, bc_vec, class)
+    }
+}
+density_plot + scale_color_manual(values=c(COL_vec, COL_vec))
+```
+
+
+```{r}
+
+
+fwd_file_list = list.files('../cl20171206_TRIP_K562_evsr/mapping', pattern='1.table',
+                           full.names=T)
+names(fwd_file_list) = gsub('.*mapping/(.*).1.table', '\\1', fwd_file_list)
+
+
+rev_file_list = list.files('../cl20171206_TRIP_K562_evsr/mapping', pattern='2.table',
+                           full.names=T)
+names(rev_file_list) = gsub('.*mapping/(.*).2.table', '\\1', rev_file_list)
+
+
+map_info = data.frame(name=names(fwd_file_list),
+                      promoter=gsub('([0-9]+).*', '\\1', names(fwd_file_list)),
+                      bio_rep = gsub('[0-9]+([A-B]).*', '\\1', names(fwd_file_list)),
+                      stringsAsFactors=F)
+map_info$promoter = gsub('(.*?)_.*', '\\1', map_info$promoter)
+map_info$bio_rep = gsub('.*?_(.*)', '\\1', map_info$bio_rep)
+map_info$bio_rep = gsub('(.*)_.*', '\\1', map_info$bio_rep)
+
+map_info$tech_rep = 1
+map_info[grep('_2', map_info$name), 'tech_rep'] = 2
+
+
+fwd_table_list = lapply(fwd_file_list, read.table, header=T, stringsAsFactors=F,
+                        row.names=1)
+
+
+rev_table_list = lapply(rev_file_list, read.table, header=T, stringsAsFactors=F,
+                        row.names=1)
+
+
+data_fwd = fwd_table_list[[1]]
+data_rev = rev_table_list[[1]]
+
+get_data_table <- function(data_rev, lad_gr, lmnb1_gr){
+    map_gr = GRanges(data_rev$seqname, IRanges(data_rev$start_pos,
+                                                data_rev$start_pos),
+                     strand = data_rev$ori)
+    map_gr$LAD = 0
+    names(map_gr) = rownames(data_rev)
+    o = findOverlaps(map_gr, lad_gr)
+    map_gr$LAD[queryHits(o)] = 1
+    o = findOverlaps(map_gr, lmnb1_gr)
+    map_gr$lamin[queryHits(o)] = lmnb1_gr[subjectHits(o)]$score
+    map_gr$ratio1 = data_rev$reads1 / data_rev$total_mapped
+    map_gr$ratio2 = data_rev$reads2 / data_rev$total_mapped
+    map_gr$avg_mapq = data_rev$mapq_sum1 / data_rev$reads1
+    return(map_gr)
+}
+
+
+
+lad_hmm_gr = import.bed('../../../data/tracks/hg19/cl20161019_LAD_continuous_2state_K562.bed')
+
+lmnb1_10kb = import.bw('/home/t.v.schaik/mydata/proj/3D_nucleus/results/ts170821_GCF4577_K562_p13_LMNB1/results/tracks_norm/LMNB1-10kb.bw')
+
+lad_gr = lad_hmm_gr[lad_hmm_gr$name == 'LAD']
+
+border_gr = import.bed('~/mydata/data/tracks/hg19/cl20161019_LAD_borders_K562.bed')
+
+
+
+COL_lad<-c("#FF0000", "#0077FF")
+names(COL_lad)<-c('LAD', 'iLAD')
+all_data = data.frame()
+all_gr = GRanges()
+for (prom in names(class_vec)){
+    for (bio in unique(map_info$bio_rep)){
+        cat(paste0(prom, bio, ':\n'))
+        name_vec = map_info[map_info$promoter==prom & map_info$bio==bio, 'name']
+        name = name_vec[-grep('_2', name_vec)]
+        rev_data = rev_table_list[name_vec]
+        rep1 = rev_data[[-grep('_2', name_vec)]]
+        rep2 = rev_data[[grep('_2', name_vec)]]
+        rep1$ratio1 = rep1$reads1 / rep1$total_mapped
+        rep1$ratio2 = rep1$reads2 / rep1$total_mapped
+        rep1$avg_mapq = rep1$mapq_sum1 / rep1$reads1
+
+        rep2$ratio1 = rep2$reads1 / rep2$total_mapped
+        rep2$ratio2 = rep2$reads2 / rep2$total_mapped
+        rep2$avg_mapq = rep2$mapq_sum1 / rep2$reads1
+
+        rep1$unique = rep1$ratio1 > 0.7 & rep1$ratio2 < 0.1 & rep1$avg_mapq > 10
+        rep2$unique = rep2$ratio1 > 0.7 & rep2$ratio2 < 0.1 & rep2$avg_mapq > 10
+
+
+        shared_bc = rownames(rep1)[rep1$unique][rownames(rep1)[rep1$unique] %in%
+                                                rownames(rep2)[rep2$unique]]
+        print('uniquely mapped barcodes in both replicates:')
+        print(length(shared_bc))
+        print('uniquely mapped barcodes with same position:')
+        equal = rep1[shared_bc, c('seqname', 'ori', 'start_pos')] ==
+                    rep2[shared_bc, c('seqname', 'ori', 'start_pos')]
+        print(length(which(rowSums(equal) == 3)))
+        not_equal = shared_bc[which(rowSums(equal) != 3)]
+        ne_table = cbind(rep1[not_equal, c('seqname', 'ori', 'start_pos', 'total_mapped',
+                                'mapq_sum1')],
+                         rep2[not_equal, c('seqname', 'ori', 'start_pos', 'total_mapped',
+                                            'mapq_sum1')])
+        kable(ne_table)
+
+        print('uniquely mapped barcodes in rep1, not in rep2:')
+        unique_rep1 = rownames(rep1)[rep1$unique][!(rownames(rep1)[rep1$unique] %in%
+                                                    rownames(rep2)[rep2$unique])]
+        print(length(unique_rep1))
+
+        print('uniquely mapped barcodes in rep2, not in rep1:')
+        unique_rep2 = rownames(rep2)[rep2$unique][!(rownames(rep2)[rep2$unique] %in%
+                                                    rownames(rep1)[rep1$unique])]
+        print(length(unique_rep2))
+
+        shared_bc = rownames(rep1)[rownames(rep1) %in%
+                                   rownames(rep2)]
+        shared_bc = shared_bc[!shared_bc %in% not_equal]
+        equal = rep1[shared_bc, c('seqname', 'ori', 'start_pos')] ==
+                    rep2[shared_bc, c('seqname', 'ori', 'start_pos')]
+        equal_bc = shared_bc[which(rowSums(equal) == 3)]
+        data = rep1[equal_bc, ]
+        data[, c('total_mapped', 'mapq_sum1',
+                 'reads1', 'mapq_sum2', 'reads2')] =
+            rep1[equal_bc, c('total_mapped', 'mapq_sum1',
+                             'reads1', 'mapq_sum2', 'reads2')] +
+            rep2[equal_bc, c('total_mapped', 'mapq_sum1',
+                             'reads1', 'mapq_sum2', 'reads2')]
+        print('merge of replicates mapping to same position:')
+        print(dim(data))
+        not_equal_bc = shared_bc[which(rowSums(equal) != 3)]
+        data = rbind(data,
+                     rep1[not_equal_bc[rep1[not_equal_bc, 'unique']], ],
+                     rep2[not_equal_bc[rep2[not_equal_bc, 'unique']], ])
+        print('addition of barcodes in both replicates, mapping unique for 1 replicate:')
+        print(dim(data))
+
+        print('addition of barcodes only found in replicate 1:')
+        data = rbind(data, rep1[!rownames(rep1) %in%
+                                 rownames(rep2), ])
+        print(dim(data))
+        data = rbind(data, rep2[!rownames(rep2) %in%
+                                 rownames(rep1), ])
+
+        map_gr = get_data_table(data, lad_gr, lmnb1_10kb)
+        dist = distanceToNearest(map_gr, border_gr)
+        map_gr$border_dist = NaN
+        map_gr[queryHits(dist)]$border_dist = mcols(dist)$distance
+        map_gr$unique = map_gr$ratio1 > 0.7 & map_gr$ratio2 < 0.1 & map_gr$avg_mapq > 10
+        print('LAD/iLAD classification:')
+        print(table(map_gr$LAD))
+        print('Uniquely mapped:')
+        print(table(map_gr$unique))
+        print('LAD/iLAD uniquely mapped:')
+        print(table(map_gr$LAD[map_gr$unique]))
+
+        name_vec = info[info$promoter==prom & info$bio==bio, 'name']
+        rep1 = table_list[[name_vec[1]]]
+        rep2 = table_list[[name_vec[2]]]
+        bc_vec = names(map_gr)
+        count_data = data.frame(row.names=bc_vec,
+                                cDNA_cpm=rowMeans(cbind(rep1[bc_vec, 'cDNA_cpm'],
+                                                        rep2[bc_vec, 'cDNA_cpm'])),
+                                gDNA_cpm=rowMeans(cbind(rep1[bc_vec, 'gDNA_cpm'],
+                                                        rep2[bc_vec, 'gDNA_cpm'])))
+        gDNA_count = cbind(rep1[bc_vec, 'gDNA_count'], rep2[bc_vec, 'gDNA_count'])
+        count_data$min_gDNA = apply(gDNA_count, 1, min)
+        size = vector(length=nrow(count_data))
+        size[which(count_data$min_gDNA <= 100)] = "gDNA <= 100"
+        size[which(count_data$min_gDNA > 100 &
+                   count_data$min_gDNA <= 1000)] = "100 < gDNA <= 1000"
+        size[which(count_data$min_gDNA > 1000 &
+                   count_data$min_gDNA <= 10000)] = "1000 < gDNA <= 10000"
+        size[which(count_data$min_gDNA > 10000)] = "gDNA > 10000"
+        size_vec = c("gDNA <= 100"=0.1, "100 < gDNA <= 1000"=0.5,
+                     "1000 < gDNA <= 10000"=1, "gDNA > 10000"=2)
+        count_data$size = factor(size, levels=names(size_vec))
+        count_data$norm = count_data$cDNA_cpm / count_data$gDNA_cpm
+        count_data$lad = ifelse(map_gr$LAD==1, 'LAD', 'iLAD')
+        count_data$lamin = map_gr$lamin
+        count_data$border_dist = map_gr$border_dist
+        count_data$unique = map_gr$unique
+        cd = count_data[count_data$unique & !is.na(count_data$norm) &
+                        !is.na(count_data$lamin), ]
+        cd$log2 = log2(cd$norm + 0.001)
+        lm_fit = lm(cd$log2 ~ -1 + cd$lamin)
+        title = paste0(name, '; ', class_vec[prom], '\nlog(expr) = ',
+                       round(lm_fit$coefficients[1], 2), ' * log(lamin)')
+        cd$prom = prom
+        cd$bio = bio
+        all_data = rbind(all_data, cd)
+        all_gr = c(all_gr, map_gr)
+        print(ggplot(cd, aes(x=lad, y=log2, fill=lad)) +
+                    ggtitle(paste0(name, '; ', class_vec[prom])) +
+                    geom_violin() +
+                    scale_fill_manual(values=COL_lad) +
+                    ylim(-10, 6.2) +
+                    geom_point(aes(size=size), position=position_jitter(width=0.3),
+                               alpha=0.5) +
+                    scale_size_manual(values=size_vec))
+        print(ggplot(cd, aes(x=lamin, y=log2)) +
+                    ggtitle(title) +
+                    ylim(-10, 6.2) +
+                    geom_smooth(method='lm') +
+                    geom_point(aes(size=size), alpha=0.8) +
+                    scale_size_manual(values=size_vec))
+        print(ggplot(cd[cd$lad=='LAD', ], aes(x=log10(border_dist), y=log2)) +
+                    ggtitle(title) +
+                    geom_point(aes(size=size), alpha=0.8) +
+                    scale_size_manual(values=size_vec))
+    }
+}
+
+all_lad_rvse = all_data[all_data$lad=='LAD'& all_data$prom!='hPGK', ]
+
+all_gr$promoter = all_data[names(all_gr), 'prom']
+all_gr$expression = all_data[names(all_gr), 'log2']
+all_gr$min_gDNA = all_data[names(all_gr), 'min_gDNA']
+all_gr$min_gDNA = all_data[names(all_gr), 'min_gDNA']
+
+export.gff3(all_gr[names(all_gr)%in%rownames(all_lad_rvse)],
+            'all_lad_rvse_intergrations.gff3')
+
+high_lad_rvse = all_lad_rvse[all_lad_rvse$log2 > 0, ]
+export.gff3(all_gr[names(all_gr)%in%rownames(high_lad_rvse)],
+            'high_lad_rvse_intergrations.gff3')
+
+lad_levels = c('iLAD', 'LAD')
+pdf('cl20171120_combined_rvse_lad_expresion.pdf', width=5, height=5)
+for(prom in names(class_vec)){
+    data = all_data[all_data$prom==prom, ]
+    data$lad = factor(data$lad, levels=lad_levels)
+    lad_names = paste0(lad_levels, '; n=', table(data$lad))
+    names(lad_names) = lad_levels
+    data$lad_n = lad_names[data$lad]
+    COL_lad_n = COL_lad[names(lad_names)]
+    names(COL_lad_n) = lad_names
+    data_summary = aggregate(log2 ~ lad_n, median, data=data)
+    if (prom == 'hPGK') {
+        name = 'human PGK promoter'
+    } else {
+        name = paste0('promoter nr.', prom, '; ', class_vec[prom])
+    }
+    data$lad = factor(data$lad, levels(c('iLAD', 'LAD')))
+    print(ggplot(data, aes(x=lad_n, y=log2, fill=lad_n, ymin=log2, ymax=log2)) +
+            geom_violin() +
+            ggtitle(name) +
+            scale_fill_manual(values=COL_lad_n) +
+            ylim(-10, 6.2) +
+            geom_point(position=position_jitter(width=0.3),
+                       alpha=0.5, size=0.5) +
+            theme_bw() +
+            xlab('LAD HMM call') +
+            ylab('normalized cDNA/gDNA (log2)') +
+            geom_crossbar(data=data_summary, color = "green", width=0.3))
+}
+dev.off()
+
+```

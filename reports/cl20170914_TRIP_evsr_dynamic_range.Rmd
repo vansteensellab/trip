@@ -1,4 +1,4 @@
-q# knitr document van Steensel lab
+# knitr document van Steensel lab
 
 # Escaper/repressed TRIP data pre-processing
 ## Christ Leemans, 14-09-2017
@@ -70,12 +70,12 @@ check_reproducability <- function(rep1, rep2, label){
     rep_cor = cor(norm_data$rep1, norm_data$rep2)
     print(ggplot(norm_data, aes(x=pseudo_log10(rep1), y=pseudo_log10(rep2))) +
          geom_point(alpha=0.4, size=0.4) +
-         ggtitle(paste0(name_label, '; cor=', rep_cor)))
+         ggtitle(paste0(label, '; cor=', rep_cor)))
 
     print(ggplot(norm_data, aes(x=pseudo_log10(gdna1 + gdna2),
                          y=pseudo_log10(rep1)-pseudo_log10(rep2))) +
          geom_point(alpha=0.3, size=0.3) +
-         ggtitle(paste0(name_label,
+         ggtitle(paste0(label,
                         ' replicate difference vs total gDNA count; cor=',
                         rep_cor)))
     return(bc_vec)
@@ -95,21 +95,24 @@ add_density <- function(rep1, rep2, bc_vec, label){
 
 density_plot = ggplot(data.frame(), aes(x=pseudo_log10(normalized), color=color))
 bc_list = list()
-for (prom in unique(info$promoter)){
+# for (prom in unique(info$promoter)){
+class_vec = c('8'='escaper', '11'='repressed')
+COL_vec = c(repressed="#A020F0", escaper="#FFA500")
+for (prom in c('8', '11')){
     for (bio in unique(info$bio_rep)){
         cat(paste0(prom, bio, ':\n'))
         name_vec = info[info$promoter==prom & info$bio==bio, 'name']
         rep1 = table_list[[name_vec[1]]]
         rep2 = table_list[[name_vec[2]]]
-        color_label = prom
+        class = as.character(class_vec[prom])
         label = paste0(prom, bio)
         bc_vec = check_reproducability(rep1, rep2, label)
         bc_list[[label]] = bc_vec
-        density_plot = density_plot + add_density(rep1, rep2, bc_vec, prom)
+        density_plot = density_plot + add_density(rep1, rep2, bc_vec, class)
 
     }
 }
-density_plot
+density_plot + scale_color_manual(values=c(COL_vec, COL_vec))
 ```
 
 **conclusions:**
@@ -143,7 +146,6 @@ for (prom in c('11', '8')){
       label = paste0(prom, bio)
       bc_vec = bc_list[[label]]
       density_plot = density_plot + add_density(rep1, rep2, bc_vec, prom)
-
   }
 }
 file_list = list.files('../cl20160914_TTRIP_K562/', pattern='KRAB_GAL4.*_[1-2]+_[1-2].normalized',

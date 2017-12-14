@@ -6,8 +6,8 @@ from Bio import SeqIO
 from collections import Counter
 
 
-def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
-              remap_soft_clip=17):
+def parse_sam(sam_file, starcode_set, mut_dict, max_soft_clip=5,
+              min_first_match=10, remap_soft_clip=17):
     remap_list = []
     map_dict = {}
     map_stat_dict = {}
@@ -15,7 +15,9 @@ def parse_sam(sam_file, starcode_set, max_soft_clip=5, min_first_match=10,
     print(sam_file)
     for line in pysam.AlignmentFile(sam_file):
         bc_this = re.match(r'.*[:_]([A-Z]+)$', line.query_name).groups(1)[0]
-        if bc_this in starcode_set:
+        if bc_this in starcode_set or bc_this in mut_dict:
+            if bc_this in mut_dict:
+                bc_this = mut_dict[bc_this]
             if bc_this not in map_stat_dict:
                 map_stat_dict[bc_this] = [0, 0, 0, 0]
                 length_dict[bc_this] = [0, 0, 0, 0]
@@ -182,18 +184,24 @@ if __name__ == '__main__':
     snakeparam = snakemake.params
     threads = snakemake.threads
 
-    for count_file in snakein.count:
-        with open(count_file) as cf:
-            for line in cf.readlines():
-                barcode = line.split('\t')[0]
-                if barcode not in starcode_set:
-                    starcode_set.add(barcode)
+    with open(snakein.count) as cf:
+        for line in cf.readlines():
+            barcode = line.split('\t')[0]
+            if barcode not in starcode_set:
+                starcode_set.add(barcode)
+    mut_dict = {}
+    if 'mutated' in snakein:
+        with open(snakein.mutated) as mf:
+            line_split = line.split('\t')
+            mut_dict[line_split[0]] = line_split[2]
+
     (map_dict, remap_list,
-        map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set)
+        map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set,
+                                                mut_dict)
     if len(remap_list) > 0:
         with gzip.open(snakeout.remap_fq, "wt") as fqfile:
             SeqIO.write(remap_list, fqfile, 'fastq')
-        options = snakeparam.options[snakeparam.num]
+        options = snakeparam.options
         align_command = ("bowtie2 -p %i -t %s"
                          " -x %s -U %s | "
                          "samtools view -Sb - > %s" % (threads,
@@ -202,7 +210,8 @@ if __name__ == '__main__':
                                                        snakeout.remap_fq,
                                                        snakeout.remap))
         os.system(align_command)
-        remap_sam_out = parse_sam(snakeout.remap, starcode_set)
+        remap_sam_out = parse_sam(snakeout.remap, starcode_set,
+                                  mut_dict)
         for bc in remap_sam_out[0]:
             if bc in map_dict:
                 this_remap_dict = remap_sam_out[0][bc]
@@ -223,9 +232,9 @@ if __name__ == '__main__':
 
 
 
-    write_bed(map_dict, snakeout.bed, snakeparam.max_dist[snakeparam.num])
+    write_bed(map_dict, snakeout.bed, snakeparam.max_dist)
 
-    top_map_dict = top_map(map_dict, snakeparam.max_dist[snakeparam.num])
+    top_map_dict = top_map(map_dict, snakeparam.max_dist)
     with open(snakeout.table, 'w') as fout:
         fout.write('\t'.join(('barcode', 'seqname', 'ori', 'start_pos',
                               'total_mapped', 'mapq_sum1', 'reads1', 'mapq_sum2',
