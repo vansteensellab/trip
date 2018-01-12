@@ -2,8 +2,11 @@ import subprocess
 import re
 
 count_file = snakemake.input[0]
-use_other = snakemake.params.use_other
-min_count = snakemake.params.count
+param_dict = snakemake.params
+if 'param_dict' in param_dict.keys():
+    param_dict = param_dict['param_dict']
+use_other = param_dict['use_other']
+min_count = param_dict['count']
 
 if use_other:
     starcode_file = snakemake.input[1]
@@ -27,10 +30,14 @@ with open(count_file) as f:
         elif barcode not in barcode_set:
             stdin.append('%s\t1' % barcode)
 
-
-args = ('/home/c.leemans/mydata/Programs/starcode/starcode'
-        ' --print-clusters -d %i -t %i -s' % (snakemake.params.lev_dist,
-                                              snakemake.threads))
+if use_other:
+    args = ('/home/c.leemans/mydata/Programs/starcode/starcode'
+            ' --print-clusters -d %i -t %i ' % (param_dict['lev_dist'],
+                                                snakemake.threads))
+else:
+    args = ('/home/c.leemans/mydata/Programs/starcode/starcode'
+            ' --print-clusters -d %i -t %i -s' % (param_dict['lev_dist'],
+                                                snakemake.threads))
 
 starcode = subprocess.Popen(args, shell=True, stdin=subprocess.PIPE,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -45,7 +52,7 @@ genuine = open(snakemake.output.gen, 'w')
 mutated = open(snakemake.output.mut, 'w')
 count = open(snakemake.output.count, 'w')
 if use_other:
-    notg = open(snakemake.output.notg, 'w')
+    notg = open(snakemake.output.not_other, 'w')
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
@@ -81,7 +88,7 @@ for line in outs.decode('UTF-8').split('\n'):
 mutated.close()
 genuine.close()
 if use_other:
-    with open(snakemake.output.notc, 'w') as notc:
+    with open(snakemake.output.not_this, 'w') as notc:
         for barcode in barcode_set:
             notc.write(barcode)
             notc.write('\n')

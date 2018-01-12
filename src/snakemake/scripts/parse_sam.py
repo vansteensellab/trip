@@ -12,12 +12,15 @@ def parse_sam(sam_file, starcode_set, mut_dict, max_soft_clip=5,
     map_dict = {}
     map_stat_dict = {}
     length_dict = {}
-    print(sam_file)
+    mut_sum = 0
     for line in pysam.AlignmentFile(sam_file):
         bc_this = re.match(r'.*[:_]([A-Z]+)$', line.query_name).groups(1)[0]
         if bc_this in starcode_set or bc_this in mut_dict:
             if bc_this in mut_dict:
                 bc_this = mut_dict[bc_this]
+                is_mut = 1
+            else:
+                is_mut = 0
             if bc_this not in map_stat_dict:
                 map_stat_dict[bc_this] = [0, 0, 0, 0]
                 length_dict[bc_this] = [0, 0, 0, 0]
@@ -58,6 +61,7 @@ def parse_sam(sam_file, starcode_set, mut_dict, max_soft_clip=5,
                     add_mapping = True
             mapping_quality = line.mapping_quality
             if add_mapping:
+                mut_sum += is_mut
                 map_stat_dict[bc_this][0] += 1
                 length_dict[bc_this][0] += len(line.query_sequence)
                 seq = line.query_alignment_sequence
@@ -70,6 +74,7 @@ def parse_sam(sam_file, starcode_set, mut_dict, max_soft_clip=5,
                         map_dict[bc_this][mapping] = [1, mapping_quality, [seq]]
                 else:
                     map_dict[bc_this] = {mapping: [1, mapping_quality, [seq]]}
+    print(mut_sum)
     return(map_dict, remap_list, map_stat_dict, length_dict)
 
 
@@ -190,13 +195,14 @@ if __name__ == '__main__':
             if barcode not in starcode_set:
                 starcode_set.add(barcode)
     mut_dict = {}
-    if 'mutated' in snakein:
+    if 'mutated' in snakein.keys():
         with open(snakein.mutated) as mf:
-            line_split = line.split('\t')
-            mut_dict[line_split[0]] = line_split[2]
+            for line in mf.readlines():
+                line_split = line.strip().split('\t')
+                mut_dict[line_split[0]] = line_split[2]
 
     (map_dict, remap_list,
-        map_stat_dict, length_dict) = parse_sam(snakein.bam[0], starcode_set,
+        map_stat_dict, length_dict) = parse_sam(snakein.bam, starcode_set,
                                                 mut_dict)
     if len(remap_list) > 0:
         with gzip.open(snakeout.remap_fq, "wt") as fqfile:

@@ -1,0 +1,265 @@
+# Configuration file for mapping of Thetered-TRIP experiments performed in K562 cells.
+# This configuration contains all configurations used by the pipeline.
+# Different parts of the pipeline use this configuration:
+#
+# snakemake:
+#   this part mainly contains input files and a description of each file
+#   the following input files are used:
+#     - cDNA:
+#         fastq files with cDNA reads of barcoded reporters
+#     - gDNA:
+#         fastq files with gDNA reads of barcoded reporters used to normalize the cDNA (cDNA) reads
+#     - spike-in:
+#         fastq file with only reads of the spike-in library which was mixed in with the cDNA and gDNA reads.
+#     - forward_mapping:
+#         fastq files with forward iPCR reads of reporter integrations containing barcodes.
+#     - reverse_mapping:
+#         fastq files with reverse iPCR reads of reporter integrations with intergration site.
+
+###############################
+### snakemake configuration ###
+###############################
+outdir: 'cl20171214_TRIP_K562_evsr'
+
+
+
+###############################################################################
+###++++++++++++++++++++++++++++ parser settings ++++++++++++++++++++++++++++###
+###############################################################################
+# Typical structure of gDNA and cDNA reads:
+#      index            pat1               barcode           pat2
+# NNNNNNNNNNGTCACAAGGGCCGGCCACAACTCGAGNNNNNNNNNNNNNNNNTGATCCTGCAGTGTCACC...
+#
+# settings:
+#   barcode_length -- the length of the barcode
+#   pat1 -- the first constant pattern (after index, before barcode)
+#   pat2 -- the pattern after the barcode
+# #****************************************************************************
+# Typical structures of mapping reads
+#
+# Forward Read:
+#
+# format_map1
+#      index   	        pat1             barcode     pat2		genomic DNA
+# NNNNNNNNNNGTCACAAGGGCCGGCCACAACTCGAGNNNNNNNNNNNNNNNNTGATCNNNNNNNNNNNNNNNNNNNN
+#
+# Reverse Read:
+# 	     map_pat_rev					     genomic DNA
+# GTACGTCACAATATGATTATCTTTCTAGGGTTAANNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN
+
+indir:
+    /DATA/usr/c.leemans/data/forge/userdata/yx4x9aCqK2TJCuwR8UgDsLwcMORpOIiZ62uONIgQ
+
+input_file:
+    options:
+        mapping1: [M403/4687_1_BarcodedPool_NoIndex_S1_R1_001.fastq.gz,
+                   M403/4687_1_BarcodedPool_NoIndex_S1_R2_001.fastq.gz]
+        mapping2: [run775/4732_1_BarcodedPool_NoIndex_S1_R1_001.fastq.gz,
+                   run775/4732_1_BarcodedPool_NoIndex_S1_R2_001.fastq.gz]
+        gDNA: [run766/4688_1_BarcodedPool_NoIndex_S2_R1_001.fastq.gz]
+        cDNA: [run766/4688_1_BarcodedPool_NoIndex_S2_R1_001.fastq.gz]
+    pick:
+        mapping:
+            '6':
+                A: [mapping1, mapping2]
+                B: [mapping1, mapping2]
+            '8':
+                A: [mapping1, mapping2]
+                B: [mapping1, mapping2]
+            '10':
+                A: [mapping2, mapping2]
+                B: [mapping2, mapping2]
+            '11':
+                A: [mapping1, mapping2]
+                B: [mapping1, mapping2]
+            hPGK:
+                A: [mapping1, mapping2]
+                B: [mapping1, mapping2]
+        cDNA:
+            '6':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            '8':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            '11':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            hPGK:
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+        gDNA:
+            '6':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            '8':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            '11':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            hPGK:
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+
+index:
+    mapping:
+        '6':
+            A: [TAGTATCAGC, ACGAGTGCGT]
+            B: [TCTCTATGCG, ACGCTCGACA]
+        '8':
+            A: [TGATACGTCT, AGACGCACTC]
+            B: [TACTGAGCTA, AGCACTGTAG]
+        '10':
+            A: [TCGTCGCTCG, ACGCGAGTAT]
+            B: [ACATACGCGT, ACTACTATGT]
+        '11':
+            A: [CATAGTAGTG, ATCAGACACG]
+            B: [CGAGAGATAC, ATATCGCGAG]
+        hPGK:
+            A: [ATACGACGTA, CGTGTCTCTA]
+            B: [TCACGTACTA, CTCGCGTGTC]
+    cDNA:
+        '6':
+            A: [TCGTCGCTCG, TAGTGTAGAT]
+            B: [ACATACGCGT, TCGATCACGT]
+        '8':
+            A: [ACGCGAGTAT, TCGCACTAGT]
+            B: [ACTACTATGT, TCTAGCGACT]
+        '11':
+            A: [ACTGTACAGT, TCTATACTAT]
+            B: [AGACTATACT, TGACGTATGT]
+        hPGK:
+            A: [AGCGTCGTCT, TGTGAGTAGT]
+            B: [AGTACGCTAT, ACAGTATATA]
+    gDNA:
+        '6':
+            A: [ATAGAGTACT, ACGAGTGCGT]
+            B: [CACGCTACGT, ACGCTCGACA]
+        '8':
+            A: [CAGTAGACGT, AGACGCACTC]
+            B: [CGACGTGACT, AGCACTGTAG]
+        '11':
+            A: [TACACACACT, ATCAGACACG]
+            B: [TACACGTGAT, ATATCGCGAG]
+        hPGK:
+            A: [TACAGATCGT, CGTGTCTCTA]
+            B: [TACGCTGTCT, CTCGCGTGTC]
+
+lev_dist: 2
+
+min_count:
+  spike: 1000
+  gDNA: 5
+  cDNA: 0
+  map: 3
+
+
+
+starcode_params:
+    options:
+        mapping1:
+            lev_dist: 3
+            use_other: True
+            other: gDNA
+            count: 3
+        mapping2:
+            lev_dist: 2
+            use_other: True
+            other: mapping
+            count: 3
+        gDNA:
+            lev_dist: 2
+            use_other: True
+            other: gDNA
+            count: 5
+        cDNA:
+            lev_dist: 2
+            use_other: True
+            other: gDNA
+            count: 0
+    pick:
+        mapping:
+            '6':
+                A: [mapping1, mapping1]
+                B: [mapping1, mapping1]
+            '8':
+                A: [mapping1, mapping1]
+                B: [mapping1, mapping1]
+            '10':
+                A: [mapping2, mapping2]
+                B: [mapping2, mapping2]
+            '11':
+                A: [mapping1, mapping1]
+                B: [mapping1, mapping1]
+            hPGK:
+                A: [mapping1, mapping1]
+                B: [mapping1, mapping1]
+        cDNA:
+            '6':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            '8':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            '11':
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+            hPGK:
+                A: [cDNA, cDNA]
+                B: [cDNA, cDNA]
+        gDNA:
+            '6':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            '8':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            '11':
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+            hPGK:
+                A: [gDNA, gDNA]
+                B: [gDNA, gDNA]
+
+
+structure:
+    options:
+        index: |
+            ID      5'      3'      type    req     second-read     pos   keep-bases
+            index   %s      -       index   present False   fixed   -
+        mapping: |
+            ID      5'      3'      type    req     second-read     pos   keep-bases
+            map_pat1a       GTCACAAGGGCCGGCCACAAC   -       const   present False   fixed   -
+            const_bar       TCGAG\{16\}TGATC  -       const_bar       present False   fixed   -
+            rev_map_complement      -       TTAACCCTAGAAAGATAATCATATTGTGACGTAC      const   -       False   var   -
+            rev_map GTACGTCACAATATGATTATCTTTCTAGGGTTAA      -       const   present True    fixed   -
+            fwd_map_complement      -       GATCA[BC]CTCGAGTTGTGGCCGGCCCTTGTGAC     const_bar_comp  -       True    var   -
+        gcDNA: |
+            ID      5'      3'      type    req     second-read     pos                   keep-bases
+            pat1    GTCACAAGGGCCGGCCACAACTCGAG      -       const   present False   fixed   -
+            barcode 16      -       barcode present False   fixed   -
+            pat2    TGATCCTGCAGTG   -       const   present False   var   -
+    paired_end:
+        mapping: True
+        gcDNA: False
+    pick:
+        mapping: mapping
+        cDNA: gcDNA
+        gDNA: gcDNA
+
+
+
+
+bowtie:
+  index: /DATA/usr/c.leemans/data/hg38/hg38_1-22_XYM
+  options:
+      '1': ['--very-sensitive']
+      '2': ['--very-sensitive-local']
+
+
+max_dist:
+    '1': 500
+    '2': 20
+
+parser: ~t.v.schaik/mydata/modules/read-parsing/read_parser.py

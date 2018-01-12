@@ -21,6 +21,7 @@
 ###############################
 outdir: 'cl20170929_TTRIP_K562'
 
+
 groups:
   - [POI, G9a, KRAB, CBX]
   - [condition, GAL4-POI, POI, GAL4]

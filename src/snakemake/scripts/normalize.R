@@ -5,6 +5,8 @@ cDNA_input = read.table(args[1], col.names=c('barcode','count', 'other_list'),
 gDNA_input = read.table(args[2], col.names=c('barcode','count', 'other_list'),
                         stringsAsFactors=F, fill=T)
 
+
+
 if (length(args) == 4){
   spike_input = read.table(args[3], col.names=c('barcode','count', 'other_list'),
                            stringsAsFactors=F, fill=T)
@@ -14,11 +16,17 @@ if (length(args) == 4){
   output = args[3]
 }
 
-match_vec = match(cDNA_input$barcode, gDNA_input$barcode)
-count_table = cbind.data.frame(cDNA_input$count, gDNA_input$count[match_vec])
+
+gDNA_data = gDNA_input[gDNA_input$count > 0,]
+match_vec = match(cDNA_input$barcode, gDNA_data$barcode)
+cDNA_data = cDNA_input[!is.na(match_vec), ]
+
+count_table = cbind.data.frame(cDNA_data$count,
+                               gDNA_data$count[match_vec[!is.na(match_vec)]])
 cpm_table = t(t(count_table) / colSums(count_table) * 1000000)
 normalized_by_gDNA = cpm_table[,1] / cpm_table[,2]
-output_data = cbind.data.frame(cDNA_input$barcode, count_table, cpm_table, normalized_by_gDNA)
+output_data = cbind.data.frame(cDNA_data$barcode, count_table, cpm_table,
+                               normalized_by_gDNA)
 colnames(output_data) = c('barcode', 'cDNA_count', 'gDNA_count', 'cDNA_cpm', 'gDNA_cpm', 'normalized_by_gDNA')
 if (length(args)==4){
   output_data$normalized_by_spike = output_data$normalized_by_gDNA / spike_sum * 1000000
