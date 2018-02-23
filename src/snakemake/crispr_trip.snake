@@ -144,9 +144,9 @@ rule parse_mutation:
         structure = params.structure % params.type_dict[wildcards.name][1]
         if params.type_dict[wildcards.name][1] == 0:
             structure = re.sub('index.*\n', '', structure)
-        with open(output.structure[0], 'w') as f:
+        with open(output.structure, 'w') as f:
             f.write(structure)
-        shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -s -l {log} '
+        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -s -l {log} '
               '-b mutation.{wildcards.name} {input} {output.structure} {params.outdir}')
 
 
@@ -171,7 +171,7 @@ rule parse_mapping:
         structure = structure.replace('\\', '')
         if params.type_dict[wildcards.name][1] == 0:
             structure = re.sub('index.*\n', '', structure)
-        with open(output.structure[0], 'w') as f:
+        with open(output.structure, 'w') as f:
             f.write(structure)
-        shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
+        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
               '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')
