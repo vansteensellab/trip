@@ -158,6 +158,9 @@ index:
             A: [TACAGATCGT, CGTGTCTCTA]
             B: [TACGCTGTCT, CTCGCGTGTC]
 
+
+
+
 lev_dist: 2
 
 min_count:

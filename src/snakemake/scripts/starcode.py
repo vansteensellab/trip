@@ -52,7 +52,7 @@ genuine = open(snakemake.output.gen, 'w')
 mutated = open(snakemake.output.mut, 'w')
 count = open(snakemake.output.count, 'w')
 if use_other:
-    notg = open(snakemake.output.not_other, 'w')
+    notg = open(snakemake.params.not_other, 'w')
 for line in outs.decode('UTF-8').split('\n'):
     line_split = line.split('\t')
     barcode = line_split[0]
@@ -88,7 +88,7 @@ for line in outs.decode('UTF-8').split('\n'):
 mutated.close()
 genuine.close()
 if use_other:
-    with open(snakemake.output.not_this, 'w') as notc:
+    with open(snakemake.params.not_this, 'w') as notc:
         for barcode in barcode_set:
             notc.write(barcode)
             notc.write('\n')
