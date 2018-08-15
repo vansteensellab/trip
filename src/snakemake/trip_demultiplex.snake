@@ -81,6 +81,7 @@ def get_annotation_input(config, outdir):
     signal_regex = '%s/signal/%s_%s_%i.txt'
     dam_regex = '%s/dam/%s_%s_%i.txt'
     chip_regex = '%s/chip/means/%s_%i_%s_%s_%s.txt'
+    sure_regex = '%s/SuRE/%s_%i.txt'
     peak_regex = '%s/chip/nearest_peaks/%s_%s_%s_%s.txt'
     domain_regex = '%s/chip/%s/%s_%s_%s_%s.txt'
     hic_regex = '%s/hic_compaction/%s_%i_%i.txt'
@@ -101,6 +102,9 @@ def get_annotation_input(config, outdir):
             for max_dist in config['annotation']['hic_compaction']['max_dist']:
                 for window in config['annotation']['hic_compaction']['window']:
                     yield(hic_regex % (outdir, name, max_dist, window))
+        if 'sure' in config['annotation']:
+            for window in config['signal_window']:
+                yield(sure_regex % (outdir, name, window))
         if config['annotation']['chip']:
             for exp_list in iter_expirements(config, config['celltype']):
                 ct, experiment, target, sample, info = exp_list
@@ -228,6 +232,20 @@ def get_signal_bw(config):
         return('')
 
 
+def get_sure_bw(config):
+    if 'sure' in config['annotation']:
+        file_list = config['annotation']['sure'].values()
+        return('/'.join((config['sure_dir'], filename))
+               for filename in file_list)
+    else:
+        return('')
+
+def get_sure_dict(config):
+    if 'sure' in config['annotation']:
+        return(config['annotation']['sure'])
+    else:
+        return('')
+
 def get_call(config, wildcards):
     file_list = config['annotation']['calls'][wildcards.calls]
     return('/'.join((config['dam_dir'], file_name)) for file_name in file_list)
@@ -276,6 +294,31 @@ if 'annotation' in config:
             "                                -w {params.window}"
             "                                -d {params.max_dist}"
             "                                -o {output}"
+    rule sure:
+        input:
+            bed="{outdir}/region/{name}_{window}.bed",
+            bw=get_sure_bw(config)
+        output:
+            '{outdir}/SuRE/{name}_{window}.npz',
+            '{outdir}/SuRE/{name}_{window}.txt'
+        params:
+            bw_dict=get_sure_dict(config),
+            sure_dir=config['sure_dir']
+        threads:
+            5
+        run:
+            key_list = list(params.bw_dict.keys())
+            bw_str = ' '.join(['/'.join((params.sure_dir, params.bw_dict[key]))
+                               for key in key_list])
+            label = ' '.join(key_list)
+            command = ("multiBigwigSummary BED-file -p %s"
+                       "                            --BED %s"
+                       "                            -l %s"
+                       "                            -b %s"
+                       "                            -out %s"
+                       "                            --outRawCounts %s")
+            shell(command % (threads, input.bed, label, bw_str,
+                             output[0], output[1]))
     rule calls:
         input:
             "{outdir}/sites/{name}_{bio}.bed",
@@ -541,6 +584,8 @@ def get_starcode_input(config, wildcards):
                                          wildcards.name, wildcards.bio,
                                          wildcards.rep))
     if config['starcode_params']['options'][pick]['use_other']:
+        print('%s/%s/%s_%s.starcode.count' % (wildcards.outdir, other,
+                                              wildcards.name, wildcards.bio))
         yield('%s/%s/%s_%s.starcode.count' % (wildcards.outdir, other,
                                               wildcards.name, wildcards.bio))
 
@@ -697,7 +742,7 @@ for data_type in config['paired_end']:
                 structure = params.struct_dict['options'][pick].replace('\\', '')
                 with open(output.structure, 'w') as f:
                     f.write(structure)
-                shell('{params.parser} -r -x -l {log} -b {params.data_type}/'
+                shell('{params.parser} -a -n 1000000000000000 -r -x -l {log} -b {params.data_type}/'
                       '{wildcards.name}_{wildcards.bio}_r{wildcards.rep} '
                       '{input} {output.structure} {params.outdir}')
 
@@ -768,35 +813,36 @@ if 'input_file' in config:
                           '{params.outdir}/raw_data/')
 
 
-def get_demulti_single(config, wildcards):
-    demulti_dict = config['demultiplexed_input']
-    input_list = demulti_dict[wildcards.datatype][wildcards.name][wildcards.bio]
-    input_file = input_list[int(wildcards.rep) - 1]
-    return('%s/%s' % (config['demultiplexed_indir'], input_file))
+if 'demultiplexed_input' in config:
+    def get_demulti_single(config, wildcards):
+        demulti_dict = config['demultiplexed_input']
+        input_list = demulti_dict[wildcards.datatype][wildcards.name][wildcards.bio]
+        input_file = input_list[int(wildcards.rep) - 1]
+        return('%s/%s' % (config['demultiplexed_indir'], input_file))
 
-rule input_demulti_single:
-    input:
-        lambda wildcards: get_demulti_single(config, wildcards)
-    output:
-        '{outdir}/raw_data/{datatype}/{name}_{bio}_r{rep}.fastq.gz'
-    wildcard_constraints:
-        rep="\d+"
-    shell:
-        "ln {input} {output}"
+    rule input_demulti_single:
+        input:
+            lambda wildcards: get_demulti_single(config, wildcards)
+        output:
+            '{outdir}/raw_data/{datatype}/{name}_{bio}_r{rep}.fastq.gz'
+        wildcard_constraints:
+            rep="\d+"
+        shell:
+            "ln {input} {output}"
 
-def get_demulti_pair(config, wildcards):
-    demulti_dict = config['demultiplexed_input']
-    input_list = demulti_dict[wildcards.datatype][wildcards.name][wildcards.bio]
-    input_file = input_list[int(wildcards.rep) - 1][int(wildcards.pair) - 1]
-    return('%s/%s' % (config['demultiplexed_indir'], input_file))
+    def get_demulti_pair(config, wildcards):
+        demulti_dict = config['demultiplexed_input']
+        input_list = demulti_dict[wildcards.datatype][wildcards.name][wildcards.bio]
+        input_file = input_list[int(wildcards.rep) - 1][int(wildcards.pair) - 1]
+        return('%s/%s' % (config['demultiplexed_indir'], input_file))
 
-rule input_demulti_paired:
-    input:
-        lambda wildcards: get_demulti_pair(config, wildcards)
-    output:
-        '{outdir}/raw_data/{datatype}/{name}_{bio}_r{rep}.{pair}.fastq.gz'
-    wildcard_constraints:
-        rep="\d+",
-        pair="\d+"
-    shell:
-        "ln {input} {output}"
+    rule input_demulti_paired:
+        input:
+            lambda wildcards: get_demulti_pair(config, wildcards)
+        output:
+            '{outdir}/raw_data/{datatype}/{name}_{bio}_r{rep}.{pair}.fastq.gz'
+        wildcard_constraints:
+            rep="\d+",
+            pair="\d+"
+        shell:
+            "ln {input} {output}"
