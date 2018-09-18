@@ -1,0 +1,26 @@
+experiment:
+    clone_trip:
+        CM1420:
+            - 4287_7_CM1420_r1_CGATGTA_S43_L004_R1_001.fastq.gz
+            - 4287_8_CM1420_r2_TGACCAA_S44_L004_R1_001.fastq.gz
+        CM1417:
+            - 4287_5_CM1417_r1_ACTGATA_S41_L004_R1_001.fastq.gz
+            - 4287_6_CM1417_r2_ATTCCTT_S42_L004_R1_001.fastq.gz
+        WT:
+            - 4287_9_WT_r1_ACAGTGA_S45_L004_R1_001.fastq.gz
+            - 4287_10_WT_r2_GCCAATA_S46_L004_R1_001.fastq.gz
+
+outdir: /DATA/usr/c.leemans/projects/trip/cl20180807_trip_mESC_rnaseq/results
+
+local_dir: /DATA/usr/c.leemans/projects/trip/cl20180807_trip_mESC_rnaseq/F1ES_clones_TRIP_RNAseq
+gtf: /DATA/usr/c.leemans/projects/trip/cl20180807_trip_mESC_rnaseq/gencode.vM18.egfp.gtf
+
+source:
+    clone_trip: local
+
+
+genome_dir:
+    /DATA/usr/c.leemans/projects/trip/cl20180807_trip_mESC_rnaseq/genome
+
+is_paired:
+    clone_trip: False

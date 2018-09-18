@@ -11,6 +11,9 @@ path = os.path.dirname(os.path.abspath(filename))
 # date = datetime.datetime.now()
 # date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
 
+
+
+
 rule all:
     input:
         expand('{outdir}/mutation/{name}.genuine_mapped.table', outdir=config['out_dir'],
