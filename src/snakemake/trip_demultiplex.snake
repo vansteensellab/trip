@@ -134,7 +134,7 @@ def _get_input(config, datatype, outdir):
             for ip in get_annotation_input(config, outdir):
                 yield(ip)
         else:
-            for name in get_rep_input(config, 'mapping'):
+            for name in get_comb_input(config, 'mapping'):
                 yield('%s/mapping/%s.2.table' % (outdir, name))
     elif datatype == 'cDNA':
         for name in get_rep_input(config, 'cDNA'):
@@ -175,6 +175,11 @@ if 'pDNA' in config['structure']['pick']:
     rule pdna_only:
         input:
             [ip for ip in get_input(config, 'pDNA', OUTDIR)]
+
+if 'mapping' in config['structure']['pick']:
+    rule mapping_only:
+        input:
+            [ip for ip in get_input(config, 'mapping', OUTDIR)]
 
 
 def get_dam_label(config, wildcards):
@@ -332,11 +337,9 @@ if 'annotation' in config:
 
 def get_region_input(config, wildcards):
     map_dict = config['starcode_params']['pick']['mapping']
-    r_len = len(map_dict[wildcards.name][wildcards.bio])
-    for i in range(0, r_len):
-        yield("%s/mapping/%s_%s_r%i.2.table" % (wildcards.outdir,
-                                                wildcards.name,
-                                                wildcards.bio, i + 1))
+    yield("%s/mapping/%s_%s.2.table" % (wildcards.outdir,
+                                        wildcards.name,
+                                        wildcards.bio))
 rule region_bed:
     input:
         "{outdir}/sites/{name}_{bio}.bed"
@@ -361,21 +364,18 @@ rule map_bed:
 if 'mapping' in config['structure']['pick']:
     rule parse_sam:
         input:
-            bam='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.bam',
-            count='{outdir}/mapping/{name}_{bio}_r{rep}.starcode.count',
-            mutated='{outdir}/mapping/{name}_{bio}_r{rep}.genuine.cut'
+            bam='{outdir}/mapping/{name}.{num}.bam',
+            count='{outdir}/mapping/{name}.starcode.count',
+            mutated='{outdir}/mapping/{name}.genuine.cut'
         output:
-            bed='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.bed',
-            table='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.table',
-            stats='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.parse_stat.table',
-            length='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.length.table',
-            remap_fq='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.remap.fastq.gz',
-            remap='{outdir}/mapping/{name}_{bio}_r{rep}.{num}.remap.bam'
+            bed='{outdir}/mapping/{name}.{num}.bed',
+            table='{outdir}/mapping/{name}.{num}.table',
+            stats='{outdir}/mapping/{name}.{num}.parse_stat.table',
+            length='{outdir}/mapping/{name}.{num}.length.table',
+            remap_fq='{outdir}/mapping/{name}.{num}.remap.fastq.gz',
+            remap='{outdir}/mapping/{name}.{num}.remap.bam'
         wildcard_constraints:
-            name="[^_]+",
-            bio="[^_]+",
-            num="\d+",
-            rep="\d+"
+            num="\d+"
         params:
             bowtie_index = config['bowtie']['index'],
             options = lambda wildcards: config['bowtie']['options'][wildcards.num],
@@ -383,6 +383,28 @@ if 'mapping' in config['structure']['pick']:
         threads: 3
         script:
             'scripts/parse_sam.py'
+
+    def get_rep_bam(config, wildcards):
+        map_pick = config['starcode_params']['pick']['mapping']
+        r = len(map_pick[wildcards.name][wildcards.bio])
+        for i in range(1, (r+1)):
+            yield('%s/mapping/%s_%s_r%i.%s.bam' % (wildcards.outdir,
+                                                   wildcards.name,
+                                                   wildcards.bio,
+                                                   i, wildcards.num))
+
+
+    rule combine_bam:
+        input:
+            lambda wildcards: get_rep_bam(config, wildcards)
+        output:
+            '{outdir}/mapping/{name}_{bio}.{num}.bam'
+        wildcard_constraints:
+            name="[^_]+",
+            bio="[^_]+",
+            num="\d+"
+        shell:
+            "samtools merge {output} {input}"
 
     rule align:
         input:
@@ -584,8 +606,6 @@ def get_starcode_input(config, wildcards):
                                          wildcards.name, wildcards.bio,
                                          wildcards.rep))
     if config['starcode_params']['options'][pick]['use_other']:
-        print('%s/%s/%s_%s.starcode.count' % (wildcards.outdir, other,
-                                              wildcards.name, wildcards.bio))
         yield('%s/%s/%s_%s.starcode.count' % (wildcards.outdir, other,
                                               wildcards.name, wildcards.bio))
 

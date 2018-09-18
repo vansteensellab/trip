@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 library(rtracklayer)
 library(plyr)
+options(scipen=999)
 args = commandArgs(trailingOnly=T)
 #
 # args = c('/DATA/usr/c.leemans/projects/trip/cl20180409_TRIP_K562_evsr/mapping/11_A_r1.2.table',
