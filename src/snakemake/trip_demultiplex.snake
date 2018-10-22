@@ -66,6 +66,13 @@ if 'chip_config' in config:
                 config['bed_summary'][label] = '%s/region/%s.bed' % (OUTDIR,
                                                                      label)
             config['bed_summary'][name] = '%s/sites/%s.bed' % (OUTDIR, name)
+        config['bed_nearest_domains'] = {}
+        for name in get_comb_input(config, 'mapping'):
+            for window in config['signal_window']:
+                label = '%s_%i' % (name, window)
+                config['bed_nearest_domains'][label] = '%s/region/%s.bed' % (OUTDIR,
+                                                                     label)
+            config['bed_nearest_domains'][name] = '%s/sites/%s.bed' % (OUTDIR, name)
 
 
     with open(config['chip_align_config']) as c:
@@ -119,13 +126,16 @@ def get_annotation_input(config, outdir):
         if config['annotation']['chip_domains']:
             for exp_list in iter_expirements(config, config['celltype']):
                 ct, experiment, target, sample, info = exp_list
-                yield(domain_regex % (outdir, 'domains_call', name, experiment,
-                                      target, sample))
-                yield(domain_regex % (outdir, 'nearest_domains', name, experiment,
-                                      target, sample))
+                # yield(domain_regex % (outdir, 'domains_call', name, experiment,
+                #                       target, sample))
+                for width in info['hiddendomain_width']:
+                    near_dir = 'nearest_domains-%i-%s' % (width,
+                                                          info['hiddendomain_p'])
+                    yield(domain_regex % (outdir, near_dir, name, experiment,
+                                          target, sample))
+
         if 'lad_count' in config:
             yield('%s/lad_count/%s.txt' % (outdir, name))
-
 
 
 def _get_input(config, datatype, outdir):
@@ -762,9 +772,10 @@ for data_type in config['paired_end']:
                 structure = params.struct_dict['options'][pick].replace('\\', '')
                 with open(output.structure, 'w') as f:
                     f.write(structure)
-                shell('{params.parser} -a -n 1000000000000000 -r -x -l {log} -b {params.data_type}/'
-                      '{wildcards.name}_{wildcards.bio}_r{wildcards.rep} '
-                      '{input} {output.structure} {params.outdir}')
+                shell('{params.parser} -a -n 1000000000000000 -r -x -l {log} '
+                      '-b {params.data_type}/{wildcards.name}_{wildcards.bio}_'
+                      'r{wildcards.rep} {input} {output.structure} '
+                      '{params.outdir}')
 
 
 def get_input(config, input_label):
