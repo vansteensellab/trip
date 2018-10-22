@@ -1,0 +1,4 @@
+ID      5'      3'      type    req     second-read     pos   keep-bases
+tn5 TCGTCGGCAGCGTCAGATGTGTATAAGAGACAG - const - False var -
+index left:GTACGTCACAATATGATTATCTTTCTAG,right:CGTCAATTTTACGCAGACTATCTTTCTAG - index present True fixed -
+constant GGTTAA - const present True fixed -
