@@ -1,0 +1,487 @@
+import getpass
+import datetime
+import inspect
+import os
+import re
+from Bio.Seq import Seq
+
+filename = inspect.getframeinfo(inspect.currentframe()).filename
+path = os.path.dirname(os.path.abspath(filename))
+samtools = config['samtools']
+
+# user = getpass.getuser()
+# date = datetime.datetime.now()
+# date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
+# OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
+OUTDIR = ''.join(('cl20170717','_', config["dir_suffix"], '/results'))
+
+
+name_list = [key.replace('_fwd','') for key in config['input_file'].keys() if key.endswith('fwd')]
+
+rule all:
+    input:
+        expand('%s/fasta/{name}.1.bt2' % OUTDIR,
+               name=name_list)
+
+rule map_to_mm10:
+    input:
+        expand('%s/mapped/{name}_mm10.bam' % OUTDIR,
+               name=config['input_file'].keys())
+
+rule link_old:
+    input:
+        expand('%s/barcode/{name}.bed' % OUTDIR,
+               name=list(config['old_mapping'].keys()) +
+                    list(config['oldschool_mapping'].keys()))
+
+## map to Tn5 reference
+rule link_bc:
+    input:
+        expand('%s/new_mapping/{name}.txt' % OUTDIR,
+               name=config['ipcr'].keys())
+
+# samtools mpileup -t AD -v -u -r 1:36684004-36684702 -f ~/data/GRCm38/GRCm38_129S1.fa cl20170619_tn5/results/sorted/CM1410_fwd.bam | awk '{match($8, "QS=([0-9.]*)",arr); print $1 "\t" arr[1]}' | less
+#
+rule omar_ipcr:
+    input:
+        expand('%s/strainspecific_ipcr/{name}.bedpe' % (OUTDIR),
+               name=config['ipcr'].keys())
+
+## normal IPCR mapping
+rule ipcr:
+    input:
+        expand('{outdir}/insertions_ipcr/{name}_ipcr.txt', outdir=OUTDIR,
+               name=config['ipcr'].keys())
+
+rule mapping_table:
+    input:
+        '%s/new_barcode/{name}.txt' % (OUTDIR)
+    output:
+        '%s/new_mapping/{name}.txt' % (OUTDIR)
+    shell:
+        "awk '{{if ($2 > 5){{print $0}}}}' {input} | sort -k3,3 -k1,1nr | "
+        "awk '"
+        "BEGIN{{"
+        "   print \"#barcode\tspecies\tchr\tori\tpos\treads\tfreq_1\tfreq_2\""
+        "}}"
+        "{{"
+        "   if (NR==1 && $2>0){{"
+        "       bc = $3;"
+        "       second=0;"
+        "       printf \"%s\t%s\t%s\t%i\t%s\t%i\t%.3f\", bc, $6, $4, $5, $7, $2, $1/$2 "
+        "   }} else if (bc != $3 && $2 > 0){{"
+        "       if (second==0){{"
+        "           printf \"\\t%i\\n\", 0;"
+        "       }}"
+        "       bc = $3;"
+        "       second=0;"
+        "       printf \"%s\t%s\t%s\t%i\t%s\t%i\t%.3f\", bc, $6, $4, $5, $7, $2, $1/$2 "
+        "   }} else if (bc == $3 && second==0){{"
+        "       printf \"\\t%.3f\\n\", $1/$2;"
+        "       second=1"
+        "   }}"
+        "}}' > {output}"
+
+
+rule link_barcode:
+    input:
+        bam='%s/ipcr/{name}.bam' % (OUTDIR),
+        starcode='%s/ipcr/{name}.starcode' % (OUTDIR)
+    output:
+        '%s/new_barcode/{name}.txt' % (OUTDIR)
+    shell:
+        "awk -F'[\\t_]' '{{"
+        "   if (NR==FNR){{"
+        "       a[$1] = $2"
+        "   }} else {{"
+        "       if ($3==16){{"
+        "           sign=\"-\""
+        "       }} else if ($3==0){{"
+        "           sign=\"+\""
+        "       }} else {{"
+        "           sign=\"*\""
+        "       }}"
+        "       if ($2 in a){{"
+        "           print a[$2]\"\\t\"$2\"\\t\"$4\"\\t\"$5\"\\t\"$6\"\\t\"sign"
+        "       }}"
+        "   }}"
+        "}}' {input.starcode} <({samtools} view {input.bam}) | "
+        "sort -k2,3 | uniq -c -f 1 > {output}"
+
+
+
+
+rule starcode:
+    input:
+        '%s/ipcr/{name}.bam' % (OUTDIR)
+    output:
+        '%s/ipcr/{name}.starcode' % (OUTDIR)
+    params:
+        lev_dist=3
+    threads: 10
+    shell:
+        "{samtools} view {input} | awk -F'[\t_]' '{{print $2}}' | "
+        "/home/NFS/users/c.leemans/Programs/starcode/starcode"
+        " --print-clusters -d {params.lev_dist} -t {threads} -s > {output}"
+
+rule map_barcodes:
+    input:
+        ipcr=lambda wildcards: config['ipcr'][wildcards.name]['rev'],
+        fasta='%s/fasta/{name}.fa' % (OUTDIR),
+        bt='%s/fasta/{name}.1.bt2' % (OUTDIR)
+    params:
+        mapper = config["mapper"],
+        index= '%s/fasta/{name}' % (OUTDIR)
+    threads: 2
+    log:
+        '%s/ipcr/{name}.log' % (OUTDIR)
+    output:
+        '%s/ipcr/{name}.bam' % (OUTDIR)
+    shell:
+        "gunzip -c {input.ipcr} | "
+        "awk '{{"
+        "       step=NR%4;"
+        "       if (step==0 && length(a[2])>6){{"
+        "           for (i in a){{"
+        "               print a[i]"
+        "           }}"
+        "           print $0;"
+        "           hit+=1;"
+        "       }} else if (step!=0){{"
+        "           a[step]=$0;"
+        "       }} else {{"
+        "           short+=1"
+        "       }}"
+        "}} END {{"
+        "print \"filtering before mapping with bowtie2:\" > \"{log}\"; "
+        "printf \"%i\\treads; of these:\\n\", hit+short > \"{log}\"; "
+        "printf \"  %i (%2.2f%%) were long enough (> 6bp)\\n\", hit, hit/(hit+short)*100 > \"{log}\"; "
+        "printf \"  %i (%2.2f%%) were too short (<= 6bp)\\n\\n\", short, short/(hit+short)*100 > \"{log}\"; "
+        "print \"stats from bowtie2:\" > \"{log}\"; "
+        "}}' | "
+        "({params.mapper} -p {threads} --very-sensitive "
+        "-x {params.index} -U -) 2> {log} | "
+        "{samtools} view -Sb - > {output}"
+
+
+rule link_old_barcode:
+    input:
+        old='%s/old_mapping/{name}.bed' % (OUTDIR),
+        tn5='%s/insertions/{name}.bed' % (OUTDIR)
+    output:
+        '%s/barcode/{name}.bed' % (OUTDIR)
+    shell:
+        "bedtools closest -d -a {input.old} -b {input.tn5} | "
+        "awk -F'[\t_]' '{{"
+        "if ($11!=-1 && $12 < 5){{"
+        "print $1\"\t\"$2\"\t\"$3\"\t\"$5\"_\"$11\"\t\"$4}}}}' > {output}"
+
+
+rule old_mapping_bed:
+    input:
+        lambda wildcards: config['old_mapping'][wildcards.name]
+    output:
+        '%s/old_mapping/{name}.bed' % (OUTDIR)
+    shell:
+        "tail -n+2 {input} | awk '{{"
+        "if ($12 != \"NA\" && $12 > 3){{"
+        "gsub(\"chr\",\"\",$9); "
+        "print $9\"\t\"$11\"\t\"$11\"\t\"$10\"\t\"$1}}}}' | "
+        "bedtools sort -i - > {output}"
+
+rule oldschool_mapping_bed:
+    input:
+        lambda wildcards: config['oldschool_mapping'][wildcards.name]
+    output:
+        '%s/old_mapping/{name}.bed' % (OUTDIR)
+    shell:
+        "tail -n+2 {input} | awk '{{"
+        "if ($11 != \"*\" && $11 != \"NA\"){{"
+        "gsub(\"chr\",\"\",$11); "
+        "print $11\"\t\"$13\"\t\"$13\"\t\"$12\"\t\"$1}}}}' | "
+        "bedtools sort -i - > {output}"
+
+
+rule index_fasta:
+    input:
+        '%s/fasta/{name}.fa' % (OUTDIR)
+    output:
+        '%s/fasta/{name}.1.bt2' % (OUTDIR)
+    params:
+        '%s/fasta/{name}' % (OUTDIR)
+    shell:
+        "bowtie2-build -f {input} {params}"
+
+rule combine_fasta:
+    input:
+        expand('%s/insertions/{{name}}_{species}.fa' % (OUTDIR),
+               species=config['genomes'].keys())
+    output:
+        '%s/fasta/{name}.fa' % (OUTDIR)
+    shell:
+        "cat {input} > {output}"
+
+rule extract_intersections:
+    input:
+        bed='%s/insertions/{name}.bed' % (OUTDIR),
+        fasta=lambda wildcards: config['genomes'][wildcards.species]
+    output:
+        '%s/insertions/{name}_{species}.fa' % (OUTDIR)
+    params:
+        '{species}'
+    shell:
+        "if grep '{params}' {input.bed}; then "
+        "grep '{params}' {input.bed} | bedtools getfasta -name -fi {input.fasta} "
+        "-bed /dev/stdin -fo {output}; else touch {output}; fi"
+
+rule insertions_bed:
+    input:
+        '%s/insertions/{name}.txt' % (OUTDIR)
+    output:
+        '%s/insertions/{name}.bed' % (OUTDIR)
+    shell:
+        "{path}/bed_insertions.awk {input} > {output}"
+
+rule call_insertions:
+    input:
+        regions='%s/regions/{name}_combined.txt' % (OUTDIR),
+        fwd='%s/sorted/{name}_fwd.bam' % (OUTDIR),
+        rev='%s/sorted/{name}_rev.bam' % (OUTDIR)
+    output:
+        '%s/insertions/{name}.txt' % (OUTDIR)
+    params:
+        samtools=samtools,
+        genomes=config['genomes']
+    script:
+        "call_insertions.py"
+
+rule call_insertions_ipcr:
+    input:
+        regions_fwd='%s/ipcr_table/{name}.fwd.table' % (OUTDIR),
+        regions_rev='%s/ipcr_table/{name}.rev.table' % (OUTDIR),
+        fwd='%s/ipcr_final_bam/{name}.fwd.bam' % (OUTDIR),
+        rev='%s/ipcr_final_bam/{name}.rev.bam' % (OUTDIR)
+    output:
+        '%s/insertions_ipcr/{name}_ipcr.txt' % (OUTDIR)
+    params:
+        samtools=samtools,
+        genomes=config['genomes']
+    script:
+        "call_insertions_ipcr.py"
+
+rule call_regions:
+    input:
+        '%s/regions/{name}_fwd.bed' % (OUTDIR),
+        '%s/regions/{name}_rev.bed' % (OUTDIR)
+    output:
+        '%s/regions/{name}_combined.txt' % (OUTDIR)
+    params:
+        max_gap= config['max_gap']
+    shell:
+        "{path}/call_regions.sh {input[0]} {input[1]} {params.max_gap} > {output}"
+
+
+rule depth:
+    input:
+        bed='%s/combined/{name}.bed' % (OUTDIR),
+        genome=config['chrom_sizes']
+    output:
+        '%s/regions/{name}.bed' % (OUTDIR)
+    shell:
+        "bedtools genomecov -bg -i {input.bed} -g {input.genome} | "
+        "{path}/combine_depth.awk > {output}"
+
+rule sort_and_index:
+    input:
+        '%s/combined/{name}.filtered.bam' % (OUTDIR)
+    output:
+        '%s/sorted/{name}.bam' % (OUTDIR),
+        '%s/sorted/{name}.bam.bai' % (OUTDIR)
+    threads: 10
+    shell:
+        "{samtools} sort -@ {threads} {input} > {output[0]}; "
+        "{samtools} index {output[0]}"
+
+
+rule bamToBed:
+    input:
+        '%s/combined/{name}.filtered.bam' % (OUTDIR)
+    output:
+        '%s/combined/{name}.bed' % (OUTDIR)
+    params:
+        max_dist = config['max_pair_dist']
+    log:
+        '%s/combined/{name}.log' % (OUTDIR)
+    shell:
+        "bamToBed -bedpe -i {input} | {path}/combine_pairs.awk "
+        "-v max_dist={params.max_dist} 2> {log} | "
+        "bedtools sort -i /dev/stdin > {output}"
+
+
+
+rule combine:
+    input:
+        bam=expand('%s/mapped/{{name}}_{species}.bam' % (OUTDIR), species=config['bowtie_index'].keys())
+    output:
+        '%s/combined/{name}.filtered.bam' % (OUTDIR)
+    script:
+        'combine_bam.py'
+
+
+ruleorder: map_reads > map_mm10
+
+rule strainspecific_ipcr:
+    input:
+        fq=lambda wildcards: config['ipcr'][wildcards.name].values(),
+        bam=expand("%s/ipcr_combined/{{name}}_{direction}.filtered.bam" % (OUTDIR),
+                   direction=list(config['ipcr'].values())[0].keys()),
+        snp=config['snp_file']
+    output:
+        bedpe='%s/strainspecific_ipcr/strainSpecific_{name}.bedpe' % (OUTDIR),
+        bed=temp(expand('%s/strainspecific_ipcr/{{name}}_{direction}.bed' % (OUTDIR),
+                        direction=list(config['ipcr'].values())[0].keys()))
+    params:
+        o='%s/strainspecific_ipcr/' % (OUTDIR),
+        n='{name}'
+    shell:
+        "bamToBed -i {input.bam[0]} > {output.bed[0]}; "
+        "bamToBed -i {input.bam[1]} > {output.bed[1]}; "
+        "{path}/strainSpecific-iPCR.sh -s {input.snp} "
+        "                              -d {output.bed[0]}"
+        "                              -e {input.fq[0]}"
+        "                              -l {output.bed[1]}"
+        "                              -m {input.fq[1]}"
+        "                              -o {params.o}"
+        "                              -n {params.n}"
+
+rule merge_ipcr:
+    input:
+        map=expand('{outdir}/ipcr_combined/{{name}}_{{direction}}.filtered.bam', outdir=OUTDIR),
+        remap=expand('{outdir}/ipcr_table/{{name}}.{{direction}}.remap.bam', outdir=OUTDIR)
+    output:
+        '{outdir}/ipcr_final_bam/{name}.{direction}.bam',
+        '{outdir}/ipcr_final_bam/{name}.{direction}.bam.bai'
+    threads:
+        10
+    shell:
+        "awk '{{"
+        "   if ($1 ~ /^@/){{"
+        "       print $0"
+        "   }} else {{"
+        "       arr[$1] = $0"
+        "   }}"
+        "}}END{{"
+        "   for (key in arr){{"
+        "       print arr[key]"
+        "   }}"
+        "}}'  <({samtools} view -h {input.map}) "
+        "<(if [[ -s {input.remap} ]]; then {samtools} view {input.remap}; fi) | "
+        "{samtools} view -Sb - | {samtools} sort -@ {threads} - > {output[0]}; "
+        "{samtools} index {output[0]}"
+
+
+rule parse_sam:
+    input:
+        bam=expand('{outdir}/ipcr_combined/{{name}}_{{direction}}.filtered.bam', outdir=OUTDIR),
+        count=expand('{outdir}/ipcr/{{name}}.starcode', outdir=OUTDIR)
+    output:
+        bed='{outdir}/ipcr_table/{name}.{direction}.bed',
+        table='{outdir}/ipcr_table/{name}.{direction}.table',
+        stats='{outdir}/ipcr_table/{name}.{direction}.parse_stat.table',
+        length='{outdir}/ipcr_table/{name}.{direction}.length.table',
+        remap_fq='{outdir}/ipcr_table/{name}.{direction}.remap.fastq.gz',
+        remap='{outdir}/ipcr_table/{name}.{direction}.remap.bam'
+    params:
+        bowtie_index = config['mm10']['index'],
+        options={'fwd':['--very-sensitive'], 'rev':['--very-sensitive']},
+        max_dist = config['max_dist'],
+        num='{direction}'
+    threads: 10
+    script:
+        '/home/NFS/users/c.leemans/projects/trip/src/snakemake/scripts/parse_sam.py'
+
+rule combine_ipcr:
+    input:
+        bam=expand('%s/ipcr_map/{{name}}_{species}_{{direction}}.bam' % (OUTDIR),
+                   species=config['bowtie_index'].keys())
+    output:
+        '%s/ipcr_combined/{name}_{direction}.filtered.bam' % (OUTDIR)
+    script:
+        'combine_bam.py'
+
+
+rule map_ipcr:
+    input:
+        lambda wildcards: config['ipcr'][wildcards.name][wildcards.direction]
+    params:
+        mapper = config["mapper"],
+        index=lambda wildcards: config['bowtie_index'][wildcards.species]
+    threads: 10
+    log: "%s/ipcr_map/{name}_{species}_{direction}.mapping.log" % (OUTDIR)
+    output:
+        "%s/ipcr_map/{name}_{species}_{direction}.bam" % (OUTDIR)
+    shell:
+        "({params.mapper} -p {threads} --very-sensitive "
+        "-x {params.index} --reorder -U <(gunzip -c {input})) "
+        "2> {log} | {samtools} view -Sb - > {output}"
+
+rule map_reads:
+    input:
+        '%s/parsed/{name}.1.fastq.gz' % OUTDIR,
+        '%s/parsed/{name}.2.fastq.gz' % OUTDIR
+    params:
+        mapper = config["mapper"],
+        index=lambda wildcards: config['bowtie_index'][wildcards.species]
+    threads: 10
+    log: "%s/mapped/{name}_{species}.mapping.log" % (OUTDIR)
+    output:
+        "%s/mapped/{name}_{species}.bam" % (OUTDIR)
+    shell:
+        "({params.mapper} -p {threads} --very-sensitive "
+        "-x {params.index} --reorder -1 <(gunzip -c {input[1]}) "
+        "-2 <(gunzip -c {input[0]})) 2> {log} | {samtools} view -Sb - > {output}"
+
+rule map_mm10:
+    input:
+        '%s/{name}.1.fastq.gz' % OUTDIR,
+        '%s/{name}.2.fastq.gz' % OUTDIR
+    params:
+        mapper = config["mapper"],
+        index=config['mm10']['index']
+    threads: 10
+    log: "%s/mapped/{name}_mm10.mapping.log" % (OUTDIR)
+    output:
+        "%s/mapped/{name}_mm10.bam" % (OUTDIR)
+    shell:
+        "({params.mapper} -p {threads} --very-sensitive "
+        "-x {params.index} -1 <(gunzip -c {input[1]}) "
+        "-2 <(gunzip -c {input[0]})) 2> {log} | {samtools} view -Sb - | "
+        "{samtools} sort -@ {threads} > {output}; "
+        "{samtools} index {output}"
+
+
+rule parse_reads:
+    input:
+        lambda wildcards: config['input_file'][wildcards.name][0],
+    output:
+        '%s/parsed/{name}.statistics.txt' % (OUTDIR),
+        '%s/parsed/{name}.1.fastq.gz' % OUTDIR,
+        '%s/parsed/{name}.2.fastq.gz' % OUTDIR,
+        structure = '%s/parsed/{name}.structure.txt' % (OUTDIR)
+    log:
+        '%s/parsed/{name}_parser.log' % (OUTDIR)
+    params:
+        structure= config['structure'],
+        outdir = '%s/parsed/' % OUTDIR,
+        name= '{name}',
+        input_dict = config['input_file'],
+        primer_dict = config['primer']
+    run:
+        p_type=params.input_dict[wildcards.name][1]
+        primer = params.primer_dict[p_type]
+        primer_rev = str(Seq(primer).reverse_complement())
+        structure = params.structure % (primer_rev, primer)
+        with open(output.structure[0], 'w') as f:
+            f.write(structure)
+        shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -M 50 -a -l {log} -p {input[1]} '
+              '-b {wildcards.name} {input[0]} {output.structure} {params.outdir}')

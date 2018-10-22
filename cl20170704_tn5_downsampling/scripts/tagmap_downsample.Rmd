@@ -1,0 +1,84 @@
+
+
+# knitr document van Steensel lab
+
+# downsampling of tagmantation mapping
+## Christ Leemans, 20-07-2017
+
+## Introduction
+
+The normal procedure of locating trip integrations is by iPCR. However this is a relatively complicated technique and often a big part of your integrations is not mappable. The last of which proves especially troublesome in the variation on TRIP where clonal cell-lines in which each cell cary the same set of intergrations. These clonal lines are developed to investigate the effect of the integration of an active element on it's surrounding environment (e.g. lamina detachment).
+
+In this analysis barcodes are less informative and information on surrounding DNA is necesarry to assign each integration to a specific allele. IPCR therefore might be less suitable, but since missing the barcode is acceptable, another technique called tagmentation mapping is more attractive.
+
+In this report I would like to assess the minimal required read number and length per barcode in tagmentation mapping by downsampling and trimming reads.
+
+I used the following number of reads:
+```{r, echo=FALSE}
+cat(as.numeric(snakemake@params[['num_reads']]))
+```
+And the following read lengths:
+```{r, echo=FALSE}
+cat(snakemake@params[['read_length']])
+```
+
+## Input from snakemake
+
+```{r}
+options("scipen"=10)
+down_vec = snakemake@input[['downsample']]
+ref_vec = snakemake@input[['ref']]
+num_vec = snakemake@params[['num_reads']]
+length_vec = snakemake@params[['read_length']]
+name_vec = snakemake@params[['name_list']]
+
+COL_NAMES = c('seqnames', 'start', 'end', 'strand', 'allele', 'CAST_mut',
+              '129S1_mut', 'depth_fwd', 'depth_rev')
+
+get_down_list <- function(name, num_vec, length_vec, down_vec){
+
+    num_list = lapply(num_vec, function(num){
+            length_list = lapply(length_vec, function(len){
+                f_name=grep(paste(name, num, len, sep='_'), down_vec, value=T)
+                read.table(f_name, col.names=COL_NAMES)
+                })
+            names(length_list) = length_vec
+            return(length_list)
+        })
+    names(num_list) = num_vec
+    return(num_list)
+}
+
+downsample_list = lapply(name_vec,get_down_list,
+                         num_vec, length_vec, down_vec)
+names(downsample_list) = name_vec
+str(downsample_list)
+
+
+ref_list = lapply(name_vec, function(name, ref_vec){
+                      f_name = grep(name, ref_vec, value=T)
+                      print(f_name)
+                      read.table(f_name, col.names=COL_NAMES)
+                  }, ref_vec)
+names(ref_list) = name_vec
+str(ref_list)
+
+print(getwd())
+save(ref_list, downsample_list, file='temp.Rdata')
+```
+
+## Path, Libraries, Parameters and Useful Functions
+
+```{r}
+
+
+
+```
+
+
+
+## select reference sets
+```{r}
+
+
+```

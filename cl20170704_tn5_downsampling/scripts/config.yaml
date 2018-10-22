@@ -1,0 +1,95 @@
+
+structure: /DATA/usr/c.leemans/projects/trip/cl20170619_tn5/structure.txt
+
+dir_suffix: tn5
+
+mapper: bowtie2
+bowtie_index:
+  129S1: /DATA/usr/c.leemans/data/GRCm38/GRCm38_129S1
+  CAST: /DATA/usr/c.leemans/data/GRCm38/GRCm38_CAST
+
+outdir: /DATA/usr/c.leemans/projects/trip/cl20170704_tn5_downsampling/results
+indir: /DATA/usr/c.leemans/projects/trip/cl20170619_tn5/results
+refdir: /DATA/usr/c.leemans/projects/trip/cl20170717_tn5/results
+
+input_file:
+  CM1420_rev:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_11_CM1420_rev_TGCCGGTA-TAAGGCGA_S15_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_11_CM1420_rev_TGCCGGTA-TAAGGCGA_S15_L001_R2_001.fastq.gz]
+      - rev
+  CM1411_fwd:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_14_CM1411_fwd_AACAGCGG-CGTACTAG_S3_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_14_CM1411_fwd_AACAGCGG-CGTACTAG_S3_L001_R2_001.fastq.gz]
+      - fwd
+  CM1413_fwd:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_16_CM1413_fwd_TGGAAAGC-CGTACTAG_S17_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_16_CM1413_fwd_TGGAAAGC-CGTACTAG_S17_L001_R2_001.fastq.gz]
+      - fwd
+  CM1414_fwd:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_17_CM1414_fwd_AGCAACGC-CGTACTAG_S10_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_17_CM1414_fwd_AGCAACGC-CGTACTAG_S10_L001_R2_001.fastq.gz]
+      - fwd
+  CM1416_fwd:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_19_CM1416_fwd_CCCTCTTG-CGTACTAG_S19_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_19_CM1416_fwd_CCCTCTTG-CGTACTAG_S19_L001_R2_001.fastq.gz]
+      - fwd
+  CM1420_fwd:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_23_CM1420_fwd_TGCCGGTA-CGTACTAG_S23_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_23_CM1420_fwd_TGCCGGTA-CGTACTAG_S23_L001_R2_001.fastq.gz]
+      - fwd
+  CM1411_rev:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_2_CM1411_rev_AACAGCGG-TAAGGCGA_S5_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_2_CM1411_rev_AACAGCGG-TAAGGCGA_S5_L001_R2_001.fastq.gz]
+      - rev
+  CM1413_rev:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_4_CM1413_rev_TGGAAAGC-TAAGGCGA_S8_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_4_CM1413_rev_TGGAAAGC-TAAGGCGA_S8_L001_R2_001.fastq.gz]
+      - rev
+  CM1414_rev:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_5_CM1414_rev_AGCAACGC-TAAGGCGA_S9_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_5_CM1414_rev_AGCAACGC-TAAGGCGA_S9_L001_R2_001.fastq.gz]
+      - rev
+  CM1416_rev:
+      - [/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_7_CM1416_rev_CCCTCTTG-TAAGGCGA_S12_L001_R1_001.fastq.gz,/DATA/usr/r.kluin/Shares/M374_for_Laura_Brueckner/4481_7_CM1416_rev_CCCTCTTG-TAAGGCGA_S12_L001_R2_001.fastq.gz]
+      - rev
+
+
+
+snp_file: '/DATA/usr/j.yanez/hybridMouseESC-V2/raw/snpFile_129S1-CAST_mm10.txt'
+
+chrom_sizes: /DATA/usr/c.leemans/data/GRCm38/GRCm38_68.chrom.sizes
+
+genomes:
+    CAST: /DATA/usr/c.leemans/data/GRCm38/GRCm38_CAST.fa
+    129S1: /DATA/usr/c.leemans/data/GRCm38/GRCm38_129S1.fa
+
+mm10:
+    genome: /DATA/usr/c.leemans/data/GRCm38/GRCm38_68.fa
+    index:  /DATA/usr/c.leemans/data/GRCm38/GRCm38_68
+
+max_pair_dist: 1500
+
+read_length: [65, 100, 150, 250]
+num_reads: [100000, 50000, 10000, 1000]
+
+const_len:
+    1:
+        fwd: 33
+        rev: 33
+    2:
+        fwd: 28
+        rev: 29
+
+max_gap: 5
+
+max_dist:
+    fwd: 500
+    rev: 20
+
+min_depth: 5
+
+
+primer:
+    fwd: GTACGTCACAATATGATTATCTTTCTAG
+    rev: CGTCAATTTTACGCAGACTATCTTTCTAG
+
+structure: |
+    ID      5'      3'      type    req     second-read     pos   keep-bases
+    tn5_fwd TCGTCGGCAGCGTCAGATGTGTATAAGAGACAG - const - False var -
+    constant_rev - TTAACC%s const - False var -
+    constant1 %s - const present True fixed -
+    constant2 GGTTAA - const present True fixed -
+    tn5_rev - CTGTCTCTTATACACATCTGACGCTGCCGACGA const - True var -
+
+samtools: samtools

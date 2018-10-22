@@ -1,0 +1,174 @@
+
+structure: /home/NFS/users/c.leemans/projects/trip/cl20170619_tn5/structure.txt
+
+dir_suffix: tn5
+
+mapper: bowtie2-align
+bowtie_index:
+  129S1: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_129S1
+  CAST: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_CAST
+
+
+input_file:
+  CM1419_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_10_CM1419_rev_AGAAAGTG-TAAGGCGA_S11_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_10_CM1419_rev_AGAAAGTG-TAAGGCGA_S11_L001_R2_001.fastq.gz]
+      - rev
+  CM1420_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_11_CM1420_rev_TGCCGGTA-TAAGGCGA_S15_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_11_CM1420_rev_TGCCGGTA-TAAGGCGA_S15_L001_R2_001.fastq.gz]
+      - rev
+  CM1410_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_13_CM1410_fwd_GCACTCAG-CGTACTAG_S1_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_13_CM1410_fwd_GCACTCAG-CGTACTAG_S1_L001_R2_001.fastq.gz]
+      - fwd
+  CM1411_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_14_CM1411_fwd_AACAGCGG-CGTACTAG_S3_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_14_CM1411_fwd_AACAGCGG-CGTACTAG_S3_L001_R2_001.fastq.gz]
+      - fwd
+  CM1412_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_15_CM1412_fwd_CCATATGA-CGTACTAG_S6_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_15_CM1412_fwd_CCATATGA-CGTACTAG_S6_L001_R2_001.fastq.gz]
+      - rev
+  CM1413_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_16_CM1413_fwd_TGGAAAGC-CGTACTAG_S17_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_16_CM1413_fwd_TGGAAAGC-CGTACTAG_S17_L001_R2_001.fastq.gz]
+      - fwd
+  CM1414_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_17_CM1414_fwd_AGCAACGC-CGTACTAG_S10_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_17_CM1414_fwd_AGCAACGC-CGTACTAG_S10_L001_R2_001.fastq.gz]
+      - fwd
+  CM1415_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_18_CM1415_fwd_CCCTTGCA-CGTACTAG_S18_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_18_CM1415_fwd_CCCTTGCA-CGTACTAG_S18_L001_R2_001.fastq.gz]
+      - fwd
+  CM1416_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_19_CM1416_fwd_CCCTCTTG-CGTACTAG_S19_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_19_CM1416_fwd_CCCTCTTG-CGTACTAG_S19_L001_R2_001.fastq.gz]
+      - fwd
+  CM1410_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_1_CM1410_rev_GCACTCAG-TAAGGCGA_S2_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_1_CM1410_rev_GCACTCAG-TAAGGCGA_S2_L001_R2_001.fastq.gz]
+      - rev
+  CM1417_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_20_CM1417_fwd_TTCGAGCC-CGTACTAG_S20_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_20_CM1417_fwd_TTCGAGCC-CGTACTAG_S20_L001_R2_001.fastq.gz]
+      - fwd
+  CM1418_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_21_CM1418_fwd_AGTAGTTA-CGTACTAG_S21_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_21_CM1418_fwd_AGTAGTTA-CGTACTAG_S21_L001_R2_001.fastq.gz]
+      - fwd
+  CM1419_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_22_CM1419_fwd_AGAAAGTG-CGTACTAG_S22_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_22_CM1419_fwd_AGAAAGTG-CGTACTAG_S22_L001_R2_001.fastq.gz]
+      - fwd
+  CM1420_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_23_CM1420_fwd_TGCCGGTA-CGTACTAG_S23_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_23_CM1420_fwd_TGCCGGTA-CGTACTAG_S23_L001_R2_001.fastq.gz]
+      - fwd
+  CM1411_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_2_CM1411_rev_AACAGCGG-TAAGGCGA_S5_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_2_CM1411_rev_AACAGCGG-TAAGGCGA_S5_L001_R2_001.fastq.gz]
+      - rev
+  CM1412_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_3_CM1412_rev_CCATATGA-TAAGGCGA_S4_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_3_CM1412_rev_CCATATGA-TAAGGCGA_S4_L001_R2_001.fastq.gz]
+      - rev
+  CM1413_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_4_CM1413_rev_TGGAAAGC-TAAGGCGA_S8_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_4_CM1413_rev_TGGAAAGC-TAAGGCGA_S8_L001_R2_001.fastq.gz]
+      - rev
+  CM1414_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_5_CM1414_rev_AGCAACGC-TAAGGCGA_S9_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_5_CM1414_rev_AGCAACGC-TAAGGCGA_S9_L001_R2_001.fastq.gz]
+      - rev
+  CM1415_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_6_CM1415_rev_CCCTTGCA-TAAGGCGA_S7_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_6_CM1415_rev_CCCTTGCA-TAAGGCGA_S7_L001_R2_001.fastq.gz]
+      - rev
+  CM1416_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_7_CM1416_rev_CCCTCTTG-TAAGGCGA_S12_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_7_CM1416_rev_CCCTCTTG-TAAGGCGA_S12_L001_R2_001.fastq.gz]
+      - rev
+  CM1417_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_8_CM1417_rev_TTCGAGCC-TAAGGCGA_S14_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_8_CM1417_rev_TTCGAGCC-TAAGGCGA_S14_L001_R2_001.fastq.gz]
+      - rev
+  CM1418_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_9_CM1418_rev_AGTAGTTA-TAAGGCGA_S13_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_9_CM1418_rev_AGTAGTTA-TAAGGCGA_S13_L001_R2_001.fastq.gz]
+      - rev
+  WT_fwd:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_24_WT_fwd_GCAAACTG-CGTACTAG_S24_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_24_WT_fwd_GCAAACTG-CGTACTAG_S24_L001_R2_001.fastq.gz]
+      - fwd
+  WT_rev:
+      - [/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_12_WT_rev_GCAAACTG-TAAGGCGA_S16_L001_R1_001.fastq.gz,/home/NFS/users/r.kluin/Shares/M374_for_Laura_Brueckner/4481_12_WT_rev_GCAAACTG-TAAGGCGA_S16_L001_R2_001.fastq.gz]
+      - rev
+
+snp_file: '/home/NFS/users/j.yanez/hybridMouseESC-V2/raw/snpFile_129S1-CAST_mm10.txt'
+
+ipcr:
+    CM1410:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl1/4276_1_BarcodedPool_NoIndex_cl1_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl1/4276_1_BarcodedPool_NoIndex_cl1_R.fq_rev.fastq.gz
+    CM1411:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl3/4276_1_BarcodedPool_NoIndex_cl3_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl3/4276_1_BarcodedPool_NoIndex_cl3_R.fq_rev.fastq.gz
+    CM1412:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl6/4276_1_BarcodedPool_NoIndex_cl6_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl6/4276_1_BarcodedPool_NoIndex_cl6_R.fq_rev.fastq.gz
+    CM1413:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl8/4276_1_BarcodedPool_NoIndex_cl8_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl8/4276_1_BarcodedPool_NoIndex_cl8_R.fq_rev.fastq.gz
+    CM1414:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl12/4276_1_BarcodedPool_NoIndex_cl12_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl12/4276_1_BarcodedPool_NoIndex_cl12_R.fq_rev.fastq.gz
+    CM1415:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl13/4276_1_BarcodedPool_NoIndex_cl13_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl13/4276_1_BarcodedPool_NoIndex_cl13_R.fq_rev.fastq.gz
+    CM1416:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl18/4276_1_BarcodedPool_NoIndex_cl18_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl18/4276_1_BarcodedPool_NoIndex_cl18_R.fq_rev.fastq.gz
+    CM1417:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl19/4276_1_BarcodedPool_NoIndex_cl19_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl19/4276_1_BarcodedPool_NoIndex_cl19_R.fq_rev.fastq.gz
+    CM1418:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl20/4276_1_BarcodedPool_NoIndex_cl20_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl20/4276_1_BarcodedPool_NoIndex_cl20_R.fq_rev.fastq.gz
+    CM1419:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl22/4276_1_BarcodedPool_NoIndex_cl22_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl22/4276_1_BarcodedPool_NoIndex_cl22_R.fq_rev.fastq.gz
+    CM1420:
+        fwd: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl23/4276_1_BarcodedPool_NoIndex_cl23_R.fq_fwd.fastq.gz
+        rev: /home/NFS/users/c.leemans/projects/trip/cl20170112_trip_mouse_hybrid_cl23/4276_1_BarcodedPool_NoIndex_cl23_R.fq_rev.fastq.gz
+
+
+
+
+
+old_mapping:
+    CM1410: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl1/final_mapping.txt
+    CM1414: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl13/final_mapping.txt
+    CM1415: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl18/final_mapping.txt
+
+oldschool_mapping:
+    CM1413: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl8_mapping_oldschool/final_TRIP_data_table.txt
+    CM1416: /home/NFS/users/l.brueckner/TRIP_F1mESC/CM1416_mapping_oldschool/final_TRIP_data_table.txt
+    CM1417: /home/NFS/users/l.brueckner/TRIP_F1mESC/CM1417_mapping_oldschool/final_TRIP_data_table.txt
+    CM1418: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl22_mapping_oldschool/final_TRIP_data_table.txt
+    CM1420: /home/NFS/users/l.brueckner/TRIP_F1mESC/CM1420_mapping_oldschool/final_TRIP_data_table.txt
+    CM1412: /home/NFS/users/l.brueckner/TRIP_F1mESC/cl6_mapping_oldschool/final_TRIP_data_table.txt
+    CM1411: /home/NFS/users/l.brueckner/TRIP_F1mESC/CM1411_mapping_oldschool/final_TRIP_data_table.txt
+
+chrom_sizes: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_68.chrom.sizes
+
+genomes:
+    CAST: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_CAST.fa
+    129S1: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_129S1.fa
+
+mm10:
+    genome: /home/NFS/users/c.leemans/data/GRCm38/GRCm38_68.fa
+    index:  /home/NFS/users/c.leemans/data/GRCm38/GRCm38_68
+
+max_pair_dist: 1500
+
+
+max_gap: 5
+
+max_dist:
+    fwd: 500
+    rev: 20
+
+min_depth: 5
+
+primer:
+    fwd: GTACGTCACAATATGATTATCTTTCTAG
+    rev: CGTCAATTTTACGCAGACTATCTTTCTAG
+
+structure: |
+    ID      5'      3'      type    req     second-read     pos   keep-bases
+    tn5_fwd TCGTCGGCAGCGTCAGATGTGTATAAGAGACAG - const - False var -
+    constant_rev - TTAACC%s const - False var -
+    constant1 %s - const present True fixed -
+    constant2 GGTTAA - const present True fixed -
+    tn5_rev - CTGTCTCTTATACACATCTGACGCTGCCGACGA const - True var -
+
+samtools: /home/NFS/users/l.pagie/usr/local/src/miniconda2/bin/samtools

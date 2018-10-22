@@ -1,0 +1,185 @@
+import getpass
+import datetime
+import inspect
+import os
+import re
+from Bio.Seq import Seq
+
+filename = inspect.getframeinfo(inspect.currentframe()).filename
+path = os.path.dirname(os.path.abspath(filename))
+samtools = config['samtools']
+
+# user = getpass.getuser()
+# date = datetime.datetime.now()
+# date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
+# OUTDIR = ''.join((user[0], user[2], date, '_', config["dir_suffix"]))
+OUTDIR = config['outdir']
+INDIR = config['indir']
+MAP_OPT = config['mapper_options']
+
+name_list = [key.replace('_fwd','') for key in config['input_file'].keys() if key.endswith('fwd')]
+
+rule all:
+    input:
+        expand('%s/insertions/{name}.gff' % OUTDIR,
+               name=name_list)
+
+## create bed file with insertions
+rule insertions_bed:
+    input:
+        '%s/insertions/{name}.txt' % (OUTDIR)
+    output:
+        '%s/insertions/{name}.gff' % (OUTDIR)
+    shell:
+        "{path}/gff_insertions.awk {input} > {output}"
+
+## for each region with an around an insertion site, call the position of the
+## insertion, calculate max and mean mapping quality and count SNPs for each allele.
+## Allele with least SNPs will be called as the allele carying the insertion.
+rule call_insertions:
+    input:
+        regions='%s/regions/{name}_combined.txt' % (OUTDIR),
+        fwd='%s/sorted/{name}_fwd.bam' % (OUTDIR),
+        rev='%s/sorted/{name}_rev.bam' % (OUTDIR)
+    output:
+        '%s/insertions/{name}.txt' % (OUTDIR)
+    params:
+        samtools=samtools,
+        genomes=config['genomes']
+    script:
+        "call_insertions.py"
+
+
+## based on both forward and revert PCR reactions call potential insertion sites
+## real insertion sites will have a region left and right of an 4-base motif
+## (usually AATT) depending on which PCR product is left and which is right,
+## orientation can be called.
+rule call_regions:
+    input:
+        '%s/regions/{name}_fwd.bed' % (OUTDIR),
+        '%s/regions/{name}_rev.bed' % (OUTDIR)
+    output:
+        '%s/regions/{name}_combined.txt' % (OUTDIR)
+    params:
+        max_gap= config['max_gap']
+    shell:
+        "{path}/call_regions.sh {input[0]} {input[1]} {params.max_gap} > {output}"
+
+
+## combine overlapping read-pair regions into single regions with depth information
+rule depth:
+    input:
+        bed='%s/combined/{name}.bed' % (OUTDIR),
+        genome=config['chrom_sizes']
+    output:
+        '%s/regions/{name}.bed' % (OUTDIR)
+    shell:
+        "bedtools genomecov -bg -i {input.bed} -g {input.genome} | "
+        "{path}/combine_depth.awk > {output}"
+
+## sort and index the bam file with read alignments from both alleles
+rule sort_and_index:
+    input:
+        '%s/combined/{name}.bam' % (OUTDIR)
+    output:
+        '%s/sorted/{name}.bam' % (OUTDIR),
+        '%s/sorted/{name}.bam.bai' % (OUTDIR)
+    threads: 10
+    shell:
+        "{samtools} sort -@ {threads} {input} > {output[0]}; "
+        "{samtools} index {output[0]}"
+
+
+## convert bam file to bed file with regions for each read-pair
+rule bamToBed:
+    input:
+        '%s/combined/{name}.bam' % (OUTDIR)
+    output:
+        '%s/combined/{name}.bed' % (OUTDIR)
+    params:
+        max_dist = config['max_pair_dist']
+    log:
+        '%s/combined/{name}.log' % (OUTDIR)
+    shell:
+        "bamToBed -bedpe -i {input} | {path}/combine_pairs.awk "
+        "-v max_dist={params.max_dist} 2> {log} | "
+        "bedtools sort -i /dev/stdin > {output}"
+
+
+## for each read, find out which strain it maps best to and use this mapping information
+rule combine:
+    input:
+        bam=expand('%s/mapped/{{name}}_{species}.bam' % (OUTDIR), species=config['bowtie_index'].keys())
+    output:
+        '%s/combined/{name}.bam' % (OUTDIR)
+    script:
+        'combine_bam.py'
+
+
+ruleorder: map_reads > map_mm10
+
+## the read parsing was already done and the full length reads are only at the facility
+## change indir to outdir and remove the '#' marks from the parse_reads rule
+## to use new full length reads
+
+
+rule map_reads:
+    input:
+        '%s/parsed/{name}.1.fastq.gz' % INDIR,
+        '%s/parsed/{name}.2.fastq.gz' % INDIR
+    params:
+        mapper = config["mapper"],
+        index=lambda wildcards: config['bowtie_index'][wildcards.species]
+    threads: 10
+    log: "%s/mapped/{name}_{species}.mapping.log" % (OUTDIR)
+    output:
+        "%s/mapped/{name}_{species}.bam" % (OUTDIR)
+    shell:
+        "({params.mapper} -p {threads} {MAP_OPT} "
+        "-x {params.index} --reorder -1 <(gunzip -c {input[1]}) "
+        "-2 <(gunzip -c {input[0]})) 2> {log} | {samtools} view -Sb - > {output}"
+
+rule map_mm10:
+    input:
+        '%s/{name}.1.fastq.gz' % INDIR,
+        '%s/{name}.2.fastq.gz' % INDIR
+    params:
+        mapper = config["mapper"],
+        index=config['mm10']['index']
+    threads: 10
+    log: "%s/mapped/{name}_mm10.mapping.log" % (OUTDIR)
+    output:
+        "%s/mapped/{name}_mm10.bam" % (OUTDIR)
+    shell:
+        "({params.mapper} -p {threads} {MAP_OPT} "
+        "-x {params.index} -1 <(gunzip -c {input[1]}) "
+        "-2 <(gunzip -c {input[0]})) 2> {log} | {samtools} view -Sb - | "
+        "{samtools} sort -@ {threads} > {output}; "
+        "{samtools} index {output}"
+
+
+# rule parse_reads:
+#     input:
+#         lambda wildcards: config['input_file'][wildcards.name][0],
+#     output:
+#         '%s/parsed/{name}.statistics.txt' % (INDIR),
+#         '%s/parsed/{name}.1.fastq.gz' % INDIR,
+#         '%s/parsed/{name}.2.fastq.gz' % INDIR,
+#         structure = '%s/parsed/{name}.structure.txt' % (INDIR)
+#     log:
+#         '%s/parsed/{name}_parser.log' % (OUTDIR)
+#     params:
+#         structure= config['structure'],
+#         outdir = '%s/parsed/' % OUTDIR,
+#         name= '{name}',
+#         input_dict = config['input_file'],
+#         primer_dict = config['primer']
+#     run:
+#         p_type=params.input_dict[wildcards.name][1]
+#         primer = params.primer_dict[p_type]
+#         primer_rev = str(Seq(primer).reverse_complement())
+#         structure = params.structure % (primer_rev, primer)
+#         with open(output.structure[0], 'w') as f:
+#             f.write(structure)
+#         shell('~t.v.schaik/modules/read-parsing/read_parser.py -r -M 50 -a -l {log} -p {input[1]} '
+#               '-b {wildcards.name} {input[0]} {output.structure} {params.outdir}')
