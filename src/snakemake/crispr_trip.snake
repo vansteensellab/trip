@@ -16,8 +16,9 @@ path = os.path.dirname(os.path.abspath(filename))
 
 rule all:
     input:
-        expand('{outdir}/mutation/{name}.genuine_mapped.table', outdir=config['out_dir'],
-               name=config['input_file']['mutation'].keys()),
+        expand('{outdir}/table/{name}.{map}_count.table', outdir=config['out_dir'],
+               name=config['input_file']['mutation'].keys(),
+               map=['unmapped', 'mapped']),
         expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2))
 
@@ -30,6 +31,14 @@ rule mapping_only:
     input:
         expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2))
+
+rule count_mutation:
+    input:
+        '{outdir}/mutation/{name}.genuine_{map}.table'
+    output:
+        '{outdir}/table/{name}.{map}_count.table'
+    run:
+        'sort {input} | uniq -c > {output}'
 
 rule genuine_mutations:
     input:
