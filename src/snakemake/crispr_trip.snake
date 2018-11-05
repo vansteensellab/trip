@@ -36,7 +36,7 @@ rule count_mutation:
     input:
         '{outdir}/mutation/{name}.genuine_{map}.table'
     output:
-        '{outdir}/table/{name}.{map}_count.table'
+        '{outdir}/mutation_counts/{name}.{map}_count.table'
     run:
         'sort {input} | uniq -c > {output}'
 
