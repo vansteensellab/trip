@@ -82,7 +82,7 @@ rule parse_sam:
     params:
         bowtie_index = config['bowtie']['index'],
         options=config['bowtie']['options'],
-        max_dist = config['max_dist'],
+        max_dist = lambda wildcards: config['max_dist'][wildcards.num],
         num='{num}'
     threads: 10
     script:
