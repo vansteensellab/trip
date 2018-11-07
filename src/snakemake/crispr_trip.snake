@@ -122,7 +122,7 @@ rule starcode:
         lev_dist = config['lev_dist'],
         use_other = False,
         read_type = '{read_type}',
-        count= config['min_count']
+        count= lambda wildcards: config['min_count'][wildcards.read_type]
     threads:
         3
     script:
