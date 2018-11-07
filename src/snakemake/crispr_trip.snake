@@ -37,7 +37,7 @@ rule count_mutation:
         '{outdir}/mutation/{name}.genuine_{map}.table'
     output:
         '{outdir}/mutation_counts/{name}.{map}_count.table'
-    run:
+    shell:
         'sort {input} | uniq -c > {output}'
 
 rule genuine_mutations:
