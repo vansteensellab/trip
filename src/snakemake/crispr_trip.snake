@@ -68,7 +68,7 @@ rule call_mutation:
 
 rule parse_sam:
     input:
-        bam='{out_dir}/aligned/{name}.{{num}.bam',
+        bam='{out_dir}/aligned/{name}.{num}.bam',
         count='{out_dir}/counts/mapping.{name}.starcode.count',
     output:
         bed='{outdir}/bed/mapping.{name}.{num}.bed',
