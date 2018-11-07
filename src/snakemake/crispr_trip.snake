@@ -16,7 +16,7 @@ path = os.path.dirname(os.path.abspath(filename))
 
 rule all:
     input:
-        expand('{outdir}/table/{name}.{map}_count.table', outdir=config['out_dir'],
+        expand('{outdir}/mutation_counts/{name}.{map}_count.table', outdir=config['out_dir'],
                name=config['input_file']['mutation'].keys(),
                map=['unmapped', 'mapped']),
         expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
@@ -29,7 +29,7 @@ rule mutation_only:
 
 rule mapping_only:
     input:
-        expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
+        expand('{outdir}/mutation_counts/mapping.{name}.{num}.table', outdir=config['out_dir'],
                name=config['input_file']['mapping'].keys(), num=(1,2))
 
 rule count_mutation:
@@ -68,8 +68,8 @@ rule call_mutation:
 
 rule parse_sam:
     input:
-        bam=expand('{out_dir}/aligned/{{name}}.{{num}}.bam', out_dir=config['out_dir']),
-        count=expand('{out_dir}/counts/mapping.{{name}}.starcode.count', out_dir=config['out_dir'])
+        bam='{out_dir}/aligned/{name}.{{num}.bam',
+        count='{out_dir}/counts/mapping.{name}.starcode.count',
     output:
         bed='{outdir}/bed/mapping.{name}.{num}.bed',
         table='{outdir}/table/mapping.{name}.{num}.table',
@@ -92,7 +92,7 @@ rule parse_sam:
 if 'mapping' in config['input_file']:
     rule align:
         input:
-            expand('{outdir}/parsed/mapping.{{name}}.{{num}}.fastq.gz', outdir=config['out_dir'])
+            '{outdir}/parsed/mapping.{name}.{num}.fastq.gz'
         output:
             '{outdir}/aligned/{name}.{num}.bam'
         params:
