@@ -38,7 +38,7 @@ rule count_mutation:
     output:
         '{outdir}/mutation_counts/{name}.{map}_count.table'
     shell:
-        'sort {input} | uniq -c > {output}'
+        "sort {input} | uniq -c | awk -vOFS='\t' '{{print $1, $2, $3, $4}}' > {output}"
 
 rule genuine_mutations:
     input:
