@@ -19,10 +19,9 @@ with open(raw_mut) as in_raw:
     for line in in_raw.readlines():
         line_split = line.strip().split('\t')
         bc = line_split[0]
-        out_line = '\t'.join(line_split[0:3])
         if bc in starcode_set:
-            print(out_line, file=out_genuine)
+            print(line.strip(), file=out_genuine)
         else:
-            print(out_line, file=out_not_genuine)
+            print(line.strip(), file=out_not_genuine)
 out_not_genuine.close()
 out_genuine.close()

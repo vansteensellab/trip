@@ -19,7 +19,7 @@
 ###############################
 ### snakemake configuration ###
 ###############################
-outdir: '/DATA/usr/c.leemans/projects/trip/cl20180919_TRIP_K562_evsr_TTAA'
+outdir: '/DATA/usr/c.leemans/projects/trip/cl20181029_TRIP_K562_evsr_TTAA'
 
 
 
@@ -63,7 +63,7 @@ input_file:
             '6':
                 A: [mapping1, mapping2]
                 B: [mapping1, mapping2]
-            '8'
+            '8':
                 A: [mapping1, mapping2]
                 B: [mapping1, mapping2]
             '11':
@@ -331,7 +331,7 @@ structure:
     options:
         index: |
             ID      5'      3'      type    req     second-read     pos   keep-bases
-            index   %s      -       index   present False   fixed   -
+            index   %s      -       index   present False   fixed   10
         mapping1: |
             ID      5'      3'      type    req     second-read     pos   keep-bases
             map_pat1a       GTCACAAGGGCCGGCCACAAC   -       const   present False   fixed   -
@@ -401,55 +401,55 @@ max_dist:
     '2': 20
 
 parser: ~t.v.schaik/mydata/modules/read-parsing/read_parser.py
-
-
-annotation:
-    calls:
-        LMNB1:
-            - HMM/bin-5kb/K562_LMNB1-5kb-combined_AD.bed.gz
-        4xAP3:
-            - HMM/bin-5kb/K562_4xAP3-5kb-combined_AD.bed.gz
-        CENPB:
-            - HMM/bin-5kb/K562_CENPB-5kb-combined_AD.bed.gz
-    DAM:
-        LMNB1:
-            experiment:
-                - counts/bin-gatc/K562_r1_LMNB1-gatc
-                - counts/bin-gatc/K562_r2_LMNB1-gatc
-            control:
-                - counts/bin-gatc/K562_r1_Dam16-gatc
-                - counts/bin-gatc/K562_r2_Dam10_1-gatc
-        4xAP3:
-            experiment:
-                - counts/bin-gatc/K562_r1_4xAP3-gatc
-                - counts/bin-gatc/K562_r2_4xAP3-gatc
-            control:
-                - counts/bin-gatc/K562_r1_Dam256-gatc
-                - counts/bin-gatc/K562_r2_Dam10_2-gatc
-        CENPB:
-            experiment:
-                - counts/bin-gatc/K562_r2_CENPB-gatc
-                - counts/bin-gatc/K562_r3_CENPB-gatc
-            control:
-                - counts/bin-gatc/K562_r2_Dam100-gatc
-                - counts/bin-gatc/K562_r3_Dam100-gatc
-    hic_compaction:
-        indices:
-            /home/t.v.schaik/mydata/data/4DNucleome/GRCh38/K562/HiC/GENOVA/K562_5kb.bed
-        max_dist:
-            [25000, 50000, 100000, 250000]
-        signal:
-            /home/t.v.schaik/mydata/data/4DNucleome/GRCh38/K562/HiC/GENOVA/K562_5kb.sig
-        window:
-            [100000, 500000, 1000000]
-    sure:
-        r1_plus: SuRE23_hg38_K562_B1.cov.plus.bw
-        r1_minus: SuRE23_hg38_K562_B1.cov.minus.bw
-        r2_plus: SuRE23_hg38_K562_B2.cov.plus.bw
-        r2_minus: SuRE23_hg38_K562_B2.cov.minus.bw
-    chip: True
-    chip_peaks: False
-    chip_domains: True
+#
+#
+# annotation:
+#     calls:
+#         LMNB1:
+#             - HMM/bin-5kb/K562_LMNB1-5kb-combined_AD.bed.gz
+#         4xAP3:
+#             - HMM/bin-5kb/K562_4xAP3-5kb-combined_AD.bed.gz
+#         CENPB:
+#             - HMM/bin-5kb/K562_CENPB-5kb-combined_AD.bed.gz
+#     DAM:
+#         LMNB1:
+#             experiment:
+#                 - counts/bin-gatc/K562_r1_LMNB1-gatc
+#                 - counts/bin-gatc/K562_r2_LMNB1-gatc
+#             control:
+#                 - counts/bin-gatc/K562_r1_Dam16-gatc
+#                 - counts/bin-gatc/K562_r2_Dam10_1-gatc
+#         4xAP3:
+#             experiment:
+#                 - counts/bin-gatc/K562_r1_4xAP3-gatc
+#                 - counts/bin-gatc/K562_r2_4xAP3-gatc
+#             control:
+#                 - counts/bin-gatc/K562_r1_Dam256-gatc
+#                 - counts/bin-gatc/K562_r2_Dam10_2-gatc
+#         CENPB:
+#             experiment:
+#                 - counts/bin-gatc/K562_r2_CENPB-gatc
+#                 - counts/bin-gatc/K562_r3_CENPB-gatc
+#             control:
+#                 - counts/bin-gatc/K562_r2_Dam100-gatc
+#                 - counts/bin-gatc/K562_r3_Dam100-gatc
+#     hic_compaction:
+#         indices:
+#             /home/t.v.schaik/mydata/data/4DNucleome/GRCh38/K562/HiC/GENOVA/K562_5kb.bed
+#         max_dist:
+#             [25000, 50000, 100000, 250000]
+#         signal:
+#             /home/t.v.schaik/mydata/data/4DNucleome/GRCh38/K562/HiC/GENOVA/K562_5kb.sig
+#         window:
+#             [100000, 500000, 1000000]
+#     sure:
+#         r1_plus: SuRE23_hg38_K562_B1.cov.plus.bw
+#         r1_minus: SuRE23_hg38_K562_B1.cov.minus.bw
+#         r2_plus: SuRE23_hg38_K562_B2.cov.plus.bw
+#         r2_minus: SuRE23_hg38_K562_B2.cov.minus.bw
+#     chip: True
+#     chip_peaks: False
+#     chip_domains: True
 
 sure_dir: /DATA/usr/c.leemans/data/tracks/hg38
 dam_dir: /DATA/usr/t.v.schaik/proj/3D_nucleus/results/ts180110_4DN_DataProcessing/results

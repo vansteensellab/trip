@@ -11,53 +11,158 @@ path = os.path.dirname(os.path.abspath(filename))
 # date = datetime.datetime.now()
 # date = '%i%0.2i%0.2i' % (date.year, date.month, date.day)
 
+def parse_meta(meta_file):
+    with open(meta_file) as f:
+        header = f.readline().strip().split('\t')
+        id_i = header.index('ID')
+        type_i = header.index('PCR_type')
+        file_i = header.index('file')
+        for line in f.readlines():
+            line_split = line.strip().split('\t')
+            yield(line_split[type_i], line_split[id_i], line_split[file_i])
 
+if 'META_INFO' in config:
+    if 'input_file' not in config:
+        config['input_file'] = {}
+    for type, id, file in parse_meta(config['META_INFO']):
+        if type not in config['input_file']:
+            config['input_file'][type] = {}
+        config['input_file'][type][id] = file.split(',')
 
+def get_all(config):
+    for type in config['input_file'].keys():
+        for file in get_input(config, type):
+            yield(file)
+        if 'useSpike' in config and config['useSpike']:
+            for file in get_input(config, type, True):
+                yield(file)
+
+def get_input(config, type, isSpike=False):
+    if isSpike:
+        pattern_dict = {
+            'indelPCR': ['{outdir}/spike/indelPCR.{name}.raw.count'],
+            'bcPCR': ['{outdir}/spike/bcPCR.{name}.raw.count'],
+            'iPCR': ['{outdir}/spike/mapping.{name}.raw.count']
+        }
+    else:
+        pattern_dict = {
+            'indelPCR': ['{outdir}/indelPCR_counts/{name}.count.table'],
+            'bcPCR': ['{outdir}/counts/bcPCR.{name}.starcode.count'],
+            'iPCR': ['{outdir}/table/mapping.{name}.1.table',
+                     '{outdir}/table/mapping.{name}.2.table']
+        }
+    type_dict = config['input_file'][type]
+    for id in type_dict:
+        for pattern in pattern_dict[type]:
+            yield(pattern.format(outdir=config['outdir'],
+                                 name=id))
 
 rule all:
     input:
-        expand('{outdir}/mutation_counts/{name}.{map}_count.table', outdir=config['out_dir'],
-               name=config['input_file']['mutation'].keys(),
-               map=['unmapped', 'mapped']),
-        expand('{outdir}/table/mapping.{name}.{num}.table', outdir=config['out_dir'],
-               name=config['input_file']['mapping'].keys(), num=(1,2))
+        get_all(config)
 
-rule mutation_only:
-    input:
-        expand('{outdir}/mutation/{name}.raw.table', outdir=config['out_dir'],
-               name=config['input_file']['mutation'].keys())
+if 'bcPCR' in config['input_file']:
+    rule bc_only:
+        input:
+            get_input(config, 'bcPCR')
+if 'indelPCR' in config['input_file']:
+    rule mutation_only:
+        input:
+            get_input(config, 'indelPCR')
+if 'iPCR' in config['input_file']:
+    rule mapping_only:
+        input:
+            get_input(config, 'iPCR')
 
-rule mapping_only:
+rule specific:
     input:
-        expand('{outdir}/mutation_counts/mapping.{name}.{num}.table', outdir=config['out_dir'],
-               name=config['input_file']['mapping'].keys(), num=(1,2))
+        expand('{outdir}/specificIndel/{name}.count.table',
+               outdir=config['outdir'], name=config['input_file']['indelPCR'])
+
+
+rule specific_indel:
+    input:
+        '{outdir}/indelPCR_counts/{name}.tsv',
+        '{outdir}/indel_align.tsv'
+    output:
+        '{outdir}/specificIndel/{name}.count.table'
+    run:
+        import pandas
+        count = pandas.read_table(input[0], index_col=False,
+                                  names=['count', 'barcode', 'call', 'indel', 'seq'])
+        indel = pandas.read_csv(input[1])
+        for name in ['count', 'call']:
+            indel = indel.drop(name, 1)
+        out = pandas.merge(count, indel, on='seq', how='left')
+        out.to_csv(output[0], sep='\t', index=False, float_format="%i",
+                   na_rep="NA")
+
+
+
+rule combine_mutation:
+    input:
+        '{outdir}/indelPCR_counts/{name}.tsv'
+    output:
+        '{outdir}/indelPCR_counts/{name}.count.table'
+    run:
+        import pandas
+        count = pandas.read_table(input[0], names=('count','barcode',
+                                                   'call', 'indel', 'seq'))
+        count_sum = count.groupby(['barcode', 'call', 'indel'])['count'].sum()
+        count_sum.to_csv(output[0], sep='\t', index=True, header=True,
+                         float_format="%i")
+
 
 rule count_mutation:
     input:
-        '{outdir}/mutation/{name}.genuine_{map}.table'
+        '{outdir}/indelPCR/{name}.genuine.table'
     output:
-        '{outdir}/mutation_counts/{name}.{map}_count.table'
+        '{outdir}/indelPCR_counts/{name}.tsv'
+    threads:
+        5
     shell:
-        "sort {input} | uniq -c | awk -vOFS='\t' '{{print $1, $2, $3, $4}}' > {output}"
+        "sort --parallel={threads} {input} | uniq -c | "
+        "awk -vOFS='\t' '{{print $1, $2, $3, $4, $5}}'> {output}"
 
-rule genuine_mutations:
+
+rule align_indel:
     input:
-        '%s/mutation/{name}.raw.table' % config['out_dir'],
-        '%s/counts/mutation.{name}.starcode.count' % config['out_dir'],
-        lambda wildcards: '%s/table/mapping.%s.2.table' % (config['out_dir'], config['input_file']['mutation'][wildcards.name][2])
+        expand('{{outdir}}/specificIndel/{name}.txt',
+               name=config['input_file']['indelPCR'].keys())
     output:
-        '%s/mutation/{name}.not_genuine.table' % config['out_dir'],
-        '%s/mutation/{name}.genuine_mapped.table' % config['out_dir'],
-        '%s/mutation/{name}.genuine_unmapped.table' % config['out_dir']
+        '{outdir}/indel_align.tsv'
+    params:
+        min_count=1000,
+        breaksite=config['breaksite'],
+        sequence=config['sequence']
     script:
-        'scripts/genuine_mutations.py'
+        'scripts/align_indelPCR.R'
+
+rule uniq_seq:
+    input:
+        '{outdir}/indelPCR/{name}.genuine.table'
+    output:
+        '{outdir}/specificIndel/{name}.txt'
+    shell:
+        "awk '{{if ($2==\"ins\"||$2==\"del\"){{print $4, $2}}}}' {input} | "
+        "sort -k1 | uniq -c | sort -k1rn > {output}"
+
+rule genuine_barcodes:
+    input:
+        '{outdir}/{type}/{name}.raw.table',
+        '{outdir}/counts/{type}.{name}.starcode.count'
+    output:
+        '{outdir}/{type}/{name}.not_genuine.table',
+        '{outdir}/{type}/{name}.genuine.table'
+    script:
+        'scripts/genuine_barcodes.py'
 
 
 rule call_mutation:
     input:
-        '%s/parsed/mutation.{name}.barcode.txt.gz' % config['out_dir']
+        '{outdir}/parsed/indelPCR.{name}.barcode.txt.gz'
     output:
-        '%s/mutation/{name}.raw.table' % config['out_dir']
+        '{outdir}/indelPCR/{name}.raw.table'
     params:
         target = config['crispr_target'],
         spacer_list = config['spacer_list'],
@@ -89,7 +194,7 @@ rule parse_sam:
         'scripts/parse_sam.py'
 
 
-if 'mapping' in config['input_file']:
+if 'iPCR' in config['input_file']:
     rule align:
         input:
             '{outdir}/parsed/mapping.{name}.{num}.fastq.gz'
@@ -113,11 +218,11 @@ if 'mapping' in config['input_file']:
 
 rule starcode:
     input:
-        '%s/counts/{read_type}.{name}.raw.count' % config['out_dir']
+        '{outdir}/counts/{read_type}.{name}.raw.count'
     output:
-        gen='%s/counts/{read_type}.{name}.starcode.count' % config['out_dir'],
-        mut='%s/counts/{read_type}.{name}.genuine.cut' % config['out_dir'],
-        count='%s/counts/{read_type}.{name}.count.cut' % config['out_dir']
+        gen='{outdir}/counts/{read_type}.{name}.starcode.count',
+        mut='{outdir}/counts/{read_type}.{name}.genuine.cut',
+        count='{outdir}/counts/{read_type}.{name}.count.cut'
     params:
         lev_dist = config['lev_dist'],
         use_other = False,
@@ -128,62 +233,103 @@ rule starcode:
     script:
         'scripts/starcode.py'
 
+
+def get_count_input(wildcards):
+    if wildcards.count_type == 'counts':
+        return('{outdir}/parsed/{read_type}.{name}.barcode.txt.gz'.format(
+                   outdir=wildcards.outdir, read_type=wildcards.read_type,
+                   name=wildcards.name))
+    elif wildcards.count_type == 'spike':
+        return('{outdir}/spike_parse/{read_type}.{name}.barcode.txt.gz'.format(
+                   outdir=wildcards.outdir, read_type=wildcards.read_type,
+                   name=wildcards.name))
+
+
+
 rule count_barcode:
     input:
-        '%s/parsed/{file_base}.{name}.barcode.txt.gz' % config['out_dir']
+        lambda wildcards: get_count_input(wildcards)
     output:
-        '%s/counts/{file_base}.{name}.raw.count' % config['out_dir']
+        '{outdir}/{count_type}/{read_type}.{name}.raw.count'
     params:
         path=path
     shell:
         "{params.path}/scripts/count_barcode.sh {input} > {output}"
 
 
+def get_input_file(config, wildcards):
+    if 'indir' in config:
+        indir = config['indir']
+        if indir.endswith('/'):
+            pattern = '%s%s'
+        else:
+            pattern = '%s/%s'
+        for file in config['input_file'][wildcards.type][wildcards.name]:
+            yield(pattern % (config['indir'], file))
+    else:
+        for file in config['input_file'][wildcards.type][wildcards.name]:
+            yield(file)
+
+if 'useSpike' in config and config['useSpike']:
+    rule parse_spike:
+        input:
+            lambda wildcards: get_input_file(config, wildcards)
+        output:
+            '{outdir}/spike_parse/{type}.{name}.barcode.txt.gz',
+            '{outdir}/spike_parse/{type}.{name}.statistics.txt',
+            structure = '{outdir}/spike_parse/{type}.{name}.structure.txt'
+        log:
+            '{outdir}/stats/spike.{type}.{name}_parser.log'
+        params:
+            structure= config['spike_structure'],
+            outdir = '{outdir}/spike_parse/'
+        run:
+            with open(output.structure, 'w') as f:
+                f.write(params.structure[wildcards.type])
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -r -s -l {log} '
+                  '-b {wildcards.type}.{wildcards.name} {input} {output.structure} '
+                  '{params.outdir}')
+
+
 rule parse_mutation:
     input:
-        lambda wildcards: config['input_file']['mutation'][wildcards.name][0]
+        lambda wildcards: get_input_file(config, wildcards)
     output:
-        '%s/parsed/mutation.{name}.barcode.txt.gz' % (config['out_dir']),
-        '%s/parsed/mutation.{name}.statistics.txt' % (config['out_dir']),
-        structure = '%s/parsed/mutation.{name}.structure.txt' % (config['out_dir'])
+        '{outdir}/parsed/{type}.{name}.barcode.txt.gz',
+        '{outdir}/parsed/{type}.{name}.statistics.txt',
+        structure = '{outdir}/parsed/{type}.{name}.structure.txt'
     log:
-        '%s/stats/mutation.{name}_parser.log' % (config['out_dir'])
+        '{outdir}/stats/{type}.{name}_parser.log'
     params:
-        structure= config['structure']['mutation'],
-        type_dict= config['input_file']['mutation'],
-        outdir = '%s/parsed/' % config['out_dir']
+        structure= config['structure'],
+        outdir = '{outdir}/parsed/'
     run:
-        structure = params.structure % params.type_dict[wildcards.name][1]
-        if params.type_dict[wildcards.name][1] == 0:
-            structure = re.sub('index.*\n', '', structure)
         with open(output.structure, 'w') as f:
-            f.write(structure)
-        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -s -l {log} '
-              '-b mutation.{wildcards.name} {input} {output.structure} {params.outdir}')
+            f.write(params.structure[wildcards.type])
+        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -r -s -l {log} '
+              '-b {wildcards.type}.{wildcards.name} {input} {output.structure} '
+              '{params.outdir}')
 
+if 'iPCR' in config['input_file']:
+    ruleorder: parse_mapping > parse_mutation
 
-rule parse_mapping:
-    input:
-        lambda wildcards: config['input_file']['mapping'][wildcards.name][0]
-    output:
-        '%s/parsed/mapping.{name}.barcode.txt.gz' % (config['out_dir']),
-        '%s/parsed/mapping.{name}.1.fastq.gz' % (config['out_dir']),
-        '%s/parsed/mapping.{name}.2.fastq.gz' % (config['out_dir']),
-        '%s/parsed/mapping.{name}.statistics.txt' % (config['out_dir']),
-        structure = '%s/parsed/mapping.{name}.structure.txt' % (config['out_dir'])
-    log:
-        '%s/parsed/mapping.{name}_parser.log' % (config['out_dir'])
-    params:
-        structure= config['structure']['mapping'],
-        type_dict= config['input_file']['mapping'],
-        outdir = '%s/parsed/' % config['out_dir'],
-        name= '{name}'
-    run:
-        structure = params.structure % params.type_dict[wildcards.name][1]
-        structure = structure.replace('\\', '')
-        if params.type_dict[wildcards.name][1] == 0:
-            structure = re.sub('index.*\n', '', structure)
-        with open(output.structure, 'w') as f:
-            f.write(structure)
-        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
-              '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')
+    rule parse_mapping:
+        input:
+            lambda wildcards: list(get_input_file(config, wildcards))[0]
+        output:
+            '{outdir}/parsed/mapping.{name}.barcode.txt.gz',
+            '{outdir}/parsed/mapping.{name}.1.fastq.gz',
+            '{outdir}/parsed/mapping.{name}.2.fastq.gz',
+            '{outdir}/parsed/mapping.{name}.statistics.txt',
+            structure = '{outdir}/parsed/mapping.{name}.structure.txt'
+        log:
+            '{outdir}/parsed/mapping.{name}_parser.log'
+        params:
+            structure= config['structure']['iPCR'],
+            outdir = '{outdir}/parsed/',
+            name= '{name}'
+        run:
+            with open(output.structure, 'w') as f:
+                f.write(params.structure)
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -r -a -l {log} -p {input[1]} '
+                  '-b mapping.{wildcards.name} {input[0]} {output.structure} {params.outdir}')
