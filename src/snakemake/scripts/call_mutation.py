@@ -7,7 +7,7 @@ from Bio.pairwise2 import format_alignment
 barcode_file = str(snakemake.input)
 output_file = snakemake.output[0]
 
-target = snakemake.params.target
+target_dict = snakemake.params.target_dict
 spacer_list = snakemake.params.spacer_list
 gap_list = snakemake.params.gap_list
 
@@ -29,12 +29,18 @@ with gzip.open(barcode_file) as f_in:
             else:
                 score = 'NA'
 
-            target_match = re.search(target, dna_str)
-            if target_match is not None:
-                status = 'wt'
-                score = 0 if score is 'NA' else score
-            elif score is not 'NA':
+            match_dict = {key:re.search(target, dna_str)
+                          for key, target in target_dict.items()}
+            match = None
+            key_list = list(match_dict.keys())
+            i = 0
+            status = 'not_clear'
+            while match is None and i < len(key_list):
+                key = key_list[i]
+                match = match_dict[key]
+                if match is not None:
+                    status = key
+                i += 1
+            if match is None and score is not 'NA':
                 status = 'ins' if score > 0 else 'del' if score != 0 else 'wt_point_mut'
-            else:
-                status = 'not_clear'
             print('\t'.join((barcode, status, str(score), dna_str)), file=f_out)

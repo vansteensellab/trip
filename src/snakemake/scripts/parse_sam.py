@@ -207,7 +207,7 @@ if __name__ == '__main__':
     if len(remap_list) > 0:
         with gzip.open(snakeout.remap_fq, "wt") as fqfile:
             SeqIO.write(remap_list, fqfile, 'fastq')
-        options = snakeparam.options
+        options = snakeparam.options[snakeparam.num]
         align_command = ("bowtie2 -p %i -t %s"
                          " -x %s -U %s | "
                          "samtools view -Sb - > %s" % (threads,
@@ -215,6 +215,7 @@ if __name__ == '__main__':
                                                        snakeparam.bowtie_index,
                                                        snakeout.remap_fq,
                                                        snakeout.remap))
+        print(align_command)
         os.system(align_command)
         remap_sam_out = parse_sam(snakeout.remap, starcode_set,
                                   mut_dict)
