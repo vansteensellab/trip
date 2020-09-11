@@ -7,9 +7,9 @@ from Bio.pairwise2 import format_alignment
 barcode_file = str(snakemake.input)
 output_file = snakemake.output[0]
 
-target_dict = snakemake.params.target_dict
-spacer_list = snakemake.params.spacer_list
-gap_list = snakemake.params.gap_list
+target_dict = snakemake.params.crispr_dict['target']
+spacer_list = snakemake.params.crispr_dict['spacer_list']
+gap_list = snakemake.params.crispr_dict['gap_list']
 
 
 with gzip.open(barcode_file) as f_in:

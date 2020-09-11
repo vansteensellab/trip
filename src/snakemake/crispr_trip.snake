@@ -230,8 +230,8 @@ rule align_indel:
         '{outdir}/indel_align/{guide}.tsv'
     params:
         min_count=config['specific_min_count'],
-        breaksite=config['crispr_info']['default']['cut_site'],
-        sequence=config['sequence']
+        breaksite=lambda wildcards: get_crispr_config(config, wildcards.guide)['cut_site'],
+        sequence=lambda wildcards: get_crispr_config(config, wildcards.guide)['seq'],
     script:
         'scripts/align_indelPCR.R'
 
@@ -263,11 +263,9 @@ rule call_mutation:
     output:
         '{outdir}/indelPCR/{name}.raw.table'
     params:
-        target_dict = lambda wildcards:
+        crispr_dict = lambda wildcards:
                         get_crispr_config_by_name(config,
-                                                  wildcards)['target'],
-        spacer_list = config['spacer_list'],
-        gap_list = config['gap_list']
+                                                  wildcards)
     script:
         'scripts/call_mutation.py'
 
