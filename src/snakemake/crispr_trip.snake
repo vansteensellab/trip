@@ -26,6 +26,8 @@ def parse_meta(meta_file):
             index_i = header.index('index_length')
         if 'plasmid' in header:
             guide_i = header.index('plasmid')
+        # if 'paired_end' in header:
+        #     paired_i = header.index('paired_end')
         for line in f.readlines():
             line_split = line.strip().split('\t')
             if 'index_length' in header:
@@ -34,6 +36,10 @@ def parse_meta(meta_file):
                 guide = line_split[guide_i]
             else:
                 guide = 'NA'
+            # if 'paired_end' in header:
+            #     paired = line_split[paired_i].lower() not in ('false', 'f')
+            # else:
+            #     paired = False
             yield(line_split[type_i], line_split[id_i], line_split[file_i],
                   index, guide)
 
@@ -429,9 +435,15 @@ rule parse_mutation:
         structure = '\n'.join(structure_list)
         with open(output.structure, 'w') as f:
             f.write(structure)
-        shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -r -s -l {log} '
-              '-b {wildcards.type}.{wildcards.name} {input} {output.structure} '
-              '{params.outdir}')
+        if len(input) == 2:
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -r -s -l {log} '
+                  '-b {wildcards.type}.{wildcards.name} -p {input[1]} {input[0]} {output.structure} '
+                  '{params.outdir}')
+
+        else:
+            shell('~t.v.schaik/mydata/modules/read-parsing/read_parser.py -a -r -s -l {log} '
+                  '-b {wildcards.type}.{wildcards.name} {input} {output.structure} '
+                  '{params.outdir}')
 
 
 
