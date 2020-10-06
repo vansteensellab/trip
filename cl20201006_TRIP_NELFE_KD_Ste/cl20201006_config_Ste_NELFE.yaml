@@ -1,0 +1,23 @@
+outdir: '/DATA/usr/c.leemans/projects/trip/cl20201006_TRIP_NELFE_KD'
+
+structure:
+  gDNA: |
+    ID      5'      3'      type    req     second-read     pos                   keep-bases
+    index   %i      -       const   present False   fixed                            -
+    pat1    GTCACAAGGGCCGGCCACAACTCGAG      -       const   present False   fixed   -
+    barcode 16      -       barcode present False   fixed   -
+    pat2    TGATCCTGCAGTG   -       const   present False   var   -
+
+  cDNA: |
+    ID      5'      3'      type    req     second-read     pos     keep-bases
+    index   %i      -       const   present False   fixed   -
+    pat1    GTCACAAGGGCCGGCCACAACTCGAG      -       const   present False   fixed   -
+    barcode 16      -       barcode present False   fixed   -
+    pat2    TGATCCTGCAGTG   -       const   present False   var   -
+
+
+lev_dist: 2
+
+min_count:
+  gDNA: 5
+  cDNA: 0

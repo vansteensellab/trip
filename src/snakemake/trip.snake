@@ -18,6 +18,47 @@ if 'extract' in config:
 # TYPE_LIST = ['mapping', 'gDNA', 'cDNA', 'spike']
 # TYPE_LIST = [read_type for read_type in TYPE_LIST if read_type in config]
 
+def parse_meta(meta_file):
+    with open(meta_file) as f:
+        header = f.readline().strip().split('\t')
+        id_i = header.index('ID')
+        type_i = header.index('PCR_type')
+        file_i = header.index('file')
+        index_i = index = guide_i = -1
+        index = 10
+        if 'index_length' in header:
+            index_i = header.index('index_length')
+        for line in f.readlines():
+            line_split = line.strip().split('\t')
+            if 'index_length' in header:
+                index = int(line_split[index_i])
+
+            # if 'paired_end' in header:
+            #     paired = line_split[paired_i].lower() not in ('false', 'f')
+            # else:
+            #     paired = False
+            yield(line_split[type_i], line_split[id_i], line_split[file_i],
+                  index)
+
+
+if 'META_INFO' in config:
+    if 'input_file' not in config:
+        config['input_file'] = {}
+    # if 'index' not in config:
+    #     config['index'] = {}
+    for type, id, file, index, guide in parse_meta(config['META_INFO']):
+        if type not in config['input_file']:
+            config['input_file'][type] = {}
+        if type not in config['index']:
+            config['index'][type] = {}
+        if guide not in config['guide']:
+            config['guide'][guide] = []
+            config['input_file'][type][id] = file.split(',')
+            config['index'][type][id] = index
+        if type == 'indelPCR':
+            config['guide'][guide].append(id)
+
+
 if 'groups' in config:
     group_name_vec = [group[0] for group in config['groups']]
     replicate_dict = {}
@@ -37,11 +78,25 @@ if 'groups' in config:
                     replicate_dict[mean_name].append(file_name)
                 else:
                     replicate_dict[mean_name] = [file_name]
+
+def get_all(config):
+    map_format = '{outdir}/mapping/{name}.{num}.table'
+    cdna_format = '{outdir}/cDNA/{name}.normalized'
+    if 'mapping' in config:
+        for name in config['input_file']['mapping']:
+            for num in (1,2):
+                yield(map_format.format(name=name, num=num,
+                                        outdir=config["outdir"]))
+    if 'cDNA' in config:
+        for name in config['input_file']['cDNA']:
+            yield(cdna_format.format(name=name,
+                                     outdir=config["outdir"]))
+
+
+
 rule all:
     input:
-        expand('{outdir}/mapping/{name}.{num}.table', outdir=OUTDIR,
-                name=config['input_file']['mapping'].keys(), num=(1,2)),
-        expand('{outdir}/cDNA/{name}.normalized', outdir=OUTDIR, name=config['input_file']['cDNA'].keys())
+        get_all(config)
 
 if 'cDNA' in config['input_file']:
     rule cDNA_only:
@@ -321,30 +376,32 @@ rule split_sam:
 
 
 
-rule parse_sam:
-    input:
-        bam=expand('{outdir}/mapping/{{name}}.{{num}}.bam', outdir=OUTDIR),
-        count=expand('{outdir}/mapping/{{name}}.starcode.count', outdir=OUTDIR)
-    output:
-        bed='{outdir}/mapping/{name}.{num}.bed',
-        table='{outdir}/mapping/{name}.{num}.table',
-        stats='{outdir}/mapping/{name}.{num}.parse_stat.table',
-        length='{outdir}/mapping/{name}.{num}.length.table',
-        remap_fq='{outdir}/mapping/{name}.{num}.remap.fastq.gz',
-        remap='{outdir}/mapping/{name}.{num}.remap.bam'
-    wildcard_constraints:
-        num="\d+"
-    params:
-        bowtie_index = config['bowtie']['index'],
-        options=config['bowtie']['options'],
-        max_dist = config['max_dist'],
-        num='{num}'
-    threads: 10
-    script:
-        'scripts/parse_sam.py'
 
 
 if 'mapping' in config['input_file']:
+
+    rule parse_sam:
+        input:
+            bam=expand('{outdir}/mapping/{{name}}.{{num}}.bam', outdir=OUTDIR),
+            count=expand('{outdir}/mapping/{{name}}.starcode.count', outdir=OUTDIR)
+        output:
+            bed='{outdir}/mapping/{name}.{num}.bed',
+            table='{outdir}/mapping/{name}.{num}.table',
+            stats='{outdir}/mapping/{name}.{num}.parse_stat.table',
+            length='{outdir}/mapping/{name}.{num}.length.table',
+            remap_fq='{outdir}/mapping/{name}.{num}.remap.fastq.gz',
+            remap='{outdir}/mapping/{name}.{num}.remap.bam'
+        wildcard_constraints:
+            num="\d+"
+        params:
+            bowtie_index = config['bowtie']['index'],
+            options=config['bowtie']['options'],
+            max_dist = config['max_dist'],
+            num='{num}'
+        threads: 10
+        script:
+            'scripts/parse_sam.py'
+
     rule align:
         input:
             '%s/mapping/{name}.{num}.fastq.gz' % OUTDIR
